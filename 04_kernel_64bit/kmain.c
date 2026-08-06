@@ -129,6 +129,17 @@ static void handle_command(const char *cmd) {
     }
 }
 
+static void test_gpf(void) {
+    // Deliberately trigger a General Protection Fault
+    __asm__ volatile (
+        "mov $0x23, %%ax\n\t"   // bogus segment selector
+        "mov %%ax, %%ds\n\t"    // should cause #GP
+        :
+        :
+        : "ax"
+    );
+}
+
 void kmain(BootInfo *info) {
     // Store boot info for commands
     g_bootinfo = info;
@@ -172,6 +183,9 @@ void kmain(BootInfo *info) {
     idt_init();
     pit_init(100);      // 100 Hz timer
     keyboard_init();    // buffer initialized
+
+    // Test GPF handler once
+    // test_gpf();
 
     // Enable interrupts
     asm volatile("sti");

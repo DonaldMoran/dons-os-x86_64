@@ -104,3 +104,13 @@ void pit_init(uint32_t freq) {
     outb(PIT_CH0, divisor & 0xFF);
     outb(PIT_CH0, (divisor >> 8) & 0xFF);
 }
+
+void isr13_handler(void) {
+    // General Protection Fault
+    vga_print("\n*** GENERAL PROTECTION FAULT (#GP) ***\n");
+    vga_print("System halted.\n");
+
+    while (1) {
+        __asm__ volatile("hlt");
+    }
+}
