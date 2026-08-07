@@ -3,12 +3,15 @@
 global isr0_stub
 global isr1_stub
 global isr13_stub
+global isr14_stub
 global irq0_stub
 global irq1_stub
 
 extern isr0_handler
 extern isr1_handler
 extern isr13_handler
+extern isr14_handler
+
 extern irq0_handler
 extern irq1_handler
 
@@ -46,6 +49,20 @@ isr1_stub:
 isr13_stub:
     push rbp
     mov  rbp, rsp
+
+    mov rdi, rsp        ; rdi = pointer to exception frame
     call isr13_handler
+
     pop  rbp
+    iretq
+
+; Page Fault (#PF, vector 14)
+isr14_stub:
+    push rbp
+    mov rbp, rsp
+
+    mov rdi, rsp        ; rdi = pointer to exception frame
+    call isr14_handler
+
+    pop rbp
     iretq

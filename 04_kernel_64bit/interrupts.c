@@ -105,12 +105,83 @@ void pit_init(uint32_t freq) {
     outb(PIT_CH0, (divisor >> 8) & 0xFF);
 }
 
-void isr13_handler(void) {
-    // General Protection Fault
+/*void isr13_handler(exception_frame_t *frame) {
+
+    vga_print("\n*** GENERAL PROTECTION FAULT (#GP) ***\n");
+
+    vga_print("RIP: ");    vga_print_hex_cur(frame->rip);    vga_print("\n");
+    vga_print("CS:  ");    vga_print_hex_cur(frame->cs);     vga_print("\n");
+    vga_print("RFLAGS: "); vga_print_hex_cur(frame->rflags); vga_print("\n");
+    vga_print("RSP: ");    vga_print_hex_cur(frame->rsp);    vga_print("\n");
+    vga_print("SS:  ");    vga_print_hex_cur(frame->ss);     vga_print("\n");
+    vga_print("ERR: ");    vga_print_hex_cur(frame->error_code); vga_print("\n");
+
+    vga_print("System halted.\n");
+    while (1) __asm__ volatile("hlt");
+}
+*/
+
+/*
+void isr13_handler(exception_frame_gp_t *frame) {
+    vga_print("\n*** GENERAL PROTECTION FAULT (#GP) ***\n");
+
+    vga_print("RIP: ");    vga_print_hex_cur(frame->rip);    vga_print("\n");
+    vga_print("CS:  ");    vga_print_hex_cur(frame->cs);     vga_print("\n");
+    vga_print("RFLAGS: "); vga_print_hex_cur(frame->rflags); vga_print("\n");
+    vga_print("RSP: ");    vga_print_hex_cur(frame->rsp);    vga_print("\n");
+    vga_print("SS:  ");    vga_print_hex_cur(frame->ss);     vga_print("\n");
+    vga_print("ERR: ");    vga_print_hex_cur(frame->error_code); vga_print("\n");
+
+    vga_print("System halted.\n");
+    while (1) __asm__ volatile("hlt");
+}
+*/
+
+
+// TODO (#GP full decoding):
+// This handler is intentionally minimal. Early in kernel development, decoding
+// the full #GP exception frame (RIP, CS, RFLAGS, RSP, SS, error_code) caused
+// stack layout and calling‑convention side effects that interfered with IRQ1,
+// breaking keyboard input. The kernel is still too small and fragile for safe
+// frame inspection.
+//
+// Once the kernel has:
+//   - a stable interrupt pipeline,
+//   - a scheduler or at least a controlled main loop,
+//   - a more mature memory manager,
+//   - and verified stack alignment rules,
+// we will implement full #GP frame decoding here.
+//
+// For now, we only print a message and halt cleanly to avoid corrupting runtime
+// state.
+void isr13_handler(exception_frame_t *frame) {
+    (void)frame;   // unused until full decoding is implemented
     vga_print("\n*** GENERAL PROTECTION FAULT (#GP) ***\n");
     vga_print("System halted.\n");
+    while (1) __asm__ volatile("hlt");
+}
 
-    while (1) {
-        __asm__ volatile("hlt");
-    }
+
+void isr14_handler(exception_frame_t *frame) {
+
+    uint64_t cr2;
+    __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+
+    vga_print("\n*** PAGE FAULT (#PF) ***\n");
+
+    vga_print("CR2 (fault addr): ");
+    vga_print_hex_cur(cr2);
+    vga_print("\n");
+
+    vga_print("ERR: ");
+    vga_print_hex_cur(frame->error_code);
+    vga_print("\n");
+
+    vga_print("RIP: ");
+    vga_print_hex_cur(frame->rip);
+    vga_print("\n");
+
+    vga_print("System halted.\n");
+    while (1) __asm__ volatile("hlt");
+
 }

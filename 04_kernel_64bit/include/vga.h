@@ -18,4 +18,6 @@ void vga_set_cursor(int row, int col);
 void vga_set_cursor_shape(uint8_t start_scanline, uint8_t end_scanline);
 void vga_hide_cursor(void);  // Optional: hide the cursor
 
+void vga_print_hex_cur(uint64_t val);
+
 #endif

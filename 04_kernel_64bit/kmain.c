@@ -129,6 +129,7 @@ static void handle_command(const char *cmd) {
     }
 }
 
+/*
 static void test_gpf(void) {
     // Deliberately trigger a General Protection Fault
     __asm__ volatile (
@@ -139,6 +140,14 @@ static void test_gpf(void) {
         : "ax"
     );
 }
+*/
+
+/*
+static void test_pf(void) {
+    volatile uint64_t *ptr = (uint64_t *)0xFFFFFFFFFFFF;  // unmapped
+    *ptr = 0x1234;  // triggers #PF
+}
+*/
 
 void kmain(BootInfo *info) {
     // Store boot info for commands
@@ -180,12 +189,18 @@ void kmain(BootInfo *info) {
     vga_print("----------------------------------------\n");
 
     // Initialize system components
+    vga_print("Init: before IDT\n");
     idt_init();
+    vga_print("Init: after IDT\n");
     pit_init(100);      // 100 Hz timer
+    vga_print("Init: after PIT\n");
     keyboard_init();    // buffer initialized
+    vga_print("Init: after keyboard\n");
 
     // Test GPF handler once
     // test_gpf();
+    // Test for #PF
+    // test_pf();
 
     // Enable interrupts
     asm volatile("sti");

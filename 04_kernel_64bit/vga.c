@@ -261,6 +261,21 @@ void vga_print_dec_cur(uint64_t val) {
     }
 }
 
+void vga_print_hex_cur(uint64_t val) {
+    char buf[17];
+    const char *hex = "0123456789ABCDEF";
+
+    for (int i = 0; i < 16; i++) {
+        buf[15 - i] = hex[(val >> (i * 4)) & 0xF];
+    }
+    buf[16] = 0;
+
+    for (int i = 0; i < 16; i++) {
+        vga_putc(buf[i]);
+    }
+}
+
+
 void vga_clear(void) {
     volatile uint16_t *vga = VGA_MEM;
     __asm__ volatile("cli");
