@@ -70,29 +70,38 @@ This boots:
 ### Command Shell
 
 Once booted, you'll see a prompt > where you can type commands:
-- Command	Description
-- help	Show available commands
-- clear	Clear the screen 
-- info	Display system information (PML4, kernel addresses, E820 - entries, RAM)
-- mem	Display memory statistics (usable/reserved RAM)
-- version	Show version information
-- reboot	Reboot the system
+| Command | Description |
+|---------|-------------|
+| `help` | Show available commands |
+| `clear` | Clear the screen |
+| `version` | Show version information |
+| `info` | Display system information (PML4, kernel addresses, E820 entries) |
+| `mem` | Display memory statistics (usable/reserved RAM) |
+| `reboot` | Reboot the system |
+| `pmmtest` | Test Physical Memory Manager |
 
 ```
-DonsDOS v0.1 - 64-bit Operating System
-========================================
-Type 'help' for available commands
-System: x86_64 Long Mode | RAM: 127 MB | Console: VGA 80x25
-----------------------------------------
+DonsDOS v0.1
+Type 'help'
 > help
 
 Available commands:
   help     - Show this help
   clear    - Clear the screen
-  info     - Show system info
-  reboot   - Reboot the system
   version  - Show version info
+  reboot   - Reboot the system
+  pmmtest  - Test Physical Memory Manager
+  info     - Show boot information
   mem      - Show memory information
+> pmmtest
+
+PMM Test:
+  Page1: 0x0000000000108000
+  Page2: 0x0000000000109000
+  Page3: 0x000000000010A000
+  Freed page2
+  Page4: 0x0000000000109000
+Test complete.
 > 
 ```
 ---
@@ -160,21 +169,57 @@ This project is designed to be:
 - `**v0.0.2-pmm-working**`	  PMM bitmap init fixed, E820 validated, allocator stable
 - `**v0.1-stable-keyboard**`	Stable buffered keyboard (shift/caps/backspace/space), clean VGA console, correct IRQ handling
 - `v0.1.1-shell**`	          Command shell, cursor control, improved console, bug fixes
-
+- **`v0.1.2-stable`** Full shell with PMM, info, mem commands, linker padding fix, and stable kernel
 ---
 
-## 🌱 Next Steps
+## 📌 Project Status (as of August 2026)
 
-Planned kernel features:
+### ✅ Current Capabilities
 
-- Exception handlers (page fault, GPF, double fault)
-- Virtual memory manager
-- Heap allocator (kmalloc/kfree)
-- Higher‑half kernel
-- Scheduler
-- Framebuffer graphics
-- ELF loader
-- User‑space processes
+**Boot & Architecture**
+- Full boot chain: 16‑bit → 32‑bit → 64‑bit long mode
+- Working GDT and TSS
+- Identity‑mapped kernel region
+
+**Interrupts & Exceptions**
+- Fully functional IDT and ISR stubs
+- Stable IRQ0 (PIT timer) and IRQ1 (keyboard)
+- Working #GP and #PF handlers
+
+**Drivers**
+- VGA text console (80×25) with scrolling and cursor control
+- Keyboard driver with shift/caps/backspace support
+- PIT timer incrementing `g_ticks`
+
+**Shell / Console**
+- Interactive prompt (`>`)
+- Commands: `help`, `clear`, `version`, `info`, `mem`, `reboot`, `pmmtest`
+- Clean command parsing and line editing
+
+**Memory**
+- Full BIOS E820 memory map parsing
+- Memory map passed to kernel via BootInfo
+- Physical Memory Manager (PMM) with bitmap allocator
+- Page allocation, freeing, and reuse verified
+
+**Build System**
+- Organized source tree with Makefile
+- QEMU bootable disk image
+- Clean Clang + NASM build
+- Debug logging support
+
+## 🌱 Next Steps (Roadmap)
+
+### Short-term
+1. **Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`
+2. **Virtual memory manager** — Dynamic page tables, map/unmap
+3. **Heap allocator** — `kmalloc`/`kfree` implementation
+
+### Long-term
+4. **Scheduler** — Task switching (cooperative → preemptive)
+5. **Framebuffer graphics** — Move from VGA text mode to graphics
+6. **ELF loader** — Load and execute user programs
+7. **User‑space processes** — Process model, isolation, syscalls
 
 ---
 
