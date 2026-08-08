@@ -3,7 +3,7 @@ LD      := ld.lld
 AS      := nasm
 OBJCOPY := llvm-objcopy
 
-CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=small -fno-pic
+CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone
 LDFLAGS := -nostdlib
 
 .PHONY: all clean

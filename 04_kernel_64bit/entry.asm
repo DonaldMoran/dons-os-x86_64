@@ -3,12 +3,16 @@
 [global _start]
 
 _start:
-    ; simple stack
-    mov rsp, 0x80000
-
-    ; clear RAX so kernel doesn't inherit 0x80000011
+    ; Now we're running in higher-half (0xFFFFFFFF80000000)
+    ; Set up stack in higher-half space
+    mov rsp, 0xFFFFFFFF80090000
+    
+    ; Clear registers
     xor rax, rax
-
+    xor rbx, rbx
+    xor rcx, rcx
+    xor rdx, rdx
+    
     extern kmain
     call kmain
 

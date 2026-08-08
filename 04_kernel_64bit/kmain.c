@@ -19,27 +19,6 @@ static int strcmp(const char *s1, const char *s2) {
     return *(const unsigned char*)s1 - *(const unsigned char*)s2;
 }
 
-
-static void print_hex_cur(uint64_t val) {
-    const char *hex = "0123456789ABCDEF";
-    for (int shift = 60; shift >= 0; shift -= 4) {
-        vga_putc(hex[(val >> shift) & 0xF]);
-    }
-}
-
-
-/*
-static void print_hex_cur(uint64_t val) {
-    const char *hex = "0123456789ABCDEF";
-    for (int shift = 60; shift >= 0; shift -= 4) {
-        vga_putc(hex[(val >> shift) & 0xF]);
-        // Small delay after each character
-        for (int i = 0; i < 5; i++) {
-            __asm__ volatile("nop");
-        }
-    }
-}
-*/
 static void handle_command(const char *cmd) {
     if (strcmp(cmd, "help") == 0) {
         vga_print("\nAvailable commands:\n");
@@ -53,24 +32,26 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
         vga_print("DonsDOS v0.1\n");
-        vga_print("Type 'help'\n ");
+        vga_print("Type 'help'\n");
+        vga_print("> ");
     } else if (strcmp(cmd, "version") == 0) {
         vga_print("\nDonsDOS v0.1\n");
         vga_print("Build: 64-bit kernel with VGA console\n");
         vga_print("Copyright (c) 2024 Don's OS Project\n");
+        vga_print("> ");
     } else if (strcmp(cmd, "info") == 0) {
         vga_print("\nBoot Information:\n");
         if (g_bootinfo) {
             vga_print("  PML4 addr: 0x");
-            print_hex_cur(g_bootinfo->pml4_addr);
+            vga_print_hex_cur(g_bootinfo->pml4_addr);
             vga_print("\n");
             
             vga_print("  Kernel phys start: 0x");
-            print_hex_cur(g_bootinfo->kernel_phys_start);
+            vga_print_hex_cur(g_bootinfo->kernel_phys_start);
             vga_print("\n");
             
             vga_print("  Kernel phys end: 0x");
-            print_hex_cur(g_bootinfo->kernel_phys_end);
+            vga_print_hex_cur(g_bootinfo->kernel_phys_end);
             vga_print("\n");
             
             vga_print("  E820 count: ");
@@ -90,6 +71,7 @@ static void handle_command(const char *cmd) {
         } else {
             vga_print("  No boot info available\n");
         }
+        vga_print("> ");
     } else if (strcmp(cmd, "mem") == 0) {
         vga_print("\nMemory Information:\n");
         vga_print("  Page size: 4096 bytes\n");
@@ -142,6 +124,7 @@ static void handle_command(const char *cmd) {
         } else {
             vga_print("  Memory map not available\n");
         }
+        vga_print("> ");
     } else if (strcmp(cmd, "reboot") == 0) {
         vga_print("\nRebooting...\n");
         __asm__ volatile (
@@ -153,7 +136,6 @@ static void handle_command(const char *cmd) {
             "hlt\n"
             : : : "memory"
         );
-
     } else if (strcmp(cmd, "pmmtest") == 0) {
         vga_print("\nPMM Test:\n");
         pmm_init(g_bootinfo);
@@ -163,45 +145,30 @@ static void handle_command(const char *cmd) {
         uint64_t p3 = pmm_alloc_page();
         
         vga_print("  Page1: 0x");
-        print_hex_cur(p1);
+        vga_print_hex_cur(p1);
         vga_print("\n");
         
         vga_print("  Page2: 0x");
-        print_hex_cur(p2);
+        vga_print_hex_cur(p2);
         vga_print("\n");
         
         vga_print("  Page3: 0x");
-        print_hex_cur(p3);
+        vga_print_hex_cur(p3);
         vga_print("\n");
         
-        // Add a small delay or extra newline before free
         pmm_free_page(p2);
-        vga_print("\r  Freed page2\n");
+        vga_print("  Freed page2\n");
         
         uint64_t p4 = pmm_alloc_page();
         vga_print("  Page4: 0x");
-        print_hex_cur(p4);
-        vga_print("\n");
-        vga_print("\r  Freed page2");
-        vga_print("\r\nTest complete.\r\n");
-    }
-
-
-/*
-    } else if (strcmp(cmd, "pmmtest") == 0) {
-        vga_print("\nPMM Test:\n");
-        pmm_init(g_bootinfo);
-        
-        uint64_t p1 = pmm_alloc_page();
-        
-        vga_print("  Page1: 0x");
-        print_hex_cur(p1);
+        vga_print_hex_cur(p4);
         vga_print("\n");
         vga_print("Test complete.\n");
+        vga_print("> ");
+    } else {
+        vga_print("\nUnknown command. Type 'help'\n");
+        vga_print("> ");
     }
-
-    */
-
 }
 
 void kmain(BootInfo *info) {
@@ -211,7 +178,8 @@ void kmain(BootInfo *info) {
     vga_set_cursor_shape(0x00, 0x0F);
     
     vga_print("DonsDOS v0.1\n");
-    vga_print("Type 'help'\n> ");
+    vga_print("Type 'help'\n");
+    vga_print("> ");
 
     idt_init();
     pit_init(100);
@@ -240,7 +208,6 @@ void kmain(BootInfo *info) {
                 cmd_buffer[cmd_pos] = '\0';
                 handle_command(cmd_buffer);
                 cmd_pos = 0;
-                vga_print("> ");
                 continue;
             }
             

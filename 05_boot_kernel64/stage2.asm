@@ -177,7 +177,8 @@ long_mode_entry:
     ; Pass BootInfo pointer in RDI and jump to kernel
     ; ----------------------------------------------------
     mov rdi, bootinfo
-    jmp 0x00100000
+    mov rax, 0xFFFFFFFF80100000     ; Higher-half + 1MB offset
+    jmp rax
 
 ; --------------------------------------------------------
 ; GDT
@@ -194,25 +195,41 @@ gdt_descriptor:
     dd gdt_start            ; org 0x10000 → physical matches linear
 
 ; --------------------------------------------------------
-; Paging structures (identity map first 2 MiB)
+; Paging structures - FIXED: PDPT has entry 510 for higher-half
 ; --------------------------------------------------------
 align 4096
 pml4:
-    dq pdpt + 3              ; present + writable
+    ; Entry 0: Identity mapping
+    dq pdpt + 3
+    
+    ; Entries 1-510: Unused
+    times 510 dq 0
+    
+    ; Entry 511: Higher-half mapping
+    dq pdpt + 3
 
 align 4096
 pdpt:
-    dq pd + 3                ; present + writable
+    ; Entry 0: Identity mapping (maps 0x0000000000000000)
+    dq pd + 3
+    
+    ; Entries 1-509: Unused
+    times 509 dq 0
+    
+    ; Entry 510: Higher-half mapping (maps 0xFFFFFFFF80000000)
+    dq pd + 3
+    
+    ; Entry 511: Unused
+    dq 0
 
 align 4096
 pd:
     %assign i 0
-    %rep 256                 ; 256 * 2MiB = 512MiB
+    %rep 256
         dq (i * 0x200000) + 0x83
-        ; 0x80 = PS (2MiB page), 0x02 = writable, 0x01 = present
         %assign i i+1
     %endrep
-    times 256 dq 0           ; remaining entries unused
+    times 256 dq 0
 
 ; --------------------------------------------------------
 ; BootInfo struct
