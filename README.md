@@ -185,7 +185,7 @@ This project is designed to be:
 **Interrupts & Exceptions**
 - Fully functional IDT and ISR stubs
 - Stable IRQ0 (PIT timer) and IRQ1 (keyboard)
-- Working #GP and #PF handlers
+- Basic #GP and #PF handlers (ISR stubs in place, C handlers ready for enhancement)
 
 **Drivers**
 - VGA text console (80×25) with scrolling and cursor control
@@ -213,8 +213,9 @@ This project is designed to be:
 
 ### Short-term
 1. ~~**Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED (kernel now runs at `0xFFFFFFFF80100000`)
-2. **Virtual memory manager** — Dynamic page tables, map/unmap
-3. **Heap allocator** — `kmalloc`/`kfree` implementation
+2. **Exception handlers** — Page fault, GPF, double fault with register dumps (NEXT)
+3. **Virtual memory manager** — Dynamic page tables, map/unmap
+4. **Heap allocator** — `kmalloc`/`kfree` implementation
 
 ### Long-term
 4. **Scheduler** — Task switching (cooperative → preemptive)
