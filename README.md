@@ -1,7 +1,7 @@
 # dons‑os  
 ### Educational x86_64 Boot Chain + 64‑bit Interrupt‑Driven Kernel (MIT Licensed)
 
-**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU’s reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit kernel** with working interrupts, timer, keyboard input, memory management, and a command shell.
+**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU’s reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher-half kernel** with working interrupts, timer, keyboard input, memory management, and a command shell.
 
 The project emphasizes clarity, correctness, and educational value.  
 Each stage is isolated, minimal, and fully bootable.
@@ -59,7 +59,7 @@ This boots:
  2. stage1 loads stage2  
  3. stage2 builds page tables  
  4. stage2 enters long mode  
- 5. stage2 jumps to kernel at 0x00100000  
+ 5. stage2 jumps to kernel at 0xFFFFFFFF80100000 (higher-half)  
  6. kernel executes `_start` → `kmain`  
  7. kernel prints boot banner and system info
  8. kernel initializes IDT, PIC, PIT, keyboard
@@ -169,7 +169,8 @@ This project is designed to be:
 - `**v0.0.2-pmm-working**`	  PMM bitmap init fixed, E820 validated, allocator stable
 - `**v0.1-stable-keyboard**`	Stable buffered keyboard (shift/caps/backspace/space), clean VGA console, correct IRQ handling
 - `v0.1.1-shell**`	          Command shell, cursor control, improved console, bug fixes
-- **`v0.1.2-stable`** Full shell with PMM, info, mem commands, linker padding fix, and stable kernel
+- `v0.1.2-stable` 	Full shell with PMM, info, mem commands, linker padding fix, and stable kernel
+- `v0.2.0-higher-half`	Higher-half kernel transition complete (kernel runs at 0xFFFFFFFF80100000)
 ---
 
 ## 📌 Project Status (as of August 2026)
@@ -179,7 +180,7 @@ This project is designed to be:
 **Boot & Architecture**
 - Full boot chain: 16‑bit → 32‑bit → 64‑bit long mode
 - Working GDT and TSS
-- Identity‑mapped kernel region
+- Higher-half kernel region (kernel runs at 0xFFFFFFFF80100000)
 
 **Interrupts & Exceptions**
 - Fully functional IDT and ISR stubs
@@ -211,7 +212,7 @@ This project is designed to be:
 ## 🌱 Next Steps (Roadmap)
 
 ### Short-term
-1. **Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`
+1. ~~**Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED (kernel now runs at `0xFFFFFFFF80100000`)
 2. **Virtual memory manager** — Dynamic page tables, map/unmap
 3. **Heap allocator** — `kmalloc`/`kfree` implementation
 

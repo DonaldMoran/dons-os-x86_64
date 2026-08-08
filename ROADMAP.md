@@ -1,7 +1,3 @@
-
-## Updated ROADMAP.md
-
-```markdown
 # ROADMAP  
 ### dons‑os (x86_64) — Project Roadmap
 
@@ -76,20 +72,20 @@ Boot chain is complete and stable.
 
 ---
 
-## 3. Core Kernel Features (In Progress)
+## 3. Core Kernel Features (Completed)
 
-### ☐ 3.1 — Exception Handlers
+### ✔ 3.1 — Higher‑Half Kernel
+- Map kernel to `0xFFFFFFFF80100000` (completed)  
+- Update linker script (completed)  
+- Clean identity map and higher-half mapping working (completed)
+
+### ☐ 3.2 — Exception Handlers (Next)
 - Page Fault handler (dump CR2, error code)  
 - General Protection Fault handler  
 - Double Fault handler  
 - Stack trace on panic
 
-### ☐ 3.2 — Higher‑Half Kernel
-- Map kernel to `0xFFFFFFFF80000000`  
-- Update linker script  
-- Clean identity map
-
-### ☐ 3.3 — Virtual Memory Manager
+### ☐ 3.3 — Virtual Memory Manager (Next)
 - Dynamic page mapping  
 - Page table allocation  
 - Memory protection (R/W/X bits)
@@ -158,9 +154,9 @@ Boot chain is complete and stable.
 | PMM | ✔ Complete |
 | VGA Console | ✔ Complete |
 | Command Shell | ✔ Complete |
+| Higher‑half kernel | ✔ Complete |
 | Exception Handlers | ☐ Next |
-| Higher‑half kernel | ☐ Planned |
-| VMM | ☐ Planned |
+| VMM | ☐ Next |
 | Heap Allocator | ☐ Planned |
 | Scheduler | ☐ Planned |
 | Userspace | ☐ Planned |

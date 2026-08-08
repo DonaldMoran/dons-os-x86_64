@@ -36,11 +36,11 @@
 
 ---
 
-## 3. Memory Management (1/3 Complete)
+## 3. Memory Management (2/3 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 14 | **Higher‑Half Kernel** | ☐ Not Started | Map kernel to `0xFFFFFFFF80000000` |
+| 14 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
 | 15 | **Virtual Memory Manager** | ☐ Not Started | Dynamic page tables, map/unmap, kernel heap region |
 | 16 | **Kernel Heap** | ☐ Not Started | `kmalloc`, `kfree`, slab/bump allocator |
 
@@ -63,15 +63,23 @@
 |-------|-----------|-------|----------|
 | Boot & System Init | 5 | 5 | **100%** ✅ |
 | Core Kernel | 8 | 8 | **100%** ✅ |
-| Memory Management | 1 | 3 | **33%** 🚧 |
+| Memory Management | 2 | 3 | **67%** 🚧 |
 | User Space | 0 | 4 | **0%** ☐ |
-| **Overall** | **14** | **20** | **70%** |
+| **Overall** | **15** | **20** | **75%** |
 
 ---
 
 ## Recent Milestone Achievements
 
-### v0.1.2 — Stable Kernel with Full Shell (Current)
+### v0.2.0 — Higher-Half Kernel (Current)
+- ✅ Higher-half kernel transition complete
+- ✅ Kernel now runs at `0xFFFFFFFF80100000`
+- ✅ Page tables: PML4 entry 511 and PDPT entry 510
+- ✅ VGA driver atomic operations (`cli/sti` wrapped)
+- ✅ Clean VGA output with proper cursor positioning
+- ✅ All shell commands working in higher-half
+
+### v0.1.2 — Stable Kernel with Full Shell
 - ✅ Fixed `.bss` corruption with linker padding (1MB)
 - ✅ Added `info` and `mem` commands
 - ✅ PMM fully tested and stable
@@ -83,6 +91,8 @@
   - `mem` — Show memory statistics
   - `reboot` — Reboot the system
   - `pmmtest` — Test Physical Memory Manager
+  
+
 
 ### Previous Tags
 - `v0.0.1-longmode` — First long‑mode boot
@@ -95,13 +105,13 @@
 
 ## Next Steps (Recommended Order)
 
-1. **Higher‑Half Kernel** (#14) — Map kernel to `0xFFFFFFFF80000000`
+1. ~~**Higher-Half Kernel** (#14) — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED
 2. **Virtual Memory Manager** (#15) — Dynamic page table management
 3. **Kernel Heap** (#16) — `kmalloc`/`kfree` implementation
 4. **Scheduler** (#17) — Basic task switching
 5. **ELF Loader** (#18) — Load and execute user programs
 6. **Syscalls** (#19) — System call interface
-7. **User‑Space** (#20) — Process model and user programs
+7. **User-Space** (#20) — Process model and user programs
 
 ---
 
