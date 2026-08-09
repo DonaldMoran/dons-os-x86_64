@@ -9,10 +9,9 @@ start:
     ; ----------------------------------------------------
     mov ax, 0xB800
     mov ds, ax
-    mov byte [0], '1'      ; stage2 start
+    mov byte [0], '1'
     mov byte [1], 0x07
-
-    mov byte [2], 'R'      ; stage2 running
+    mov byte [2], 'R'
     mov byte [3], 0x07
 
     ; ----------------------------------------------------
@@ -40,33 +39,29 @@ start:
     int 0x13
 
     ; ----------------------------------------------------
-    ; E820 memory map (real mode)
+    ; E820 memory map
     ; ----------------------------------------------------
-    xor ebx, ebx                 ; continuation value = 0
-    mov di, e820_buffer          ; ES:DI = buffer
-    mov dword [e820_count], 0    ; entry count = 0
+    xor ebx, ebx
+    mov di, e820_buffer
+    mov dword [e820_count], 0
 
 e820_loop:
     mov eax, 0xE820
-    mov ecx, 24                  ; size of buffer
-    mov edx, 0x534D4150          ; 'SMAP'
+    mov ecx, 24
+    mov edx, 0x534D4150
     int 0x15
-
-    jc e820_done                 ; error → stop
+    jc e820_done
     cmp eax, 0x534D4150
-    jne e820_done                ; bad signature → stop
-
-    ; one entry written at ES:DI
-    add di, 24                   ; advance buffer
-    inc word [e820_count]        ; count++
-
-    test ebx, ebx                ; EBX = 0 → last entry
+    jne e820_done
+    add di, 24
+    inc word [e820_count]
+    test ebx, ebx
     jnz e820_loop
 
 e820_done:
 
     ; ----------------------------------------------------
-    ; Load GDT (still real mode)
+    ; Load GDT
     ; ----------------------------------------------------
     lgdt [gdt_descriptor]
 
@@ -76,23 +71,21 @@ e820_done:
     mov eax, cr0
     or  eax, 1
     mov cr0, eax
-
-    ; *** IMPORTANT: use 32‑bit far jump ***
     jmp dword 0x08:pm_entry
 
 ; --------------------------------------------------------
-; Disk Address Packet for kernel
+; Disk Address Packet
 ; --------------------------------------------------------
 dap_kernel:
     db 16
     db 0
-    dw 64          ; sector count
-    dw 0x0000      ; offset
-    dw 0x8000      ; segment -> 0x00080000
-    dq 64          ; LBA
+    dw 64
+    dw 0x0000
+    dw 0x8000
+    dq 64
 
 ; --------------------------------------------------------
-; Protected mode entry (32-bit)
+; Protected mode entry
 ; --------------------------------------------------------
 [bits 32]
 pm_entry:
@@ -107,7 +100,7 @@ pm_entry:
     or  eax, 1 << 5
     mov cr4, eax
 
-    ; Load PML4 (physical address)
+    ; Load PML4
     mov eax, pml4
     mov cr3, eax
 
@@ -122,7 +115,7 @@ pm_entry:
     or  eax, 0x80000000
     mov cr0, eax
 
-    ; Far jump to 64‑bit mode
+    ; Far jump to 64-bit
     push dword 0x18
     push dword long_mode_entry
     retf
@@ -134,50 +127,35 @@ pm_entry:
 long_mode_entry:
 [default rel]
     mov rsp, 0x80000
-
     xor rax, rax
     xor rbx, rbx
     xor rcx, rcx
     xor rdx, rdx
 
-    ; ----------------------------------------------------
     ; Fill BootInfo
-    ; ----------------------------------------------------
     mov rbx, bootinfo
-
-    ; memory map
-    mov qword [rbx + 0], e820_buffer      ; memory_map_addr
+    mov qword [rbx + 0], e820_buffer
     movzx rax, word [e820_count]
-    mov qword [rbx + 8], rax              ; memory_map_count
-
-    ; framebuffer (none yet)
-    mov qword [rbx + 16], 0               ; framebuffer_addr
-    mov dword [rbx + 24], 0              ; framebuffer_width
-    mov dword [rbx + 28], 0              ; framebuffer_height
-    mov dword [rbx + 32], 0              ; framebuffer_pitch
-    mov dword [rbx + 36], 0              ; framebuffer_bpp
-
-    ; kernel physical range
-    mov qword [rbx + 40], 0x00100000        ; kernel_phys_start
-    mov qword [rbx + 48], 0x00100000 + (64 * 512) ; kernel_phys_end
-
-    ; paging root
+    mov qword [rbx + 8], rax
+    mov qword [rbx + 16], 0
+    mov dword [rbx + 24], 0
+    mov dword [rbx + 28], 0
+    mov dword [rbx + 32], 0
+    mov dword [rbx + 36], 0
+    mov qword [rbx + 40], 0x00100000
+    mov qword [rbx + 48], 0x00100000 + (64 * 512)
     mov rax, pml4
-    mov qword [rbx + 56], rax        ; pml4_addr
+    mov qword [rbx + 56], rax
 
-    ; ----------------------------------------------------
-    ; Move kernel from 0x00080000 → 0x00100000
-    ; ----------------------------------------------------
+    ; Move kernel
     mov rsi, 0x00080000
     mov rdi, 0x00100000
     mov rcx, 1024
     rep movsq
 
-    ; ----------------------------------------------------
-    ; Pass BootInfo pointer in RDI and jump to kernel
-    ; ----------------------------------------------------
+    ; Jump to kernel
     mov rdi, bootinfo
-    mov rax, 0xFFFFFFFF80100000     ; Higher-half + 1MB offset
+    mov rax, 0xFFFFFFFF80100000
     jmp rax
 
 ; --------------------------------------------------------
@@ -185,41 +163,39 @@ long_mode_entry:
 ; --------------------------------------------------------
 gdt_start:
     dq 0
-    dq 0x00CF9A000000FFFF   ; 0x08: 32‑bit code
-    dq 0x00CF92000000FFFF   ; 0x10: 32‑bit data
-    dq 0x00AF9A000000FFFF   ; 0x18: 64‑bit code
+    dq 0x00CF9A000000FFFF
+    dq 0x00CF92000000FFFF
+    dq 0x00AF9A000000FFFF
 gdt_end:
 
 gdt_descriptor:
     dw gdt_end - gdt_start - 1
-    dd gdt_start            ; org 0x10000 → physical matches linear
+    dd gdt_start
 
 ; --------------------------------------------------------
-; Paging structures - FIXED: PDPT has entry 510 for higher-half
+; Paging structures
 ; --------------------------------------------------------
 align 4096
 pml4:
     ; Entry 0: Identity mapping
-    dq pdpt + 3
+    dq pdpt_identity + 3
     
     ; Entries 1-510: Unused
     times 510 dq 0
     
     ; Entry 511: Higher-half mapping
-    dq pdpt + 3
+    dq pdpt_higher + 3
 
 align 4096
-pdpt:
-    ; Entry 0: Identity mapping (maps 0x0000000000000000)
+pdpt_identity:
     dq pd + 3
-    
-    ; Entries 1-509: Unused
-    times 509 dq 0
-    
-    ; Entry 510: Higher-half mapping (maps 0xFFFFFFFF80000000)
+    times 511 dq 0
+
+align 4096
+pdpt_higher:
+    ; Entry 510 maps 0xFFFFFFFF80000000
+    times 510 dq 0
     dq pd + 3
-    
-    ; Entry 511: Unused
     dq 0
 
 align 4096
@@ -232,26 +208,26 @@ pd:
     times 256 dq 0
 
 ; --------------------------------------------------------
-; BootInfo struct
+; BootInfo
 ; --------------------------------------------------------
 bootinfo:
-    dq 0                      ; memory_map_addr
-    dq 0                      ; memory_map_count
-    dq 0                      ; framebuffer_addr
-    dd 0                      ; framebuffer_width
-    dd 0                      ; framebuffer_height
-    dd 0                      ; framebuffer_pitch
-    dd 0                      ; framebuffer_bpp
-    dq 0                      ; kernel_phys_start
-    dq 0                      ; kernel_phys_end
-    dq 0                      ; pml4_addr
+    dq 0
+    dq 0
+    dq 0
+    dd 0
+    dd 0
+    dd 0
+    dd 0
+    dq 0
+    dq 0
+    dq 0
 
 ; --------------------------------------------------------
-; E820 buffer + count
+; E820 buffer
 ; --------------------------------------------------------
 e820_buffer:
-    times 64*24 db 0          ; 64 entries × 24 bytes
+    times 64*24 db 0
 
 e820_count:
     dw 0
-    dd 0                      ; padding to keep alignment tidy
+    dd 0
