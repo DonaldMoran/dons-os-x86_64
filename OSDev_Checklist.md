@@ -35,6 +35,14 @@
 | 13 | **Physical Memory Manager** | ✅ Complete | Bitmap allocator, page alloc/free, reserved region marking |
 
 ---
+### v0.2.1 — Exception Handlers Complete
+- ✅ #DE (Divide by Zero) handler working
+- ✅ #PF (Page Fault) handler with CR2, ERR, RIP dump
+- ✅ #GP (General Protection Fault) handler with ERR, RIP, CS dump
+- ✅ All three exception handlers working from test command
+- ✅ Clean VGA output without corrupting screen
+
+---
 
 ## 3. Memory Management (2/3 Complete)
 
@@ -105,13 +113,16 @@
 
 ## Next Steps (Recommended Order)
 
+## Next Steps (Recommended Order)
+
 1. ~~**Higher-Half Kernel** (#14) — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED
-2. **Virtual Memory Manager** (#15) — Dynamic page table management
-3. **Kernel Heap** (#16) — `kmalloc`/`kfree` implementation
-4. **Scheduler** (#17) — Basic task switching
-5. **ELF Loader** (#18) — Load and execute user programs
-6. **Syscalls** (#19) — System call interface
-7. **User-Space** (#20) — Process model and user programs
+2. ~~**Exception Handlers** (#15) — #DE, #PF, #GP working~~ ✅ COMPLETED
+3. **Virtual Memory Manager** (#16) — Dynamic page table management
+4. **Kernel Heap** (#17) — `kmalloc`/`kfree` implementation
+5. **Scheduler** (#18) — Basic task switching
+6. **ELF Loader** (#19) — Load and execute user programs
+7. **Syscalls** (#20) — System call interface
+8. **User-Space** (#21) — Process model and user programs
 
 ---
 

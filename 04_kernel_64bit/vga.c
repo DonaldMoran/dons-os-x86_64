@@ -230,3 +230,4 @@ void vga_set_cursor(int row, int col) {
     vga_update_hardware_cursor();
     __asm__ volatile("sti");
 }
+

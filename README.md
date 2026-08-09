@@ -79,7 +79,7 @@ Once booted, you'll see a prompt > where you can type commands:
 | `mem` | Display memory statistics (usable/reserved RAM) |
 | `reboot` | Reboot the system |
 | `pmmtest` | Test Physical Memory Manager |
-| `test` | Test exception handlers (#DE, #PF) |
+| `test` | Test exception handlers (#DE, #PF, #GP) |
 
 ```
 DonsDOS v0.1
@@ -172,7 +172,8 @@ This project is designed to be:
 - `v0.1.1-shell**`	          Command shell, cursor control, improved console, bug fixes
 - `v0.1.2-stable` 	Full shell with PMM, info, mem commands, linker padding fix, and stable kernel
 - `v0.2.0-higher-half`	Higher-half kernel transition complete (kernel runs at 0xFFFFFFFF80100000)
-- `v0.2.1-exception-handlers` Exception handlers: #DE, #PF working; #GP in progress
+- `v0.2.1-exception-handlers`	All exception handlers working (#DE, #PF, #GP)
+
 ---
 
 ## 📌 Project Status (as of August 2026)
@@ -187,8 +188,10 @@ This project is designed to be:
 **Interrupts & Exceptions**
 - Fully functional IDT and ISR stubs
 - Stable IRQ0 (PIT timer) and IRQ1 (keyboard)
-- Working #DE (divide by zero) and #PF (page fault) handlers with register dumps
-- #GP (general protection fault) and #DF (double fault) handlers in place (GP needs debugging)
+- ✅ #DE (Divide by Zero) handler working
+- ✅ #PF (Page Fault) handler with CR2, ERR, RIP dump
+- ✅ #GP (General Protection Fault) handler with ERR, RIP, CS dump
+- Test command (`test`) for triggering all three exceptions
 
 **Drivers**
 - VGA text console (80×25) with scrolling and cursor control

@@ -30,6 +30,7 @@ static void handle_command(const char *cmd) {
         vga_print("  info     - Show boot information\n");
         vga_print("  mem      - Show memory information\n");
         vga_print("  test     - Exception Handling test\n");
+        vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
         vga_print("DonsDOS v0.1\n");
@@ -91,7 +92,7 @@ static void handle_command(const char *cmd) {
                 }
             }
             
-            vga_print("  Usable RAM: ");
+            vga_print("\n  Usable RAM: ");
             // Simple decimal print
             uint64_t val = total_usable / (1024 * 1024);
             char buf[12];
@@ -201,7 +202,14 @@ static void handle_command(const char *cmd) {
             *bad = 0xDEADBEEF;  // Trigger #PF
         } else if (c == '3') {
             vga_print("Causing GP fault...\n");
-            asm volatile("mov $0xFFFFFFFF, %rax; mov %rax, %cr3");
+            // This will cause a #GP if ECX=0 and EAX[2:1] == 10b (which is 2)
+            __asm__ volatile(
+                "mov $0x0, %%ecx\n"          // ECX = 0
+                "mov $0x2, %%eax\n"          // EAX = 2 (bits 2:1 = 10b)
+                "mov $0x0, %%edx\n"          // EDX = 0
+                "xsetbv\n"                   // Execute XSETBV
+                : : : "rax", "rcx", "rdx"
+            );
         } else {
             vga_print("Invalid choice\n");
         }      

@@ -12,13 +12,13 @@ global irq1_stub
 extern isr0_handler
 extern isr1_handler
 extern isr8_handler
-extern isr13_handler
 extern isr14_handler
 
 extern irq0_handler
 extern irq1_handler
+extern isr13_handler
 
-; IRQ0 - PIT Timer
+
 irq0_stub:
     push rbp
     mov rbp, rsp
@@ -26,7 +26,6 @@ irq0_stub:
     pop rbp
     iretq
 
-; IRQ1 - Keyboard
 irq1_stub:
     push rbp
     mov rbp, rsp
@@ -34,49 +33,50 @@ irq1_stub:
     pop rbp
     iretq
 
-; Divide-by-zero (NO error code) - FIXED: push dummy error code
 isr0_stub:
-    push 0              ; Push dummy error code to keep stack consistent
+    push 0
     push rbp
     mov  rbp, rsp
     call isr0_handler
     pop  rbp
-    add  rsp, 8         ; Remove dummy error code
+    add  rsp, 8
     iretq
 
-; Debug (NO error code) - FIXED: push dummy error code
 isr1_stub:
-    push 0              ; Push dummy error code to keep stack consistent
+    push 0
     push rbp
     mov  rbp, rsp
     call isr1_handler
     pop  rbp
-    add  rsp, 8         ; Remove dummy error code
+    add  rsp, 8
     iretq
 
-; Double Fault (HAS error code) - CPU pushes error code
 isr8_stub:
     push rbp
     mov  rbp, rsp
-    mov  rdi, rsp        ; rdi = pointer to exception frame (includes error code)
+    mov  rdi, rsp
     call isr8_handler
     pop  rbp
     iretq
 
-; General Protection Fault (HAS error code)
+; GP Fault - call C handler
 isr13_stub:
+    cli
     push rbp
     mov  rbp, rsp
-    mov  rdi, rsp        ; rdi = pointer to exception frame
+    lea  rdi, [rsp + 8]  ; Skip rbp, point to error code
     call isr13_handler
     pop  rbp
+    add  rsp, 8          ; Remove error code
     iretq
 
-; Page Fault (HAS error code) - CPU pushes error code
+; Page Fault - call C handler
 isr14_stub:
+    cli
     push rbp
     mov  rbp, rsp
-    mov  rdi, rsp        ; rdi = pointer to exception frame (includes error code)
+    lea  rdi, [rsp + 8]  ; Skip rbp, point to error code
     call isr14_handler
     pop  rbp
+    add  rsp, 8          ; Remove error code
     iretq

@@ -90,16 +90,6 @@ void irq1_handler(void) {
     outb(PIC1_CMD, PIC_EOI);
 }
 
-//void isr0_handler(void) {
-//    while (1) { }
-//}
-
-//void isr1_handler(void) {
-//    while (1) { }
-//}
-
-// Replace the current handlers with these:
-
 void isr0_handler(void) {
     vga_print("\n*** DIVIDE BY ZERO EXCEPTION (#DE) ***\n");
     vga_print("System halted.\n");
@@ -120,7 +110,6 @@ void pit_init(uint32_t freq) {
 }
 
 // Double Fault (#DF) - has error code
-// In interrupts.c
 void isr8_handler(void) {
     // Write directly to VGA at the top of screen
     volatile uint16_t *vga = (volatile uint16_t*)0xB8000;
@@ -132,99 +121,25 @@ void isr8_handler(void) {
     while (1) __asm__ volatile("hlt");
 }
 
-/*void isr13_handler(exception_frame_t *frame) {
-
-    vga_print("\n*** GENERAL PROTECTION FAULT (#GP) ***\n");
-
-    vga_print("RIP: ");    vga_print_hex_cur(frame->rip);    vga_print("\n");
-    vga_print("CS:  ");    vga_print_hex_cur(frame->cs);     vga_print("\n");
-    vga_print("RFLAGS: "); vga_print_hex_cur(frame->rflags); vga_print("\n");
-    vga_print("RSP: ");    vga_print_hex_cur(frame->rsp);    vga_print("\n");
-    vga_print("SS:  ");    vga_print_hex_cur(frame->ss);     vga_print("\n");
-    vga_print("ERR: ");    vga_print_hex_cur(frame->error_code); vga_print("\n");
-
-    vga_print("System halted.\n");
-    while (1) __asm__ volatile("hlt");
-}
-*/
-
-/*
-void isr13_handler(exception_frame_gp_t *frame) {
-    vga_print("\n*** GENERAL PROTECTION FAULT (#GP) ***\n");
-
-    vga_print("RIP: ");    vga_print_hex_cur(frame->rip);    vga_print("\n");
-    vga_print("CS:  ");    vga_print_hex_cur(frame->cs);     vga_print("\n");
-    vga_print("RFLAGS: "); vga_print_hex_cur(frame->rflags); vga_print("\n");
-    vga_print("RSP: ");    vga_print_hex_cur(frame->rsp);    vga_print("\n");
-    vga_print("SS:  ");    vga_print_hex_cur(frame->ss);     vga_print("\n");
-    vga_print("ERR: ");    vga_print_hex_cur(frame->error_code); vga_print("\n");
-
-    vga_print("System halted.\n");
-    while (1) __asm__ volatile("hlt");
-}
-*/
-
-
-// TODO (#GP full decoding):
-// This handler is intentionally minimal. Early in kernel development, decoding
-// the full #GP exception frame (RIP, CS, RFLAGS, RSP, SS, error_code) caused
-// stack layout and calling‑convention side effects that interfered with IRQ1,
-// breaking keyboard input. The kernel is still too small and fragile for safe
-// frame inspection.
-//
-// Once the kernel has:
-//   - a stable interrupt pipeline,
-//   - a scheduler or at least a controlled main loop,
-//   - a more mature memory manager,
-//   - and verified stack alignment rules,
-// we will implement full #GP frame decoding here.
-//
-// For now, we only print a message and halt cleanly to avoid corrupting runtime
-// state.
-//void isr13_handler(exception_frame_t *frame) {
-//    (void)frame;   // unused until full decoding is implemented
-//    vga_print("\n*** GENERAL PROTECTION FAULT (#GP) ***\n");
-//    vga_print("System halted.\n");
-//    while (1) __asm__ volatile("hlt");
-//}
-
-// General Protection Fault (#GP) - has error code
-//void isr13_handler(exception_frame_t *frame) {
-//    vga_print("\n*** GENERAL PROTECTION FAULT (#GP) ***\n");
-//    vga_print("ERR: 0x");
-//    vga_print_hex_cur(frame->error_code);
-//    vga_print("\n");
-//    vga_print("RIP: 0x");
-//    vga_print_hex_cur(frame->rip);
-//    vga_print("\n");
-//    vga_print("System halted.\n");
-//    while (1) __asm__ volatile("hlt");
-//}
-
-// In interrupts.c
-// In interrupts.c - the version that printed something
-
-
+//~ // GP Fault handler in C
 void isr13_handler(exception_frame_t *frame) {
-    (void)frame;
+    (void)frame;  // Suppress unused warning
     
-    volatile uint16_t *vga = (volatile uint16_t*)0xB8000;
-    const char *msg = "!!! GP FAULT !!!";
-    int pos = 15 * 80 + 10;
-    for (int i = 0; msg[i]; i++) {
-        vga[pos + i] = (0x0C << 8) | msg[i];
-    }
-    
-    // Add a delay so we can see the message
-    for (volatile int i = 0; i < 1000000; i++) {
-        __asm__ volatile("nop");
-    }
+    vga_print("\n!!! GP FAULT !!!\n");
+    vga_print("ERR: 0x");
+    vga_print_hex_cur(frame->error_code);
+    vga_print("\n");
+    vga_print("RIP: 0x");
+    vga_print_hex_cur(frame->rip);
+    vga_print("\n");
+    vga_print("CS: 0x");
+    vga_print_hex_cur(frame->cs);
+    vga_print("\n");
     
     while (1) __asm__ volatile("hlt");
 }
 
 void isr14_handler(exception_frame_t *frame) {
-
     uint64_t cr2;
     __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
 
@@ -244,5 +159,4 @@ void isr14_handler(exception_frame_t *frame) {
 
     vga_print("System halted.\n");
     while (1) __asm__ volatile("hlt");
-
 }

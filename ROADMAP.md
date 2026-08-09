@@ -80,10 +80,11 @@ Boot chain is complete and stable.
 - Clean identity map and higher-half mapping working (completed)
 
 ### ✔ 3.2 — Exception Handlers (Completed)
-- Page Fault handler (dump CR2, error code) - ✅ Working  
-- Divide by Zero handler - ✅ Working  
-- Double Fault handler - ✅ Registered  
-- General Protection Fault handler - ⚠️ In progress (triple fault)
+- ✅ Page Fault handler (dump CR2, error code, RIP)
+- ✅ Divide by Zero handler (message and halt)
+- ✅ General Protection Fault handler (dump ERR, RIP, CS)
+- ✅ Double Fault handler (registered)
+- Test command (`test`) for triggering all exceptions
 - Stack trace on panic - ☐ Planned
 
 ### ☐ 3.3 — Virtual Memory Manager (Next)
