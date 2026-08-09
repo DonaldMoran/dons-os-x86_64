@@ -57,18 +57,7 @@ static void handle_command(const char *cmd) {
             vga_print("\n");
             
             vga_print("  E820 count: ");
-            // Simple decimal print for count
-            char buf[4];
-            int n = g_bootinfo->memory_map_count;
-            int i = 0;
-            if (n == 0) { vga_print("0"); }
-            else {
-                while (n > 0) {
-                    buf[i++] = '0' + (n % 10);
-                    n /= 10;
-                }
-                while (i > 0) { vga_putc(buf[--i]); }
-            }
+            vga_print_dec_cur(g_bootinfo->memory_map_count);
             vga_print("\n");
         } else {
             vga_print("  No boot info available\n");
@@ -93,35 +82,11 @@ static void handle_command(const char *cmd) {
             }
             
             vga_print("\n  Usable RAM: ");
-            // Simple decimal print
-            uint64_t val = total_usable / (1024 * 1024);
-            char buf[12];
-            int i = 11;
-            buf[i] = '\0';
-            if (val == 0) { vga_print("0"); }
-            else {
-                while (val > 0 && i > 0) {
-                    i--;
-                    buf[i] = '0' + (val % 10);
-                    val /= 10;
-                }
-                vga_print(&buf[i]);
-            }
+            vga_print_dec_cur(total_usable / (1024 * 1024));
             vga_print(" MB\n");
             
             vga_print("  Reserved RAM: ");
-            val = total_reserved / (1024 * 1024);
-            i = 11;
-            buf[i] = '\0';
-            if (val == 0) { vga_print("0"); }
-            else {
-                while (val > 0 && i > 0) {
-                    i--;
-                    buf[i] = '0' + (val % 10);
-                    val /= 10;
-                }
-                vga_print(&buf[i]);
-            }
+            vga_print_dec_cur(total_reserved / (1024 * 1024));
             vga_print(" MB\n");
         } else {
             vga_print("  Memory map not available\n");
@@ -167,9 +132,6 @@ static void handle_command(const char *cmd) {
         vga_print("\n");
         vga_print("Test complete.\n");
         vga_print("> ");
-        
-    // Add this to handle_command() in the if/else chain:
-    
     } else if (strcmp(cmd, "test") == 0) {
         vga_print("\n=== Exception Test ===\n");
         vga_print("Select test:\n");
@@ -178,7 +140,6 @@ static void handle_command(const char *cmd) {
         vga_print(" 3 - GP fault\n");
         vga_print("> ");
         
-        // Wait for a key press (simple polling loop)
         char c = 0;
         while (!kbd_buffer_get(&c)) {
             asm volatile("hlt");
@@ -189,7 +150,6 @@ static void handle_command(const char *cmd) {
         
         if (c == '1') {
             vga_print("Dividing by zero...\n");
-            // Inline assembly - compiler cannot optimize this
             __asm__ volatile(
                 "xor %%rax, %%rax\n"
                 "xor %%rbx, %%rbx\n"
@@ -199,21 +159,19 @@ static void handle_command(const char *cmd) {
         } else if (c == '2') {
             vga_print("Causing page fault...\n");
             uint64_t *bad = (uint64_t*)0xFFFFFFFF00000000;
-            *bad = 0xDEADBEEF;  // Trigger #PF
+            *bad = 0xDEADBEEF;
         } else if (c == '3') {
             vga_print("Causing GP fault...\n");
-            // This will cause a #GP if ECX=0 and EAX[2:1] == 10b (which is 2)
             __asm__ volatile(
-                "mov $0x0, %%ecx\n"          // ECX = 0
-                "mov $0x2, %%eax\n"          // EAX = 2 (bits 2:1 = 10b)
-                "mov $0x0, %%edx\n"          // EDX = 0
-                "xsetbv\n"                   // Execute XSETBV
+                "mov $0x0, %%ecx\n"
+                "mov $0x2, %%eax\n"
+                "mov $0x0, %%edx\n"
+                "xsetbv\n"
                 : : : "rax", "rcx", "rdx"
             );
         } else {
             vga_print("Invalid choice\n");
-        }      
-        
+        }
     } else {
         vga_print("\nUnknown command. Type 'help'\n");
         vga_print("> ");
