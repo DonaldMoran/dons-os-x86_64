@@ -90,14 +90,18 @@ void irq1_handler(void) {
     outb(PIC1_CMD, PIC_EOI);
 }
 
+// Divide by Zero handler with color
 void isr0_handler(void) {
-    vga_print("\n*** DIVIDE BY ZERO EXCEPTION (#DE) ***\n");
+    vga_print("\n");
+    vga_print_color("*** DIVIDE BY ZERO EXCEPTION (#DE) ***\n", 0x0C);
     vga_print("System halted.\n");
     while (1) __asm__ volatile("hlt");
 }
 
+// Debug handler with color
 void isr1_handler(void) {
-    vga_print("\n*** DEBUG EXCEPTION (#DB) ***\n");
+    vga_print("\n");
+    vga_print_color("*** DEBUG EXCEPTION (#DB) ***\n", 0x0C);
     vga_print("System halted.\n");
     while (1) __asm__ volatile("hlt");
 }
@@ -109,23 +113,20 @@ void pit_init(uint32_t freq) {
     outb(PIT_CH0, (divisor >> 8) & 0xFF);
 }
 
-// Double Fault (#DF) - has error code
+// Double Fault handler with color
 void isr8_handler(void) {
-    // Write directly to VGA at the top of screen
-    volatile uint16_t *vga = (volatile uint16_t*)0xB8000;
-    const char *msg = "!!! DOUBLE FAULT !!!";
-    for (int i = 0; msg[i]; i++) {
-        vga[i] = (0x0C << 8) | msg[i];  // Red text
-    }
-    
+    vga_print("\n");
+    vga_print_color("!!! DOUBLE FAULT !!!\n", 0x0C);
+    vga_print("System halted.\n");
     while (1) __asm__ volatile("hlt");
 }
 
-//~ // GP Fault handler in C
+// GP Fault handler with color
 void isr13_handler(exception_frame_t *frame) {
-    (void)frame;  // Suppress unused warning
+    (void)frame;
     
-    vga_print("\n!!! GP FAULT !!!\n");
+    vga_print("\n");
+    vga_print_color("!!! GP FAULT !!!\n", 0x0C);  // Red text
     vga_print("ERR: 0x");
     vga_print_hex_cur(frame->error_code);
     vga_print("\n");
@@ -139,24 +140,22 @@ void isr13_handler(exception_frame_t *frame) {
     while (1) __asm__ volatile("hlt");
 }
 
+// Page Fault handler with color
 void isr14_handler(exception_frame_t *frame) {
     uint64_t cr2;
     __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
 
-    vga_print("\n*** PAGE FAULT (#PF) ***\n");
-
-    vga_print("CR2 (fault addr): ");
+    vga_print("\n");
+    vga_print_color("*** PAGE FAULT (#PF) ***\n", 0x0C);  // Red text
+    vga_print("CR2 (fault addr): 0x");
     vga_print_hex_cur(cr2);
     vga_print("\n");
-
-    vga_print("ERR: ");
+    vga_print("ERR: 0x");
     vga_print_hex_cur(frame->error_code);
     vga_print("\n");
-
-    vga_print("RIP: ");
+    vga_print("RIP: 0x");
     vga_print_hex_cur(frame->rip);
     vga_print("\n");
-
     vga_print("System halted.\n");
     while (1) __asm__ volatile("hlt");
 }

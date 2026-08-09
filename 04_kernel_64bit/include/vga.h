@@ -17,4 +17,7 @@ void vga_hide_cursor(void);
 void vga_print_hex_cur(uint64_t val);
 void vga_print_dec_cur(uint64_t val);
 
+// In vga.h - add this line
+void vga_print_color(const char *s, uint8_t color);
+
 #endif

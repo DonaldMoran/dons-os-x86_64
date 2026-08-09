@@ -231,3 +231,18 @@ void vga_set_cursor(int row, int col) {
     __asm__ volatile("sti");
 }
 
+// In vga.c - add this function
+void vga_print_color(const char *s, uint8_t color) {
+    __asm__ volatile("cli");
+    
+    uint8_t old_attr = cursor_attr;
+    cursor_attr = color;
+    
+    while (*s) {
+        vga_putc(*s++);
+    }
+    
+    cursor_attr = old_attr;
+    
+    __asm__ volatile("sti");
+}
