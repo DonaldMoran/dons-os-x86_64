@@ -7,6 +7,7 @@ struct idt_ptr   idt_descriptor;
 
 extern void isr0_stub(void);
 extern void isr1_stub(void);
+extern void isr8_stub(void);
 extern void isr13_stub(void);
 extern void isr14_stub(void);
 
@@ -29,8 +30,10 @@ static void set_idt_entry(int vec, uint64_t handler) {
 void idt_init(void) {
     set_idt_entry(0, (uint64_t)isr0_stub);
     set_idt_entry(1, (uint64_t)isr1_stub);
+    set_idt_entry(8, (uint64_t)isr8_stub);   // Double Fault - ADD THIS LINE
     set_idt_entry(13, (uint64_t)isr13_stub);
     set_idt_entry(14, (uint64_t)isr14_stub);
+    
 
     pic_remap();
 

@@ -79,6 +79,7 @@ Once booted, you'll see a prompt > where you can type commands:
 | `mem` | Display memory statistics (usable/reserved RAM) |
 | `reboot` | Reboot the system |
 | `pmmtest` | Test Physical Memory Manager |
+| `test` | Test exception handlers (#DE, #PF) |
 
 ```
 DonsDOS v0.1
@@ -171,6 +172,7 @@ This project is designed to be:
 - `v0.1.1-shell**`	          Command shell, cursor control, improved console, bug fixes
 - `v0.1.2-stable` 	Full shell with PMM, info, mem commands, linker padding fix, and stable kernel
 - `v0.2.0-higher-half`	Higher-half kernel transition complete (kernel runs at 0xFFFFFFFF80100000)
+- `v0.2.1-exception-handlers` Exception handlers: #DE, #PF working; #GP in progress
 ---
 
 ## 📌 Project Status (as of August 2026)
@@ -185,7 +187,8 @@ This project is designed to be:
 **Interrupts & Exceptions**
 - Fully functional IDT and ISR stubs
 - Stable IRQ0 (PIT timer) and IRQ1 (keyboard)
-- Basic #GP and #PF handlers (ISR stubs in place, C handlers ready for enhancement)
+- Working #DE (divide by zero) and #PF (page fault) handlers with register dumps
+- #GP (general protection fault) and #DF (double fault) handlers in place (GP needs debugging)
 
 **Drivers**
 - VGA text console (80×25) with scrolling and cursor control
@@ -213,7 +216,7 @@ This project is designed to be:
 
 ### Short-term
 1. ~~**Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED (kernel now runs at `0xFFFFFFFF80100000`)
-2. **Exception handlers** — Page fault, GPF, double fault with register dumps (NEXT)
+2. ~~**Exception handlers** — Page fault, GPF, double fault with register dumps~~ ✅ COMPLETED (#DE and #PF working, #GP partially working)
 3. **Virtual memory manager** — Dynamic page tables, map/unmap
 4. **Heap allocator** — `kmalloc`/`kfree` implementation
 

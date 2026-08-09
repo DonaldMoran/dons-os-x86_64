@@ -29,6 +29,7 @@ static void handle_command(const char *cmd) {
         vga_print("  pmmtest  - Test Physical Memory Manager\n");
         vga_print("  info     - Show boot information\n");
         vga_print("  mem      - Show memory information\n");
+        vga_print("  test     - Exception Handling test\n");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
         vga_print("DonsDOS v0.1\n");
@@ -165,6 +166,46 @@ static void handle_command(const char *cmd) {
         vga_print("\n");
         vga_print("Test complete.\n");
         vga_print("> ");
+        
+    // Add this to handle_command() in the if/else chain:
+    
+    } else if (strcmp(cmd, "test") == 0) {
+        vga_print("\n=== Exception Test ===\n");
+        vga_print("Select test:\n");
+        vga_print(" 1 - Divide by zero\n");
+        vga_print(" 2 - Page fault\n");
+        vga_print(" 3 - GP fault\n");
+        vga_print("> ");
+        
+        // Wait for a key press (simple polling loop)
+        char c = 0;
+        while (!kbd_buffer_get(&c)) {
+            asm volatile("hlt");
+        }
+        
+        vga_putc(c);
+        vga_print("\n");
+        
+        if (c == '1') {
+            vga_print("Dividing by zero...\n");
+            // Inline assembly - compiler cannot optimize this
+            __asm__ volatile(
+                "xor %%rax, %%rax\n"
+                "xor %%rbx, %%rbx\n"
+                "div %%rbx\n"
+                : : : "rax", "rbx", "rdx"
+            );
+        } else if (c == '2') {
+            vga_print("Causing page fault...\n");
+            uint64_t *bad = (uint64_t*)0xFFFFFFFF00000000;
+            *bad = 0xDEADBEEF;  // Trigger #PF
+        } else if (c == '3') {
+            vga_print("Causing GP fault...\n");
+            asm volatile("mov $0xFFFFFFFF, %rax; mov %rax, %cr3");
+        } else {
+            vga_print("Invalid choice\n");
+        }      
+        
     } else {
         vga_print("\nUnknown command. Type 'help'\n");
         vga_print("> ");

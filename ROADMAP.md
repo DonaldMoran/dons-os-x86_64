@@ -79,11 +79,12 @@ Boot chain is complete and stable.
 - Update linker script (completed)  
 - Clean identity map and higher-half mapping working (completed)
 
-### ☐ 3.2 — Exception Handlers (Next)
-- Page Fault handler (dump CR2, error code)  
-- General Protection Fault handler  
-- Double Fault handler  
-- Stack trace on panic
+### ✔ 3.2 — Exception Handlers (Completed)
+- Page Fault handler (dump CR2, error code) - ✅ Working  
+- Divide by Zero handler - ✅ Working  
+- Double Fault handler - ✅ Registered  
+- General Protection Fault handler - ⚠️ In progress (triple fault)
+- Stack trace on panic - ☐ Planned
 
 ### ☐ 3.3 — Virtual Memory Manager (Next)
 - Dynamic page mapping  
@@ -155,7 +156,7 @@ Boot chain is complete and stable.
 | VGA Console | ✔ Complete |
 | Command Shell | ✔ Complete |
 | Higher‑half kernel | ✔ Complete |
-| Exception Handlers | ☐ Next |
+| Exception Handlers | ✔ Complete (#DE, #PF working) |
 | VMM | ☐ Next |
 | Heap Allocator | ☐ Planned |
 | Scheduler | ☐ Planned |
