@@ -23,6 +23,7 @@ typedef struct {
     uint64_t kernel_phys_end;
 
     uint64_t pml4_addr;
+    uint64_t pml4_virt;          // Virtual address of PML4 via recursive mapping
 } BootInfo;
 
 #endif

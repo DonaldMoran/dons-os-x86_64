@@ -5,7 +5,9 @@
 	boot32 run32 \
 	boot64 run64 \
 	kernel64 \
-	bootkernel64 runkernel64 logkernel64
+	bootkernel64 \
+	runkernel64 runkernel64-log runkernel64-debug runkernel64-verbose runkernel64-headless runkernel64-kvm \
+	logkernel64
 
 # -------------------------
 # Default: build everything
@@ -51,14 +53,34 @@ kernel64:
 bootkernel64:
 	$(MAKE) -C 05_boot_kernel64
 
+# ---- QEMU run targets ----
 runkernel64:
 	$(MAKE) -C 05_boot_kernel64 run
 
-# -------------------------
-# Run with QEMU debug logging
-# -------------------------
+runkernel64-log:
+	$(MAKE) -C 05_boot_kernel64 run-log
+
+runkernel64-debug:
+	$(MAKE) -C 05_boot_kernel64 run-debug
+
+runkernel64-verbose:
+	$(MAKE) -C 05_boot_kernel64 run-verbose
+
+runkernel64-headless:
+	$(MAKE) -C 05_boot_kernel64 run-headless
+
+runkernel64-kvm:
+	$(MAKE) -C 05_boot_kernel64 run-kvm
+
+runkernel64-telnet:
+	$(MAKE) -C 05_boot_kernel64 run-telnet
+
+# ---- Legacy / debug targets ----
 logkernel64:
 	$(MAKE) -C 05_boot_kernel64 log
+
+debugkernel64:
+	$(MAKE) -C 05_boot_kernel64 debug
 
 # -------------------------
 # Clean everything

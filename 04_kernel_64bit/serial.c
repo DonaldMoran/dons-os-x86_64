@@ -36,3 +36,20 @@ void serial_print_hex(uint64_t value) {
     while (value > 0 && i >= 0) { buf[i--] = hex[value & 0xF]; value >>= 4; }
     for (int j = i + 1; j < 16; j++) serial_putc(buf[j]);
 }
+
+void serial_print_dec(uint64_t value) {
+    char buf[32];
+    int idx = 31;
+    buf[idx--] = '\0';
+    if (value == 0) {
+        serial_putc('0');
+        return;
+    }
+    while (value > 0 && idx >= 0) {
+        buf[idx--] = '0' + (value % 10);
+        value /= 10;
+    }
+    for (int i = idx + 1; buf[i] != '\0'; i++) {
+        serial_putc(buf[i]);
+    }
+}

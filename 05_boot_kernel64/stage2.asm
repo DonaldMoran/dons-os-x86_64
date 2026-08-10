@@ -178,9 +178,10 @@ gdt_descriptor:
 ; --------------------------------------------------------
 align 4096
 pml4:
-    dq pdpt_identity + 3
-    times 510 dq 0
-    dq pdpt_higher + 3
+    dq pdpt_identity + 3        ; Entry 0: Identity map
+    times 509 dq 0              ; Entries 1-509: Empty
+    dq pml4 + 0x003             ; Entry 510: RECURSIVE MAP
+    dq pdpt_higher + 3          ; Entry 511: Higher half
 
 align 4096
 pdpt_identity:
@@ -189,7 +190,8 @@ pdpt_identity:
 
 align 4096
 pdpt_higher:
-    times 510 dq 0
+    times 509 dq 0              ; Entries 1-509: Empty
+    dq pml4 + 0x003             ; Entry 510: RECURSIVE MAP
     dq pd + 3
     dq 0
 

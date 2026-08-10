@@ -87,14 +87,17 @@ Boot chain is complete and stable.
 - Test command (`test`) for triggering all exceptions
 - Stack trace on panic - ☐ Planned
 
-### 🚧 3.3 — Virtual Memory Manager (VMM) - In Progress
+### ✅ 3.3 — Virtual Memory Manager (VMM) - COMPLETED
 - ✅ CR3/PML4 read and displayed at boot
 - ✅ HHDM_START defined and printed
 - ✅ vmmtest command implemented
 - ✅ Serial debug output (COM1)
-- ☐ Real page mapping to HHDM
-- ☐ Dynamic page table allocation
-- ☐ User-space page mapping
+- ✅ **Recursive paging** implemented at PML4[510]
+- ✅ PML4 read/write from higher-half kernel
+- ✅ Dynamic page table allocation (PDPT, PD, PT)
+- ✅ HHDM mapping (PML4[256] mapped)
+- ✅ No GP faults when accessing page tables
+- ☐ User-space page mapping (future)
 
 ### ☐ 3.4 — Kernel Heap Allocator
 - kmalloc() / kfree()  
@@ -126,24 +129,26 @@ Boot chain is complete and stable.
 - File operations (open, read, write, close)
 
 ### ☐ 4.3 — Device Drivers
-- ✅ Serial/COM port  
-- PCI enumeration  
-- AHCI disk driver  
-- PS/2 mouse
+- ✅ Serial/COM port (working)
+- ☐ PCI enumeration
+- ☐ AHCI disk driver
+- ☐ PS/2 mouse
 
 ---
 
 ## 5. Development Tools
 
-### ✔ QEMU Debug Mode
-- `-d int,cpu_reset,guest_errors`  
-- `-no-reboot -no-shutdown`  
-- `-serial file:qemu.log`
-- `-serial stdio for real-time serial console output`
+### ✅ QEMU Debug Mode
+- `-serial stdio` for real-time serial console output
+- `-serial file:qemu.log` for saving serial output
+- `-d int,cpu_reset,guest_errors` for interrupt logging
+- `-no-reboot -no-shutdown` for debugging crashes
+- Multiple run modes: `run`, `run-log`, `run-debug`, `run-verbose`, `run-headless`, `run-kvm`
 
-### ☐ GDB Remote Debugging
-- Add `-s -S`  
-- Document breakpoints
+### ✅ GDB Remote Debugging
+- `make runkernel64-debug` for GDB server
+- `-s -S` flags enabled
+- Connect with: `gdb -ex "target remote localhost:1234" kernel.elf`
 
 ### ✔ Build Automation
 - Top‑level Makefile with debug targets  
@@ -162,12 +167,32 @@ Boot chain is complete and stable.
 | VGA Console | ✔ Complete |
 | Command Shell | ✔ Complete |
 | Higher‑half kernel | ✔ Complete |
-| Exception Handlers | ✔ Complete (#DE, #PF , #GP) |
-| Virtual Memory Manager | ✔ Partial | HHDM |
-| Serial Debug Output | ✔ Complete
+| Exception Handlers | ✔ Complete (#DE, #PF, #GP) |
+| **Virtual Memory Manager** | **✔ Complete (recursive paging)** |
+| Serial Debug Output | ✔ Complete |
 | Heap Allocator | ☐ Planned |
 | Scheduler | ☐ Planned |
 | Userspace | ☐ Planned |
+
+---
+
+---
+
+## Milestone: v0.2.3-vmm-stable (August 2026)
+
+**What was accomplished:**
+- ✅ Recursive paging implemented in bootloader
+- ✅ VMM can read and write PML4 from higher-half kernel
+- ✅ PML4[510] maps to itself for page table access
+- ✅ HHDM region mapped at PML4[256]
+- ✅ Dynamic page table allocation working
+- ✅ Serial console fully integrated with QEMU
+- ✅ Multiple QEMU run modes (serial, debug, headless, KVM)
+
+**Key learnings:**
+- Recursive paging is essential for accessing page tables from higher-half
+- PMM must be initialized before VMM can allocate page tables
+- Serial output is invaluable for debugging OS development
 
 ---
 

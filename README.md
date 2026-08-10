@@ -15,8 +15,8 @@ Each stage is isolated, minimal, and fully bootable.
 - **02_boot_32bit** — A20 enable, GDT, protected mode, VGA text  
 - **03_boot_64bit** — PAE paging, PML4/PDPT/PD/PT, IA32_EFER.LME, long‑mode entry  
 
-### Kernel Development
-- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VGA, command shell  
+### Kernel Development 
+- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell  
 - **05_boot_kernel64** — Full boot chain: stage2 loads kernel, enters long mode, jumps to `_start`
 
 The top‑level Makefile builds and runs all components.
@@ -31,25 +31,25 @@ make all
 ```
 
 ### Run individual boot demos
-```
+```bash
 make run16
 make run32
 make run64
 ```
 
 ### Build the 64‑bit kernel
-```
+```bash
 make kernel64
 ```
 
 ### Build + run the full long‑mode OS
-```
+```bash
 make bootkernel64
 make runkernel64
 ```
 
 ### Run with QEMU debug logging
-```
+```bash
 make logkernel64
 ```
 
@@ -57,14 +57,13 @@ This boots:
 
  1. BIOS → stage1  
  2. stage1 loads stage2  
- 3. stage2 builds page tables  
+ 3. stage2 builds page tables with **recursive mapping**  
  4. stage2 enters long mode  
  5. stage2 jumps to kernel at 0xFFFFFFFF80100000 (higher-half)  
  6. kernel executes `_start` → `kmain`  
- 7. kernel prints boot banner and system info
- 8. kernel initializes IDT, PIC, PIT, keyboard
- 9. kernel displays command prompt >
-10. User can type commands and receive responses
+ 7. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM  
+ 8. kernel displays command prompt `>`  
+ 9. User can type commands and receive responses
 
 ---
 ### Command Shell
@@ -80,9 +79,10 @@ Once booted, you'll see a prompt > where you can type commands:
 | `reboot` | Reboot the system |
 | `pmmtest` | Test Physical Memory Manager |
 | `test` | Test exception handlers (#DE, #PF, #GP) |
-| vmmtest | Test Virtual Memory Manager with HHDM |
+| `vmmtest` | Test Virtual Memory Manager with HHDM |
+| `serialtest` | Test serial output debugging |
 
-```
+``` 
 DonsDOS v0.1
 Type 'help'
 > help
@@ -106,11 +106,12 @@ PMM Test:
 Test complete.
 > vmmtest
 
-=== VMM Test ===
-VMM initialized successfully!
-HHDM_START: 0xFFFF800000000000
-Memory management active
-VMM test complete!
+=== VMM Status ===
+  Status: Working (recursive paging verified)
+  HHDM_START: 0xFFFF800000000000
+  CR3: 0x0000000000011000
+  PMM: Working
+  VMM: Working
 ```
 ---
 
@@ -122,13 +123,14 @@ QEMU’s built‑in logging makes it dramatically easier to diagnose faults, pag
 Run **any** boot stage in debug mode using:
 
 ### Quick debug run:
-```
+```bash
 make logkernel64
 ```
 ### Manual debug command:
-```
+```bash
 qemu-system-x86_64 \
   -drive file=hdd.img,format=raw \
+  -serial stdio \
   -d int,cpu_reset \
   -no-reboot \
   -no-shutdown
@@ -144,6 +146,7 @@ qemu-system-x86_64 \
 - **`-no-shutdown`** — keeps QEMU open so you can read the debug output
 - **`-serial file:qemu.log**` — serial output saved to file
 - **`-D qemu_debug.log**` — all debug output saved to file
+- **`-serial stdio`** — real-time serial debug output in your terminal
 
 ### 🧩 Useful for diagnosing
 
@@ -156,6 +159,34 @@ qemu-system-x86_64 \
 
 This debug mode was instrumental in getting the 64‑bit kernel working.
 
+---
+
+### Additional run modes
+
+# Run with serial output to terminal (default)
+```bash
+make runkernel64
+```
+# Run with serial output saved to file
+```bash
+make runkernel64-log
+```
+# Run with GDB debug server
+```bash
+make runkernel64-debug
+```
+# Run with verbose debug logging
+```bash
+make runkernel64-verbose
+```
+# Run headless (no VGA window)
+```bash
+make runkernel64-headless
+```
+# Run with KVM acceleration (faster)
+```bash
+make runkernel64-kvm
+```
 ---
 
 ## 🎓 Purpose
@@ -181,6 +212,7 @@ This project is designed to be:
 - `v0.2.0-higher-half`	Higher-half kernel transition complete (kernel runs at 0xFFFFFFFF80100000)
 - `v0.2.1-exception-handlers`	All exception handlers working (#DE, #PF, #GP)
 - `v0.2.2-vmm-working`	Virtual Memory Manager with HHDM, `vmmtest` command, serial debug output
+- `v0.2.3-vmm-stable` — **Recursive paging implemented**, VMM can read/write PML4, stable HHDM mapping, serial console fully integrated
 
 ---
 
@@ -192,6 +224,7 @@ This project is designed to be:
 - Full boot chain: 16‑bit → 32‑bit → 64‑bit long mode
 - Working GDT and TSS
 - Higher-half kernel region (kernel runs at 0xFFFFFFFF80100000)
+- **Recursive paging** at PML4[510] for page table access from higher-half
 
 **Interrupts & Exceptions**
 - Fully functional IDT and ISR stubs
@@ -218,32 +251,35 @@ This project is designed to be:
 - Memory map passed to kernel via BootInfo
 - Physical Memory Manager (PMM) with bitmap allocator
 - Page allocation, freeing, and reuse verified
-- **Virtual Memory Manager (VMM)** 🚧
-  - Reads CR3 (PML4 address) and displays it at boot
+- ✅ **Virtual Memory Manager (VMM)** with recursive paging
+  - Reads and writes PML4 from higher-half kernel
   - HHDM_START: `0xFFFF800000000000`
-  - `vmmtest` command to display VMM status
-  - Hardware state inspection working
-  - Real page mapping (HHDM) under development
+  - PML4[256] mapped for HHDM region
+  - Dynamic page table allocation (PDPT, PD, PT)
+  - `vmmtest` command verifies page mapping
+  - No GP faults when accessing page tables
 
 **Build System**
 - Organized source tree with Makefile
 - QEMU bootable disk image
 - Clean Clang + NASM build
-- Debug logging support
+- Multiple QEMU run modes (serial, debug, headless, KVM)
+- Debug logging support with serial console
 
 ## 🌱 Next Steps (Roadmap)
 
 ### Short-term
-1. ~~**Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED (kernel now runs at `0xFFFFFFFF80100000`)
-2. ~~**Exception handlers** — Page fault, GPF, double fault with register dumps~~ ✅ COMPLETED (#DE and #PF working, #GP partially working)
-3. ~~**Virtual memory manager** — HHDM, dynamic page tables~~ ✅ COMPLETED
-4. **Heap allocator** — `kmalloc`/`kfree` implementation
+1. ~~**Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED
+2. ~~**Exception handlers** — Page fault, GPF, double fault with register dumps~~ ✅ COMPLETED
+3. ~~**Virtual memory manager** — HHDM, dynamic page tables, recursive paging~~ ✅ COMPLETED
+4. **Heap allocator** — `kmalloc`/`kfree` implementation using VMM
+5. **Userspace memory** — Map user pages with PT_USER flag
 
 ### Long-term
-4. **Scheduler** — Task switching (cooperative → preemptive)
-5. **Framebuffer graphics** — Move from VGA text mode to graphics
-6. **ELF loader** — Load and execute user programs
-7. **User‑space processes** — Process model, isolation, syscalls
+6. **Scheduler** — Task switching (cooperative → preemptive)
+7. **Framebuffer graphics** — Move from VGA text mode to graphics
+8. **ELF loader** — Load and execute user programs
+9. **User‑space processes** — Process model, isolation, syscalls
 
 ---
 
