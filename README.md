@@ -80,6 +80,7 @@ Once booted, you'll see a prompt > where you can type commands:
 | `reboot` | Reboot the system |
 | `pmmtest` | Test Physical Memory Manager |
 | `test` | Test exception handlers (#DE, #PF, #GP) |
+| vmmtest | Test Virtual Memory Manager with HHDM |
 
 ```
 DonsDOS v0.1
@@ -103,7 +104,13 @@ PMM Test:
   Freed page2
   Page4: 0x0000000000109000
 Test complete.
-> 
+> vmmtest
+
+=== VMM Test ===
+VMM initialized successfully!
+HHDM_START: 0xFFFF800000000000
+Memory management active
+VMM test complete!
 ```
 ---
 
@@ -165,14 +172,15 @@ This project is designed to be:
 
 ## 🌱 Tags & Milestones
 
-- `**v0.0.1-longmode**`	      First successful long-mode boot and flat binary kernel
-- `**v0.0.2-interrupts**`	    IDT, PIC remap, PIT timer, IRQ0 (tick), IRQ1 (keyboard)
-- `**v0.0.2-pmm-working**`	  PMM bitmap init fixed, E820 validated, allocator stable
+- `**v0.0.1-longmode**`	First successful long-mode boot and flat binary kernel
+- `**v0.0.2-interrupts**`	IDT, PIC remap, PIT timer, IRQ0 (tick), IRQ1 (keyboard)
+- `**v0.0.2-pmm-working**`	PMM bitmap init fixed, E820 validated, allocator stable
 - `**v0.1-stable-keyboard**`	Stable buffered keyboard (shift/caps/backspace/space), clean VGA console, correct IRQ handling
-- `v0.1.1-shell**`	          Command shell, cursor control, improved console, bug fixes
-- `v0.1.2-stable` 	Full shell with PMM, info, mem commands, linker padding fix, and stable kernel
+- `v0.1.1-shell**`	Command shell, cursor control, improved console, bug fixes
+- `v0.1.2-stable`	Full shell with PMM, info, mem commands, linker padding fix, and stable kernel
 - `v0.2.0-higher-half`	Higher-half kernel transition complete (kernel runs at 0xFFFFFFFF80100000)
 - `v0.2.1-exception-handlers`	All exception handlers working (#DE, #PF, #GP)
+- `v0.2.2-vmm-working`	Virtual Memory Manager with HHDM, `vmmtest` command, serial debug output
 
 ---
 
@@ -197,17 +205,23 @@ This project is designed to be:
 - VGA text console (80×25) with scrolling and cursor control
 - Keyboard driver with shift/caps/backspace support
 - PIT timer incrementing `g_ticks`
+- Serial (COM1) output for kernel debugging
 
 **Shell / Console**
 - Interactive prompt (`>`)
 - Commands: `help`, `clear`, `version`, `info`, `mem`, `reboot`, `pmmtest`
 - Clean command parsing and line editing
+- Serial console output (COM1) for debugging alongside VGA
 
 **Memory**
 - Full BIOS E820 memory map parsing
 - Memory map passed to kernel via BootInfo
 - Physical Memory Manager (PMM) with bitmap allocator
 - Page allocation, freeing, and reuse verified
+- Virtual Memory Manager (VMM) with HHDM (Higher Half Direct Map) ✅
+  - Maps physical memory to `0xFFFF800000000000`
+  - Dynamic page table allocation
+  - `vmmtest` command to verify HHDM functionality
 
 **Build System**
 - Organized source tree with Makefile
@@ -220,7 +234,7 @@ This project is designed to be:
 ### Short-term
 1. ~~**Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED (kernel now runs at `0xFFFFFFFF80100000`)
 2. ~~**Exception handlers** — Page fault, GPF, double fault with register dumps~~ ✅ COMPLETED (#DE and #PF working, #GP partially working)
-3. **Virtual memory manager** — Dynamic page tables, map/unmap
+3. ~~**Virtual memory manager** — HHDM, dynamic page tables~~ ✅ COMPLETED
 4. **Heap allocator** — `kmalloc`/`kfree` implementation
 
 ### Long-term

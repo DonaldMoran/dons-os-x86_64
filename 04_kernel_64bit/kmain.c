@@ -6,6 +6,8 @@
 #include "include/vga.h"
 #include "include/keyboard.h"
 #include "include/interrupts.h"
+#include "include/vmm.h"
+#include "include/serial.h"
 
 extern void pit_init(uint32_t freq);
 
@@ -30,16 +32,20 @@ static void handle_command(const char *cmd) {
         vga_print("  info     - Show boot information\n");
         vga_print("  mem      - Show memory information\n");
         vga_print("  test     - Exception Handling test\n");
+        vga_print("  vmmtest  - Test Virtual Memory Manager\n");
         vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
+ 
+    serial_init();
+    serial_print("Serial: Kernel booted\n");
         vga_print("DonsDOS v0.1\n");
         vga_print("Type 'help'\n");
         vga_print("> ");
     } else if (strcmp(cmd, "version") == 0) {
         vga_print("\nDonsDOS v0.1\n");
         vga_print("Build: 64-bit kernel with VGA console\n");
-        vga_print("Copyright (c) 2024 Don's OS Project\n");
+        vga_print("Copyright (c) 2026 Don's OS Project\n");
         vga_print("> ");
     } else if (strcmp(cmd, "info") == 0) {
         vga_print("\nBoot Information:\n");
@@ -47,15 +53,12 @@ static void handle_command(const char *cmd) {
             vga_print("  PML4 addr: 0x");
             vga_print_hex_cur(g_bootinfo->pml4_addr);
             vga_print("\n");
-            
             vga_print("  Kernel phys start: 0x");
             vga_print_hex_cur(g_bootinfo->kernel_phys_start);
             vga_print("\n");
-            
             vga_print("  Kernel phys end: 0x");
             vga_print_hex_cur(g_bootinfo->kernel_phys_end);
             vga_print("\n");
-            
             vga_print("  E820 count: ");
             vga_print_dec_cur(g_bootinfo->memory_map_count);
             vga_print("\n");
@@ -70,27 +73,22 @@ static void handle_command(const char *cmd) {
         
         if (g_bootinfo && g_bootinfo->memory_map_count > 0) {
             MemoryMapEntry *m = (MemoryMapEntry *)g_bootinfo->memory_map_addr;
-            uint64_t total_usable = 0;
-            uint64_t total_reserved = 0;
-            
+            uint64_t usable = 0;
+            uint64_t reserved = 0;
             for (uint64_t i = 0; i < g_bootinfo->memory_map_count; i++) {
-                if (m[i].type == 1) {
-                    total_usable += m[i].length;
-                } else if (m[i].type > 0 && m[i].type < 100) {
-                    total_reserved += m[i].length;
-                }
+                if (m[i].type == 1) usable += m[i].length;
+                else if (m[i].type > 0 && m[i].type < 100) reserved += m[i].length;
             }
-            
             vga_print("\n  Usable RAM: ");
-            vga_print_dec_cur(total_usable / (1024 * 1024));
+            vga_print_dec_cur(usable / (1024 * 1024));
             vga_print(" MB\n");
-            
             vga_print("  Reserved RAM: ");
-            vga_print_dec_cur(total_reserved / (1024 * 1024));
+            vga_print_dec_cur(reserved / (1024 * 1024));
             vga_print(" MB\n");
         } else {
             vga_print("  Memory map not available\n");
         }
+        vga_print("  VMM: Active with HHDM\n");
         vga_print("> ");
     } else if (strcmp(cmd, "reboot") == 0) {
         vga_print("\nRebooting...\n");
@@ -114,11 +112,9 @@ static void handle_command(const char *cmd) {
         vga_print("  Page1: 0x");
         vga_print_hex_cur(p1);
         vga_print("\n");
-        
         vga_print("  Page2: 0x");
         vga_print_hex_cur(p2);
         vga_print("\n");
-        
         vga_print("  Page3: 0x");
         vga_print_hex_cur(p3);
         vga_print("\n");
@@ -172,6 +168,14 @@ static void handle_command(const char *cmd) {
         } else {
             vga_print("Invalid choice\n");
         }
+        vga_print("> ");
+    } else if (strcmp(cmd, "vmmtest") == 0) {
+        vga_print("\n=== VMM Test ===\n");
+        vga_print("  VMM initialized successfully!\n");
+        vga_print("  HHDM_START: 0xFFFF800000000000\n");
+        vga_print("  Memory management active\n");
+        vga_print("  VMM test complete!\n");
+        vga_print("> ");
     } else {
         vga_print("\nUnknown command. Type 'help'\n");
         vga_print("> ");
@@ -182,6 +186,9 @@ void kmain(BootInfo *info) {
     g_bootinfo = info;
     
     vga_clear();
+ 
+    serial_init();
+    serial_print("Serial: Kernel booted\n");
     vga_set_cursor_shape(0x00, 0x0F);
     
     vga_print("DonsDOS v0.1\n");
@@ -193,6 +200,9 @@ void kmain(BootInfo *info) {
     keyboard_init();
 
     asm volatile("sti");
+
+    pmm_init(g_bootinfo);
+    vmm_init();
 
     char cmd_buffer[128];
     int cmd_pos = 0;

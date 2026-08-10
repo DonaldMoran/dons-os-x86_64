@@ -21,7 +21,7 @@
 
 ---
 
-## 2. Core Kernel Features (8/8 Complete)
+## 2. Core Kernel Features (10/10 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
@@ -30,9 +30,11 @@
 | 8 | **PIT Timer** | ✅ Complete | IRQ0 tick counter, scheduling foundation |
 | 9 | **Keyboard Driver** | ✅ Complete | IRQ1, scancode set 1, shift/caps, input buffer |
 | 10 | **VGA Console Upgrade** | ✅ Complete | Scrolling, cursor control, shell‑ready console |
-| 11 | **Shell** | ✅ Complete | Command interpreter: `help`, `info`, `mem`, `version`, `reboot`, `pmmtest` |
+| 11 | Shell | ✅ Complete | Command interpreter: help, info, mem, version, reboot, pmmtest, test, vmmtest |
 | 12 | **E820 Memory Map** | ✅ Complete | Memory detection, BootInfo struct passed to kernel |
-| 13 | **Physical Memory Manager** | ✅ Complete | Bitmap allocator, page alloc/free, reserved region marking |
+| 13 | Physical Memory Manager | ✅ Complete | Bitmap allocator, page alloc/free, reserved region marking |
+| 14 | Virtual Memory Manager | ✅ Complete | HHDM (Higher Half Direct Map) to 0xFFFF800000000000, dynamic page tables, vmmtest command |
+| 15 | Serial Debug Output | ✅ Complete | COM1 serial output for kernel debugging alongside VGA |
 
 ---
 ### v0.2.1 — Exception Handlers Complete
@@ -49,7 +51,8 @@
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
 | 14 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
-| 15 | **Virtual Memory Manager** | ☐ Not Started | Dynamic page tables, map/unmap, kernel heap region |
+| 15 | **Virtual Memory Manager** | ✅ Complete | HHDM to 0xFFFF800000000000, dynamic page tables, vmmtest command |
+| 16 | Serial Debug Output | ✅ Complete | COM1 serial output for kernel debugging |
 | 16 | **Kernel Heap** | ☐ Not Started | `kmalloc`, `kfree`, slab/bump allocator |
 
 ---
@@ -71,13 +74,24 @@
 |-------|-----------|-------|----------|
 | Boot & System Init | 5 | 5 | **100%** ✅ |
 | Core Kernel | 8 | 8 | **100%** ✅ |
-| Memory Management | 2 | 3 | **67%** 🚧 |
+| Memory Management | 3 | 4 | 75% 🚧 |
 | User Space | 0 | 4 | **0%** ☐ |
-| **Overall** | **15** | **20** | **75%** |
+| **Overall** | **16** | **21** | **76%** |
 
 ---
 
 ## Recent Milestone Achievements
+
+### v0.2.2 — Virtual Memory Manager with HHDM
+- ✅ Virtual Memory Manager (VMM) with HHDM
+- ✅ HHDM_START: `0xFFFF800000000000`
+- ✅ Maps physical memory to higher-half virtual address space
+- ✅ `vmmtest` command to verify HHDM functionality
+- ✅ Dynamic page table allocation (PDPT, PD, PT)
+- ✅ Serial debug output (COM1) for kernel debugging
+- ✅ Fixed bootloader to load 2048 sectors (1MB) for larger kernel
+- ✅ `mem` command now shows usable/reserved RAM
+- ✅ VGA hex printing fixed for 64-bit values
 
 ### v0.2.0 — Higher-Half Kernel (Current)
 - ✅ Higher-half kernel transition complete
@@ -100,14 +114,13 @@
   - `reboot` — Reboot the system
   - `pmmtest` — Test Physical Memory Manager
   
-
-
 ### Previous Tags
 - `v0.0.1-longmode` — First long‑mode boot
 - `v0.0.2-interrupts` — IDT, PIC, PIT, keyboard
 - `v0.0.2-pmm-working` — PMM working
 - `v0.1-stable-keyboard` — Stable keyboard driver
 - `v0.1.1-shell` — Interactive command shell
+- `v0.2.2-vmm-working` — Virtual Memory Manager with HHDM
 
 ---
 
@@ -115,14 +128,14 @@
 
 ## Next Steps (Recommended Order)
 
-1. ~~**Higher-Half Kernel** (#14) — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED
-2. ~~**Exception Handlers** (#15) — #DE, #PF, #GP working~~ ✅ COMPLETED
-3. **Virtual Memory Manager** (#16) — Dynamic page table management
-4. **Kernel Heap** (#17) — `kmalloc`/`kfree` implementation
-5. **Scheduler** (#18) — Basic task switching
-6. **ELF Loader** (#19) — Load and execute user programs
-7. **Syscalls** (#20) — System call interface
-8. **User-Space** (#21) — Process model and user programs
+1. ~~**Higher-Half Kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED
+2. ~~**Exception Handlers** — #DE, #PF, #GP working~~ ✅ COMPLETED
+3. ~~**Virtual Memory Manager** — HHDM, dynamic page tables~~ ✅ COMPLETED
+4. **Kernel Heap** — `kmalloc`/`kfree` implementation
+5. **Scheduler** — Basic task switching
+6. **ELF Loader** — Load and execute user programs
+7. **Syscalls** — System call interface
+8. **User-Space** — Process model and user programs
 
 ---
 

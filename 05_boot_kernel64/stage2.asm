@@ -31,7 +31,8 @@ start:
     out 0x92, al
 
     ; ----------------------------------------------------
-    ; Load kernel (64 sectors from LBA 64 → 0x8000:0000)
+    ; Load kernel (128 sectors from LBA 64 → 0x8000:0000)
+    ; 128 sectors = 64KB
     ; ----------------------------------------------------
     mov si, dap_kernel
     mov dl, 0x80
@@ -79,7 +80,7 @@ e820_done:
 dap_kernel:
     db 16
     db 0
-    dw 64
+    dw 128   ; Load 128 sectors (64KB)
     dw 0x0000
     dw 0x8000
     dq 64
@@ -147,10 +148,10 @@ long_mode_entry:
     mov rax, pml4
     mov qword [rbx + 56], rax
 
-    ; Move kernel
+    ; Move kernel - 128 sectors * 512 = 65536 bytes = 8192 quadwords
     mov rsi, 0x00080000
     mov rdi, 0x00100000
-    mov rcx, 1024
+    mov rcx, 8192
     rep movsq
 
     ; Jump to kernel
@@ -177,13 +178,8 @@ gdt_descriptor:
 ; --------------------------------------------------------
 align 4096
 pml4:
-    ; Entry 0: Identity mapping
     dq pdpt_identity + 3
-    
-    ; Entries 1-510: Unused
     times 510 dq 0
-    
-    ; Entry 511: Higher-half mapping
     dq pdpt_higher + 3
 
 align 4096
@@ -193,7 +189,6 @@ pdpt_identity:
 
 align 4096
 pdpt_higher:
-    ; Entry 510 maps 0xFFFFFFFF80000000
     times 510 dq 0
     dq pd + 3
     dq 0

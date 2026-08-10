@@ -13,7 +13,7 @@ all: kernel.bin
 # ---------------------------------------------------------
 # Add ALL kernel object files here
 # ---------------------------------------------------------
-OBJS = entry.o kmain.o pmm.o idt.o interrupts.o idt_load.o isr.o vga.o keyboard.o
+OBJS = entry.o kmain.o pmm.o idt.o interrupts.o idt_load.o isr.o vga.o keyboard.o vmm.o serial.o
 
 kernel.elf: $(OBJS)
 	$(LD) $(LDFLAGS) -T linker.ld -o kernel.elf $(OBJS)
@@ -58,3 +58,9 @@ interrupts.o: interrupts.c
 clean:
 	rm -f *.o kernel.elf kernel.bin
 
+
+vmm.o: vmm.c
+	$(CC) $(CFLAGS) -Iinclude -c vmm.c -o vmm.o
+
+serial.o: serial.c
+	$(CC) $(CFLAGS) -Iinclude -c serial.c -o serial.o

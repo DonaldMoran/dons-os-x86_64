@@ -2,7 +2,6 @@ ENTRY(_start)
 
 SECTIONS
 {
-    /* Kernel virtual address (higher-half + 1MB offset) */
     . = 0xFFFFFFFF80100000;
 
     .text : {
