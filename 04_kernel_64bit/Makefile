@@ -13,7 +13,7 @@ all: kernel.bin
 # ---------------------------------------------------------
 # Object files
 # ---------------------------------------------------------
-OBJS = entry.o kmain.o pmm.o idt.o interrupts.o idt_load.o isr.o vga.o keyboard.o vmm.o serial.o
+OBJS = entry.o kmain.o pmm.o idt.o interrupts.o idt_load.o isr.o vga.o keyboard.o vmm.o serial.o heap.o
 
 # ---------------------------------------------------------
 # Kernel build

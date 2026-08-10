@@ -1,7 +1,7 @@
 # dons‑os  
 ### Educational x86_64 Boot Chain + 64‑bit Interrupt‑Driven Kernel (MIT Licensed)
 
-**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU’s reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher-half kernel** with working interrupts, timer, keyboard input, memory management, and a command shell.
+**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU's reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher-half kernel** with working interrupts, timer, keyboard input, memory management, and a command shell.
 
 The project emphasizes clarity, correctness, and educational value.  
 Each stage is isolated, minimal, and fully bootable.
@@ -16,7 +16,7 @@ Each stage is isolated, minimal, and fully bootable.
 - **03_boot_64bit** — PAE paging, PML4/PDPT/PD/PT, IA32_EFER.LME, long‑mode entry  
 
 ### Kernel Development 
-- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell  
+- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**  
 - **05_boot_kernel64** — Full boot chain: stage2 loads kernel, enters long mode, jumps to `_start`
 
 The top‑level Makefile builds and runs all components.
@@ -61,7 +61,7 @@ This boots:
  4. stage2 enters long mode  
  5. stage2 jumps to kernel at 0xFFFFFFFF80100000 (higher-half)  
  6. kernel executes `_start` → `kmain`  
- 7. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM  
+ 7. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM, Heap
  8. kernel displays command prompt `>`  
  9. User can type commands and receive responses
 
@@ -81,6 +81,9 @@ Once booted, you'll see a prompt > where you can type commands:
 | `test` | Test exception handlers (#DE, #PF, #GP) |
 | `vmmtest` | Test Virtual Memory Manager with HHDM |
 | `serialtest` | Test serial output debugging |
+| `heapstat` | Show heap statistics (used/free/total memory) |
+| `maptest` | Test page mapping |
+| `testrec` | Test recursive mapping address |
 
 ``` 
 DonsDOS v0.1
@@ -95,6 +98,12 @@ Available commands:
   pmmtest  - Test Physical Memory Manager
   info     - Show boot information
   mem      - Show memory information
+  test     - Exception Handling test
+  vmmtest  - Test Virtual Memory Manager
+  serialtest - Test serial output
+  heapstat - Show heap statistics
+  maptest  - Test page mapping
+  testrec  - Test recursive mapping address
 > pmmtest
 
 PMM Test:
@@ -104,6 +113,12 @@ PMM Test:
   Freed page2
   Page4: 0x0000000000109000
 Test complete.
+> heapstat
+
+=== Heap Stats ===
+Used: 16384 KB
+Free: 49152 KB
+Total: 65536 KB
 > vmmtest
 
 === VMM Status ===
@@ -213,6 +228,7 @@ This project is designed to be:
 - `v0.2.1-exception-handlers`	All exception handlers working (#DE, #PF, #GP)
 - `v0.2.2-vmm-working`	Virtual Memory Manager with HHDM, `vmmtest` command, serial debug output
 - `v0.2.3-vmm-stable` — **Recursive paging implemented**, VMM can read/write PML4, stable HHDM mapping, serial console fully integrated
+- `v0.2.5-heap-working` — Heap allocator (kmalloc) working, heapstat command, 256MB memory mapping
 
 ---
 
@@ -225,6 +241,7 @@ This project is designed to be:
 - Working GDT and TSS
 - Higher-half kernel region (kernel runs at 0xFFFFFFFF80100000)
 - **Recursive paging** at PML4[510] for page table access from higher-half
+- 256MB physical memory mapped (expandable)
 
 **Interrupts & Exceptions**
 - Fully functional IDT and ISR stubs
@@ -242,8 +259,9 @@ This project is designed to be:
 
 **Shell / Console**
 - Interactive prompt (`>`)
-- Commands: `help`, `clear`, `version`, `info`, `mem`, `reboot`, `pmmtest`
+- Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec
 - Clean command parsing and line editing
+- Unknown command handling with suggestions
 - Serial console output (COM1) for debugging alongside VGA
 
 **Memory**
@@ -258,7 +276,12 @@ This project is designed to be:
   - Dynamic page table allocation (PDPT, PD, PT)
   - `vmmtest` command verifies page mapping
   - No GP faults when accessing page tables
-
+  ✅ Heap Allocator with kmalloc() support
+  - Bump allocator with automatic expansion
+  - heapstat command for debugging
+  - 64MB initial heap size (grows as needed)
+  - ⚠️ kfree() currently a stub (bump allocator limitation)
+    
 **Build System**
 - Organized source tree with Makefile
 - QEMU bootable disk image
@@ -272,14 +295,19 @@ This project is designed to be:
 1. ~~**Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED
 2. ~~**Exception handlers** — Page fault, GPF, double fault with register dumps~~ ✅ COMPLETED
 3. ~~**Virtual memory manager** — HHDM, dynamic page tables, recursive paging~~ ✅ COMPLETED
-4. **Heap allocator** — `kmalloc`/`kfree` implementation using VMM
-5. **Userspace memory** — Map user pages with PT_USER flag
+4. ~~**Heap allocator** — kmalloc/kfree implementation~~ ✅ COMPLETED (kmalloc working)
+5. **Slab allocator** — Proper kfree() with memory reuse
+6. **Userspace memory** — Map user pages with PT_USER flag
+7. **System calls** — syscall instruction interface
+8. **Process model** — Page table per process, context switching
+9. **ELF loader** — Load and execute user programs
 
 ### Long-term
-6. **Scheduler** — Task switching (cooperative → preemptive)
-7. **Framebuffer graphics** — Move from VGA text mode to graphics
-8. **ELF loader** — Load and execute user programs
-9. **User‑space processes** — Process model, isolation, syscalls
+10. **Scheduler** — Task switching (cooperative → preemptive)
+11. **Framebuffer graphics** — Move from VGA text mode to graphics
+12. **ELF loader** — Load and execute user programs
+13. **File system** — Virtual File System (VFS) layer
+14. **User‑space processes** — Process model, isolation, syscalls
 
 ---
 

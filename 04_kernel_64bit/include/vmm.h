@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 
-#define HHDM_START 0xFFFF800000000000
+#define HHDM_START 0xFFFF800000000000ULL
 #define PAGE_SIZE 4096
 
 #define PT_PRESENT  0x001

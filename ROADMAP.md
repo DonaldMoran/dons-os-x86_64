@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -99,17 +99,26 @@ Boot chain is complete and stable.
 - ✅ No GP faults when accessing page tables
 - ☐ User-space page mapping (future)
 
-### ☐ 3.4 — Kernel Heap Allocator
-- kmalloc() / kfree()  
-- Slab or buddy allocator  
-- Memory pools for small objects
+### ✅ 3.4 — Kernel Heap Allocator - COMPLETED (Phase 1)
+- ✅ `kmalloc()` working with bump allocator
+- ✅ Automatic heap expansion
+- ✅ `heapstat` debugging command
+- ✅ 64MB initial heap size
+- ⚠️ `kfree()` is stub (Phase 2: slab allocator planned)
+- ☐ Slab/buddy allocator (future enhancement)
+- ☐ Memory pools for small objects (future enhancement)
 
-### ☐ 3.5 — Scheduler Prototype
+### ☐ 3.5 — Slab Allocator (Phase 2)
+- Proper `kfree()` with memory reuse
+- Free list management
+- Memory pool for small objects
+
+### ☐ 3.6 — Scheduler Prototype
 - Timer‑driven task switching  
 - Process Control Block (PCB)  
 - Cooperative or preemptive
 
-### ☐ 3.6 — Userspace Support
+### ☐ 3.7 — Userspace Support
 - Ring 3 (user mode)  
 - System call interface  
 - ELF loader for user programs
@@ -170,15 +179,36 @@ Boot chain is complete and stable.
 | Exception Handlers | ✔ Complete (#DE, #PF, #GP) |
 | **Virtual Memory Manager** | **✔ Complete (recursive paging)** |
 | Serial Debug Output | ✔ Complete |
-| Heap Allocator | ☐ Planned |
+| **Heap Allocator (kmalloc)** | **✔ Complete (Phase 1)** |
+| Slab Allocator (kfree) | ☐ Planned |
 | Scheduler | ☐ Planned |
 | Userspace | ☐ Planned |
 
 ---
 
----
+## Milestones
 
-## Milestone: v0.2.3-vmm-stable (August 2026)
+### v0.2.5-heap-working (August 2026)
+
+**What was accomplished:**
+- ✅ Heap allocator (`kmalloc`) working with bump allocator
+- ✅ `heapstat` command for debugging
+- ✅ 64MB initial heap with automatic expansion
+- ✅ 256MB physical memory mapped
+- ✅ Identity mapping for page table access
+- ✅ All shell commands working and stable
+
+**Key learnings:**
+- Identity mapping works for page table access but limits to 256MB
+- Bump allocator is simple but has memory leak (kfree stub)
+- Heap expansion requires VMM mapping
+
+**Known limitations:**
+- `kfree()` is a stub (bump allocator limitation)
+- Identity mapping used (kernel memory visible)
+- 256MB memory limit (bootloader constraint)
+
+### v0.2.3-vmm-stable (August 2026)
 
 **What was accomplished:**
 - ✅ Recursive paging implemented in bootloader

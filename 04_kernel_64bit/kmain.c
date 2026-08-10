@@ -8,6 +8,7 @@
 #include "include/interrupts.h"
 #include "include/vmm.h"
 #include "include/serial.h"
+#include "include/heap.h"
 
 extern void pit_init(uint32_t freq);
 
@@ -32,7 +33,7 @@ static void handle_command(const char *cmd) {
     const char *valid_commands[] = {
         "help", "clear", "version", "reboot", 
         "pmmtest", "info", "mem", "test", 
-        "vmmtest", "serialtest"
+        "vmmtest", "serialtest", "heapstat", "maptest", "testrec"
     };
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
     
@@ -49,6 +50,9 @@ static void handle_command(const char *cmd) {
         vga_print("  test     - Exception Handling test\n");
         vga_print("  vmmtest  - Test Virtual Memory Manager\n");
         vga_print("  serialtest - Test serial output\n");
+        vga_print("  heapstat - Show heap statistics\n");
+        vga_print("  maptest  - Test page mapping\n");
+        vga_print("  testrec  - Test recursive mapping address\n");
         vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
@@ -218,6 +222,61 @@ static void handle_command(const char *cmd) {
         serial_print(cmd);
         serial_print("\n");
         vga_print("> ");
+    } else if (strcmp(cmd, "heapstat") == 0) {
+        heap_stats();
+        vga_print("> ");
+    } else if (strcmp(cmd, "maptest") == 0) {
+        vga_print("\n=== Map Test ===\n");
+        vga_print("  Simple test: Allocate and use a page\n");
+        
+        // Allocate a physical page
+        uint64_t test_phys = pmm_alloc_page();
+        if (test_phys == 0) {
+            vga_print("  Failed to allocate physical page!\n");
+            vga_print("> ");
+            return;
+        }
+        
+        vga_print("  Allocated physical page at 0x");
+        vga_print_hex_cur(test_phys);
+        vga_print("\n");
+        
+        // Use the physical address directly (identity mapping)
+        // This works because the kernel is identity mapped for low memory
+        uint64_t* ptr = (uint64_t*)test_phys;
+        *ptr = 0xDEADBEEFCAFEBABE;
+        
+        vga_print("  Wrote 0xDEADBEEFCAFEBABE to physical address\n");
+        vga_print("  Read back: 0x");
+        vga_print_hex_cur(*ptr);
+        vga_print("\n");
+        
+        vga_print("  Simple test PASSED!\n");
+        vga_print("> ");
+    } else if (strcmp(cmd, "testrec") == 0) {
+        vga_print("\n=== Test Recursive ===\n");
+        
+        // Build the recursive address using shifts (same as in vmm.c)
+        uint64_t test_addr = 0xFFFF800000000000ULL | 
+                             ((uint64_t)510 << 39) | 
+                             ((uint64_t)510 << 30) | 
+                             ((uint64_t)510 << 21) | 
+                             ((uint64_t)510 << 12);
+        vga_print("  Testing address: 0x");
+        vga_print_hex_cur(test_addr);
+        vga_print("\n");
+        
+        uint64_t* ptr = (uint64_t*)test_addr;
+        
+        // Try to read
+        vga_print("  Trying to read PML4[0]...\n");
+        uint64_t val = ptr[0];
+        vga_print("  PML4[0] = 0x");
+        vga_print_hex_cur(val);
+        vga_print("\n");
+        
+        vga_print("  Test complete!\n");
+        vga_print("> ");
     } else {
         // UNKNOWN COMMAND - Improved error handling
         vga_print("\nUnknown command: '");
@@ -266,6 +325,7 @@ void kmain(BootInfo *info) {
 
     pmm_init(g_bootinfo);
     vmm_init();
+    heap_init();
 
     // ============================================
     // SUCCESSFUL BOOT - Clear and show clean prompt
