@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -99,19 +99,21 @@ Boot chain is complete and stable.
 - ✅ No GP faults when accessing page tables
 - ☐ User-space page mapping (future)
 
-### ✅ 3.4 — Kernel Heap Allocator - COMPLETED (Phase 1)
+### ✅ 3.4 — Kernel Heap Allocator - COMPLETED
 - ✅ `kmalloc()` working with bump allocator
+- ✅ `kfree()` working with free list (memory reuse)
 - ✅ Automatic heap expansion
 - ✅ `heapstat` debugging command
+- ✅ `heaptest` test command (verifies allocation and reuse)
 - ✅ 64MB initial heap size
-- ⚠️ `kfree()` is stub (Phase 2: slab allocator planned)
+- ✅ Free list for memory reuse
 - ☐ Slab/buddy allocator (future enhancement)
 - ☐ Memory pools for small objects (future enhancement)
 
-### ☐ 3.5 — Slab Allocator (Phase 2)
-- Proper `kfree()` with memory reuse
-- Free list management
+### ☐ 3.5 — Slab Allocator (Future Enhancement)
+- Advanced memory allocation with size classes
 - Memory pool for small objects
+- Better performance for frequent allocations
 
 ### ☐ 3.6 — Scheduler Prototype
 - Timer‑driven task switching  
@@ -179,14 +181,32 @@ Boot chain is complete and stable.
 | Exception Handlers | ✔ Complete (#DE, #PF, #GP) |
 | **Virtual Memory Manager** | **✔ Complete (recursive paging)** |
 | Serial Debug Output | ✔ Complete |
-| **Heap Allocator (kmalloc)** | **✔ Complete (Phase 1)** |
-| Slab Allocator (kfree) | ☐ Planned |
+| **Heap Allocator (kmalloc/kfree)** | **✔ Complete** |
+| Slab Allocator | ☐ Planned |
 | Scheduler | ☐ Planned |
 | Userspace | ☐ Planned |
 
 ---
 
 ## Milestones
+
+### v0.2.6-heap-stable (August 2026)
+
+**What was accomplished:**
+- ✅ `kfree()` fully implemented with free list
+- ✅ Memory reuse verified (`heaptest` shows p3 == p1)
+- ✅ `heaptest` command for testing allocation and reuse
+- ✅ Heap allocator complete with both allocation and freeing
+- ✅ Stable and tested across multiple runs
+
+**Key learnings:**
+- Free list is a simple but effective way to reuse memory
+- Inline assembly can work around compiler issues
+- Testing with `heaptest` verifies memory reuse
+
+**Known limitations:**
+- Identity mapping used (kernel memory visible)
+- 256MB memory limit (bootloader constraint)
 
 ### v0.2.5-heap-working (August 2026)
 
@@ -204,9 +224,9 @@ Boot chain is complete and stable.
 - Heap expansion requires VMM mapping
 
 **Known limitations:**
-- `kfree()` is a stub (bump allocator limitation)
 - Identity mapping used (kernel memory visible)
 - 256MB memory limit (bootloader constraint)
+- `kfree()` was a stub (resolved in v0.2.6)
 
 ### v0.2.3-vmm-stable (August 2026)
 

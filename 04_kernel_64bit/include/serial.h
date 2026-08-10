@@ -10,3 +10,4 @@ void serial_print_hex(uint64_t value);
 
 void serial_print_dec(uint64_t value);
 #endif
+void serial_print_dec(uint64_t value);

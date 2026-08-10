@@ -13,7 +13,7 @@ all: kernel.bin
 # ---------------------------------------------------------
 # Object files
 # ---------------------------------------------------------
-OBJS = entry.o kmain.o pmm.o idt.o interrupts.o idt_load.o isr.o vga.o keyboard.o vmm.o serial.o heap.o
+OBJS = entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o idt_load.o isr.o vga.o keyboard.o serial.o
 
 # ---------------------------------------------------------
 # Kernel build
@@ -49,6 +49,9 @@ entry.o: entry.asm
 # Special case for vga.c (needs -I. as well)
 vga.o: vga.c
 	$(CC) $(CFLAGS) -Iinclude -I. -c vga.c -o vga.o
+
+slab.o: slab.c
+	$(CC) $(CFLAGS) -Iinclude -c slab.c -o slab.o
 
 # ---------------------------------------------------------
 # Clean

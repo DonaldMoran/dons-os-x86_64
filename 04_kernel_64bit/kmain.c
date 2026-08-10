@@ -33,7 +33,7 @@ static void handle_command(const char *cmd) {
     const char *valid_commands[] = {
         "help", "clear", "version", "reboot", 
         "pmmtest", "info", "mem", "test", 
-        "vmmtest", "serialtest", "heapstat", "maptest", "testrec"
+        "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest"
     };
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
     
@@ -53,6 +53,7 @@ static void handle_command(const char *cmd) {
         vga_print("  heapstat - Show heap statistics\n");
         vga_print("  maptest  - Test page mapping\n");
         vga_print("  testrec  - Test recursive mapping address\n");
+        vga_print("  heaptest - Test heap free list\n");
         vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
@@ -63,7 +64,7 @@ static void handle_command(const char *cmd) {
         vga_print("\nDonsDOS v0.2.3\n");
         vga_print("Build: 64-bit kernel with VGA console\n");
         vga_print("Features: VMM with recursive paging, HHDM\n");
-        vga_print("Copyright (c) 2024 Don's OS Project\n");
+        vga_print("Copyright (c) 2026 Don's OS Project\n");
         vga_print("> ");
     } else if (strcmp(cmd, "info") == 0) {
         vga_print("\nBoot Information:\n");
@@ -224,7 +225,6 @@ static void handle_command(const char *cmd) {
         vga_print("> ");
     } else if (strcmp(cmd, "heapstat") == 0) {
         heap_stats();
-        vga_print("> ");
     } else if (strcmp(cmd, "maptest") == 0) {
         vga_print("\n=== Map Test ===\n");
         vga_print("  Simple test: Allocate and use a page\n");
@@ -277,6 +277,110 @@ static void handle_command(const char *cmd) {
         
         vga_print("  Test complete!\n");
         vga_print("> ");
+    } else if (strcmp(cmd, "heaptest") == 0) {
+        vga_print("\n=== Heap Test ===\n");
+        serial_print("=== HEAPTEST START ===\n");
+        
+        // Test 1: Basic allocation
+        vga_print("  Test 1: kmalloc(64)\n");
+        serial_print("HEAPTEST: Test 1 - kmalloc(64)\n");
+        void* p1 = kmalloc(64);
+        vga_print("  p1 = 0x");
+        vga_print_hex_cur((uint64_t)p1);
+        vga_print("\n");
+        serial_print("HEAPTEST: p1=0x");
+        serial_print_hex((uint64_t)p1);
+        serial_print("\n");
+        
+        if (p1) {
+            // Write to p1
+            __asm__ volatile (
+                "movq $0xDEADBEEFCAFEBABE, %%rax\n"
+                "movq %%rax, (%0)"
+                : : "r" (p1) : "rax", "memory"
+            );
+            vga_print("  Wrote to p1\n");
+            serial_print("HEAPTEST: wrote to p1\n");
+        }
+        
+        // Test 2: Allocate another
+        vga_print("\n  Test 2: kmalloc(128)\n");
+        serial_print("HEAPTEST: Test 2 - kmalloc(128)\n");
+        void* p2 = kmalloc(128);
+        vga_print("  p2 = 0x");
+        vga_print_hex_cur((uint64_t)p2);
+        vga_print("\n");
+        serial_print("HEAPTEST: p2=0x");
+        serial_print_hex((uint64_t)p2);
+        serial_print("\n");
+        
+        if (p2) {
+            __asm__ volatile (
+                "movq $0x1234567890ABCDEF, %%rax\n"
+                "movq %%rax, (%0)"
+                : : "r" (p2) : "rax", "memory"
+            );
+            vga_print("  Wrote to p2\n");
+            serial_print("HEAPTEST: wrote to p2\n");
+        }
+        
+        // Show heap stats before free
+        vga_print("\n  Before kfree:\n");
+        heap_stats();
+        
+        // Test 3: Free p1
+        vga_print("\n  Test 3: kfree(p1)\n");
+        serial_print("HEAPTEST: Test 3 - kfree(p1)\n");
+        kfree(p1);
+        vga_print("  Freed p1\n");
+        serial_print("HEAPTEST: freed p1\n");
+        
+        // Show heap stats after free
+        vga_print("\n  After kfree(p1):\n");
+        heap_stats();
+        
+        // Test 4: Allocate again (should reuse p1's memory)
+        vga_print("\n  Test 4: kmalloc(64) after free (should reuse p1)\n");
+        serial_print("HEAPTEST: Test 4 - kmalloc(64) after free\n");
+        void* p3 = kmalloc(64);
+        vga_print("  p3 = 0x");
+        vga_print_hex_cur((uint64_t)p3);
+        vga_print("\n");
+        serial_print("HEAPTEST: p3=0x");
+        serial_print_hex((uint64_t)p3);
+        serial_print("\n");
+        
+        if (p3 == p1) {
+            vga_print("  ✅ MEMORY REUSED! (p3 == p1)\n");
+            serial_print("HEAPTEST: MEMORY REUSED! (p3 == p1)\n");
+        } else {
+            vga_print("  Memory not reused (p3 != p1)\n");
+            serial_print("HEAPTEST: Memory not reused\n");
+        }
+        
+        // Write to p3
+        if (p3) {
+            __asm__ volatile (
+                "movq $0xCAFEBABEDEADBEEF, %%rax\n"
+                "movq %%rax, (%0)"
+                : : "r" (p3) : "rax", "memory"
+            );
+            vga_print("  Wrote to p3\n");
+            serial_print("HEAPTEST: wrote to p3\n");
+        }
+        
+        // Show final heap stats
+        vga_print("\n  Final heap stats:\n");
+        heap_stats();
+        
+        // Clean up
+        vga_print("\n  Cleaning up...\n");
+        serial_print("HEAPTEST: cleaning up\n");
+        if (p2) kfree(p2);
+        if (p3) kfree(p3);
+        
+        heap_stats();
+        serial_print("=== HEAPTEST END ===\n");
     } else {
         // UNKNOWN COMMAND - Improved error handling
         vga_print("\nUnknown command: '");

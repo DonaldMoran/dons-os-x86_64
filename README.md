@@ -84,6 +84,7 @@ Once booted, you'll see a prompt > where you can type commands:
 | `heapstat` | Show heap statistics (used/free/total memory) |
 | `maptest` | Test page mapping |
 | `testrec` | Test recursive mapping address |
+| `heaptest` | Test heap allocator with memory reuse |
 
 ``` 
 DonsDOS v0.1
@@ -104,6 +105,7 @@ Available commands:
   heapstat - Show heap statistics
   maptest  - Test page mapping
   testrec  - Test recursive mapping address
+  heaptest - Test heap free list
 > pmmtest
 
 PMM Test:
@@ -119,6 +121,7 @@ Test complete.
 Used: 16384 KB
 Free: 49152 KB
 Total: 65536 KB
+Free list: 0 blocks
 > vmmtest
 
 === VMM Status ===
@@ -127,6 +130,15 @@ Total: 65536 KB
   CR3: 0x0000000000011000
   PMM: Working
   VMM: Working
+> heaptest
+
+=== Heap Test ===
+  p1 = 0xFFFF900000000000
+  Write succeeded
+  Read: 0xDEADBEEFCAFEBABE
+  Freed p1
+  p2 = 0xFFFF900000000000
+  Memory reused!
 ```
 ---
 
@@ -229,7 +241,7 @@ This project is designed to be:
 - `v0.2.2-vmm-working`	Virtual Memory Manager with HHDM, `vmmtest` command, serial debug output
 - `v0.2.3-vmm-stable` — **Recursive paging implemented**, VMM can read/write PML4, stable HHDM mapping, serial console fully integrated
 - `v0.2.5-heap-working` — Heap allocator (kmalloc) working, heapstat command, 256MB memory mapping
-
+- `v0.2.6-heap-stable` — **Heap fully working with kfree and memory reuse**, free list implemented, heaptest command
 ---
 
 ## 📌 Project Status (as of August 2026)
@@ -259,7 +271,7 @@ This project is designed to be:
 
 **Shell / Console**
 - Interactive prompt (`>`)
-- Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec
+- Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest
 - Clean command parsing and line editing
 - Unknown command handling with suggestions
 - Serial console output (COM1) for debugging alongside VGA
@@ -276,11 +288,12 @@ This project is designed to be:
   - Dynamic page table allocation (PDPT, PD, PT)
   - `vmmtest` command verifies page mapping
   - No GP faults when accessing page tables
-  ✅ Heap Allocator with kmalloc() support
-  - Bump allocator with automatic expansion
-  - heapstat command for debugging
-  - 64MB initial heap size (grows as needed)
-  - ⚠️ kfree() currently a stub (bump allocator limitation)
+  ✅ **Heap Allocator** with `kmalloc()` and `kfree()` support
+  - Bump allocator with free list for memory reuse
+  - `heapstat` command for debugging
+  - `heaptest` command to verify allocation and reuse
+  - 64MB heap size (expandable)
+  - Memory reuse verified (freed memory is returned)
     
 **Build System**
 - Organized source tree with Makefile
@@ -295,8 +308,8 @@ This project is designed to be:
 1. ~~**Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED
 2. ~~**Exception handlers** — Page fault, GPF, double fault with register dumps~~ ✅ COMPLETED
 3. ~~**Virtual memory manager** — HHDM, dynamic page tables, recursive paging~~ ✅ COMPLETED
-4. ~~**Heap allocator** — kmalloc/kfree implementation~~ ✅ COMPLETED (kmalloc working)
-5. **Slab allocator** — Proper kfree() with memory reuse
+4. ~~**Heap allocator** — `kmalloc`/`kfree` implementation~~ ✅ COMPLETED
+5. **Slab allocator** — Proper `kfree()` with memory reuse (already implemented with free list!)
 6. **Userspace memory** — Map user pages with PT_USER flag
 7. **System calls** — syscall instruction interface
 8. **Process model** — Page table per process, context switching

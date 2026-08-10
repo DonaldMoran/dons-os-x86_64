@@ -1,3 +1,4 @@
+// vmm.c - Force full TLB flush
 #include <stdint.h>
 #include <stddef.h>
 #include "include/vmm.h"
@@ -5,15 +6,8 @@
 #include "include/vga.h"
 #include "include/serial.h"
 
-#define PML4_RECURSIVE_INDEX 510
-
 static uint64_t* get_pml4_virt(void) {
-    uint64_t pml4_virt = 0xFFFF800000000000ULL | 
-                         ((uint64_t)510 << 39) | 
-                         ((uint64_t)510 << 30) | 
-                         ((uint64_t)510 << 21) | 
-                         ((uint64_t)510 << 12);
-    return (uint64_t*)pml4_virt;
+    return (uint64_t*)0xFFFFFF7FBFDFE000ULL;
 }
 
 void vmm_init(void) {
@@ -61,18 +55,19 @@ void vmm_init(void) {
     serial_print_hex(pml4[510]);
     serial_print("\n");
     
-    vga_print("VMM: Using identity mapping for page tables\n");
-    serial_print("VMM: Using identity mapping for page tables\n");
+    vga_print("VMM: PML4[288] = 0x");
+    vga_print_hex_cur(pml4[288]);
+    vga_print("\n");
+    serial_print("VMM: PML4[288] = 0x");
+    serial_print_hex(pml4[288]);
+    serial_print("\n");
+    
     vga_print("VMM: Initialization complete\n");
     serial_print("VMM: Initialization complete\n");
 }
 
 void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
-    serial_print("MAP: Mapping 0x");
-    serial_print_hex(virt);
-    serial_print(" -> 0x");
-    serial_print_hex(phys);
-    serial_print("\n");
+    (void)flags;
     
     uint64_t* pml4 = get_pml4_virt();
     
@@ -81,89 +76,47 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     uint32_t pd_idx = (virt >> 21) & 0x1FF;
     uint32_t pt_idx = (virt >> 12) & 0x1FF;
     
-    serial_print("MAP: indices: ");
-    serial_print_dec(pml4_idx);
-    serial_print(",");
-    serial_print_dec(pdpt_idx);
-    serial_print(",");
-    serial_print_dec(pd_idx);
-    serial_print(",");
-    serial_print_dec(pt_idx);
-    serial_print("\n");
-    
-    // Use identity mapping for page tables
+    // Allocate PDPT
     uint64_t* pdpt;
     if (!(pml4[pml4_idx] & 0x01)) {
         uint64_t pdpt_phys = pmm_alloc_page();
-        if (!pdpt_phys) {
-            serial_print("MAP: Failed to allocate PDPT!\n");
-            return;
-        }
-        pml4[pml4_idx] = pdpt_phys | flags | 0x01;
-        serial_print("MAP: PDPT phys = 0x");
-        serial_print_hex(pdpt_phys);
-        serial_print("\n");
-        // Identity mapping: physical address = virtual address
+        if (!pdpt_phys) return;
+        pml4[pml4_idx] = pdpt_phys | PT_PRESENT | PT_WRITE;
         pdpt = (uint64_t*)pdpt_phys;
-        serial_print("MAP: PDPT virt = 0x");
-        serial_print_hex((uint64_t)pdpt);
-        serial_print("\n");
-        // SKIP ZEROING - trust PMM
-        serial_print("MAP: PDPT allocated (not zeroed)\n");
     } else {
         pdpt = (uint64_t*)(pml4[pml4_idx] & ~0xFFF);
     }
     
-    // Get or allocate PD using identity mapping
+    // Allocate PD
     uint64_t* pd;
     if (!(pdpt[pdpt_idx] & 0x01)) {
         uint64_t pd_phys = pmm_alloc_page();
-        if (!pd_phys) {
-            serial_print("MAP: Failed to allocate PD!\n");
-            return;
-        }
-        pdpt[pdpt_idx] = pd_phys | flags | 0x01;
-        serial_print("MAP: PD phys = 0x");
-        serial_print_hex(pd_phys);
-        serial_print("\n");
+        if (!pd_phys) return;
+        pdpt[pdpt_idx] = pd_phys | PT_PRESENT | PT_WRITE;
         pd = (uint64_t*)pd_phys;
-        serial_print("MAP: PD virt = 0x");
-        serial_print_hex((uint64_t)pd);
-        serial_print("\n");
-        serial_print("MAP: PD allocated (not zeroed)\n");
     } else {
         pd = (uint64_t*)(pdpt[pdpt_idx] & ~0xFFF);
     }
     
-    // Get or allocate PT using identity mapping
+    // Allocate PT
     uint64_t* pt;
     if (!(pd[pd_idx] & 0x01)) {
         uint64_t pt_phys = pmm_alloc_page();
-        if (!pt_phys) {
-            serial_print("MAP: Failed to allocate PT!\n");
-            return;
-        }
-        pd[pd_idx] = pt_phys | flags | 0x01;
-        serial_print("MAP: PT phys = 0x");
-        serial_print_hex(pt_phys);
-        serial_print("\n");
+        if (!pt_phys) return;
+        pd[pd_idx] = pt_phys | PT_PRESENT | PT_WRITE;
         pt = (uint64_t*)pt_phys;
-        serial_print("MAP: PT virt = 0x");
-        serial_print_hex((uint64_t)pt);
-        serial_print("\n");
-        serial_print("MAP: PT allocated (not zeroed)\n");
     } else {
         pt = (uint64_t*)(pd[pd_idx] & ~0xFFF);
     }
     
     // Map the page
-    pt[pt_idx] = phys | flags | 0x01;
-    serial_print("MAP: Page mapped successfully!\n");
+    pt[pt_idx] = phys | PT_PRESENT | PT_WRITE;
     
-    // Flush TLB
+    // Full TLB flush - read CR3 and write it back
+    uint64_t cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(cr3));
+    asm volatile("mov %0, %%cr3" : : "r"(cr3));
+    
+    // Also invalidate the specific address
     asm volatile("invlpg (%0)" : : "r" (virt) : "memory");
 }
-
-void vmm_unmap_page(uint64_t virt) { (void)virt; }
-uint64_t vmm_get_phys(uint64_t virt) { (void)virt; return 0; }
-int vmm_is_mapped(uint64_t virt) { (void)virt; return 0; }

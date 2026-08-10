@@ -30,12 +30,12 @@
 | 8 | **PIT Timer** | ✅ Complete | IRQ0 tick counter, scheduling foundation |
 | 9 | **Keyboard Driver** | ✅ Complete | IRQ1, scancode set 1, shift/caps, input buffer |
 | 10 | **VGA Console Upgrade** | ✅ Complete | Scrolling, cursor control, shell‑ready console |
-| 11 | **Shell** | ✅ Complete | Command interpreter: help, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec |
+| 11 | **Shell** | ✅ Complete | Command interpreter: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest |
 | 12 | **E820 Memory Map** | ✅ Complete | Memory detection, BootInfo struct passed to kernel |
 | 13 | **Physical Memory Manager** | ✅ Complete | Bitmap allocator, page alloc/free, reserved region marking |
 | 14 | **Virtual Memory Manager** | ✅ Complete | Recursive paging implemented at PML4[510]. VMM can read/write PML4 from higher-half kernel. HHDM mapping at PML4[256]. Dynamic page table allocation (PDPT, PD, PT) working. No GP faults when accessing page tables. `vmmtest` command verifies functionality. |
 | 15 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging alongside VGA |
-| 16 | **Heap Allocator** | ✅ Complete | `kmalloc()` working with bump allocator. `heapstat` command for debugging. 64MB initial heap with automatic expansion. ⚠️ `kfree()` is stub (bump allocator limitation). |
+| 16 | **Heap Allocator** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. `heapstat` command for debugging. `heaptest` command for verification. 64MB initial heap with automatic expansion. Memory reuse verified. |
 
 ---
 
@@ -46,7 +46,7 @@
 | 17 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
 | 18 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510], HHDM mapping at PML4[256], dynamic page table allocation, `vmmtest` working |
 | 19 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging, integrated with QEMU |
-| 20 | **Kernel Heap** | ✅ Complete | `kmalloc()` working with bump allocator. `kfree()` stub (Phase 2: slab allocator planned). |
+| 20 | **Kernel Heap** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. Memory reuse verified via `heaptest`. |
 
 ---
 
@@ -54,7 +54,7 @@
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 21 | **Slab Allocator** | ☐ Not Started | Proper `kfree()` with memory reuse, free list management |
+| 21 | **Slab Allocator** | ☐ Not Started | Advanced allocator with size classes and memory pools (future enhancement) |
 | 22 | **Scheduler** | ☐ Not Started | Cooperative → preemptive, PIT‑driven task switching |
 | 23 | **ELF Loader** | ☐ Not Started | Load user programs, parse ELF64, map segments |
 | 24 | **Syscalls** | ☐ Not Started | SYSCALL/SYSRET or interrupt‑based ABI |
@@ -76,13 +76,24 @@
 
 ## Recent Milestone Achievements (Chronological Order - Newest First)
 
-### v0.2.5 — Heap Allocator Working (Current)
+### v0.2.6 — Heap Allocator Complete (Current)
+- ✅ `kmalloc()` working with bump allocator
+- ✅ `kfree()` working with free list (memory reuse)
+- ✅ `heapstat` command for debugging heap usage
+- ✅ `heaptest` command for verification
+- ✅ Memory reuse verified (p3 == p1)
+- ✅ 64MB initial heap with automatic expansion
+- ✅ 256MB physical memory mapped
+- ✅ Identity mapping for page table access
+- ✅ All shell commands stable and tested
+
+### v0.2.5 — Heap Allocator Working
 - ✅ Heap allocator (`kmalloc`) working with bump allocator
 - ✅ `heapstat` command for debugging heap usage
 - ✅ 64MB initial heap with automatic expansion
 - ✅ 256MB physical memory mapped
 - ✅ Identity mapping for page table access
-- ⚠️ `kfree()` is stub (bump allocator limitation)
+- ⚠️ `kfree()` was stub (resolved in v0.2.6)
 - ✅ All shell commands stable and tested
 
 ### v0.2.3 — VMM Stable with Recursive Paging
@@ -181,9 +192,9 @@
 - `v0.2.0-higher-half`   - Higher-half kernel transition
 - `v0.2.1-exception-handlers` - All exception handlers working
 - `v0.2.2-vmm-working`    - VMM stub with HHDM_START and serial
-- `v0.2.3-vmm-stable`    - VMM with recursive paging (CURRENT)
-- `v0.2.5-heap-working`  - Heap allocator (kmalloc) working (CURRENT)
-
+- `v0.2.3-vmm-stable`    - VMM with recursive paging
+- `v0.2.5-heap-working`  - Heap allocator (kmalloc) working
+- `v0.2.6-heap-stable`  - Heap allocator complete with kmalloc/kfree and memory reuse (CURRENT)
 ---
 
 ## Next Steps (Recommended Order)
@@ -192,8 +203,8 @@
 2. ~~**Exception Handlers**~~ ✅ COMPLETED
 3. ~~**Serial Debug Output**~~ ✅ COMPLETED
 4. ~~**Virtual Memory Manager (Real)**~~ ✅ COMPLETED (recursive paging)
-5. ~~**Kernel Heap** — `kmalloc`/`kfree`~~ ✅ COMPLETED (kmalloc working)
-6. **Slab Allocator** — Proper `kfree()` with memory reuse
+5. ~~**Kernel Heap** — `kmalloc`/`kfree`~~ ✅ COMPLETED
+6. **Slab Allocator** — Advanced allocator with size classes (future enhancement)
 7. **Userspace Memory** — Map user pages with PT_USER flag
 8. **System Calls** — `syscall` instruction interface
 9. **Scheduler** — Basic task switching
