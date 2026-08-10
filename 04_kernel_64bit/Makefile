@@ -1,7 +1,7 @@
 CC      := clang
 LD      := ld.lld
 AS      := nasm
-OBJCOPY := llvm-objcopy
+OBJCOPY := objcopy
 
 CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone
 LDFLAGS := -nostdlib
@@ -57,7 +57,6 @@ interrupts.o: interrupts.c
 
 clean:
 	rm -f *.o kernel.elf kernel.bin
-
 
 vmm.o: vmm.c
 	$(CC) $(CFLAGS) -Iinclude -c vmm.c -o vmm.o

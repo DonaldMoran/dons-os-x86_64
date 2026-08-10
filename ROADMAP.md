@@ -87,15 +87,14 @@ Boot chain is complete and stable.
 - Test command (`test`) for triggering all exceptions
 - Stack trace on panic - ☐ Planned
 
-### ✔ 3.3 — Virtual Memory Manager (Completed)
-- ✅ HHDM (Higher Half Direct Map) implemented
-- ✅ Maps physical memory to 0xFFFF800000000000
-- ✅ Dynamic page table allocation (PDPT, PD, PT)
-- ✅ vmmtest command for testing HHDM
-- ✅ Serial debug output (COM1) for kernel debugging
-- ☐ User-space page mapping (Planned)
-- ☐ Page table mapping/unmapping API (Planned)
-- ☐ Copy-on-write support (Planned)
+### 🚧 3.3 — Virtual Memory Manager (VMM) - In Progress
+- ✅ CR3/PML4 read and displayed at boot
+- ✅ HHDM_START defined and printed
+- ✅ vmmtest command implemented
+- ✅ Serial debug output (COM1)
+- ☐ Real page mapping to HHDM
+- ☐ Dynamic page table allocation
+- ☐ User-space page mapping
 
 ### ☐ 3.4 — Kernel Heap Allocator
 - kmalloc() / kfree()  
@@ -164,7 +163,7 @@ Boot chain is complete and stable.
 | Command Shell | ✔ Complete |
 | Higher‑half kernel | ✔ Complete |
 | Exception Handlers | ✔ Complete (#DE, #PF , #GP) |
-| Virtual Memory Manager | ✔ Complete | HHDM |
+| Virtual Memory Manager | ✔ Partial | HHDM |
 | Serial Debug Output | ✔ Complete
 | Heap Allocator | ☐ Planned |
 | Scheduler | ☐ Planned |

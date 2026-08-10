@@ -33,7 +33,7 @@
 | 11 | Shell | ✅ Complete | Command interpreter: help, info, mem, version, reboot, pmmtest, test, vmmtest |
 | 12 | **E820 Memory Map** | ✅ Complete | Memory detection, BootInfo struct passed to kernel |
 | 13 | Physical Memory Manager | ✅ Complete | Bitmap allocator, page alloc/free, reserved region marking |
-| 14 | Virtual Memory Manager | ✅ Complete | HHDM (Higher Half Direct Map) to 0xFFFF800000000000, dynamic page tables, vmmtest command |
+| 14 | **Virtual Memory Manager** | 🚧 In Progress | Stub working (CR3 read, HHDM_START, `vmmtest`). Real page mapping requires recursive paging (not yet implemented) |
 | 15 | Serial Debug Output | ✅ Complete | COM1 serial output for kernel debugging alongside VGA |
 
 ---
@@ -51,7 +51,7 @@
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
 | 14 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
-| 15 | **Virtual Memory Manager** | ✅ Complete | HHDM to 0xFFFF800000000000, dynamic page tables, vmmtest command |
+| 15 | **Virtual Memory Manager** | 🚧 In Progress | Stub working. Real page mapping (HHDM) not yet implemented. Requires recursive paging. |
 | 16 | Serial Debug Output | ✅ Complete | COM1 serial output for kernel debugging |
 | 16 | **Kernel Heap** | ☐ Not Started | `kmalloc`, `kfree`, slab/bump allocator |
 
@@ -74,21 +74,23 @@
 |-------|-----------|-------|----------|
 | Boot & System Init | 5 | 5 | **100%** ✅ |
 | Core Kernel | 8 | 8 | **100%** ✅ |
-| Memory Management | 3 | 4 | 75% 🚧 |
+| Memory Management | 2 | 4 | 50% 🚧 |
 | User Space | 0 | 4 | **0%** ☐ |
-| **Overall** | **16** | **21** | **76%** |
+| **Overall** | **17** | **23** | **74%** |
 
 ---
 
 ## Recent Milestone Achievements
 
 ### v0.2.2 — Virtual Memory Manager with HHDM
-- ✅ Virtual Memory Manager (VMM) with HHDM
+### v0.2.2 — Virtual Memory Manager Stub
+- ✅ VMM stub initializes at boot
+- ✅ Reads CR3/PML4 address
 - ✅ HHDM_START: `0xFFFF800000000000`
-- ✅ Maps physical memory to higher-half virtual address space
-- ✅ `vmmtest` command to verify HHDM functionality
-- ✅ Dynamic page table allocation (PDPT, PD, PT)
-- ✅ Serial debug output (COM1) for kernel debugging
+- ✅ `vmmtest` command working
+- ✅ Serial debug output (COM1)
+- ❌ Real page mapping (HHDM) NOT implemented
+- ❌ Heap allocator NOT working with HHDM
 - ✅ Fixed bootloader to load 2048 sectors (1MB) for larger kernel
 - ✅ `mem` command now shows usable/reserved RAM
 - ✅ VGA hex printing fixed for 64-bit values
@@ -121,6 +123,7 @@
 - `v0.1-stable-keyboard` — Stable keyboard driver
 - `v0.1.1-shell` — Interactive command shell
 - `v0.2.2-vmm-working` — Virtual Memory Manager with HHDM
+- `v0.2.3-vmm-stub` — Stable VMM stub with HHDM_START and serial support
 
 ---
 
@@ -128,14 +131,15 @@
 
 ## Next Steps (Recommended Order)
 
-1. ~~**Higher-Half Kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED
-2. ~~**Exception Handlers** — #DE, #PF, #GP working~~ ✅ COMPLETED
-3. ~~**Virtual Memory Manager** — HHDM, dynamic page tables~~ ✅ COMPLETED
-4. **Kernel Heap** — `kmalloc`/`kfree` implementation
-5. **Scheduler** — Basic task switching
-6. **ELF Loader** — Load and execute user programs
-7. **Syscalls** — System call interface
-8. **User-Space** — Process model and user programs
+1. ~~**Higher-Half Kernel**~~ ✅ COMPLETED
+2. ~~**Exception Handlers**~~ ✅ COMPLETED
+3. ~~**Serial Debug Output**~~ ✅ COMPLETED
+4. **Virtual Memory Manager (Real)** — Page mapping with recursive paging
+5. **Kernel Heap** — `kmalloc`/`kfree` implementation
+6. **Scheduler** — Basic task switching
+7. **ELF Loader** — Load and execute user programs
+8. **Syscalls** — System call interface
+9. **User-Space** — Process model and user programs
 
 ---
 

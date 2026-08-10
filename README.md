@@ -218,10 +218,12 @@ This project is designed to be:
 - Memory map passed to kernel via BootInfo
 - Physical Memory Manager (PMM) with bitmap allocator
 - Page allocation, freeing, and reuse verified
-- Virtual Memory Manager (VMM) with HHDM (Higher Half Direct Map) ✅
-  - Maps physical memory to `0xFFFF800000000000`
-  - Dynamic page table allocation
-  - `vmmtest` command to verify HHDM functionality
+- **Virtual Memory Manager (VMM)** 🚧
+  - Reads CR3 (PML4 address) and displays it at boot
+  - HHDM_START: `0xFFFF800000000000`
+  - `vmmtest` command to display VMM status
+  - Hardware state inspection working
+  - Real page mapping (HHDM) under development
 
 **Build System**
 - Organized source tree with Makefile
