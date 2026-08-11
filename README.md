@@ -193,27 +193,27 @@ This debug mode was instrumental in getting the 64‑bit kernel working.
 
 ### Additional run modes
 
-# Run with serial output to terminal (default)
+#### Run with serial output to terminal (default)
 ```bash
 make runkernel64
 ```
-# Run with serial output saved to file
+#### with serial output saved to file
 ```bash
 make runkernel64-log
 ```
-# Run with GDB debug server
+#### Run with GDB debug server
 ```bash
 make runkernel64-debug
 ```
-# Run with verbose debug logging
+#### Run with verbose debug logging
 ```bash
 make runkernel64-verbose
 ```
-# Run headless (no VGA window)
+#### Run headless (no VGA window)
 ```bash
 make runkernel64-headless
 ```
-# Run with KVM acceleration (faster)
+#### Run with KVM acceleration (faster)
 ```bash
 make runkernel64-kvm
 ```
