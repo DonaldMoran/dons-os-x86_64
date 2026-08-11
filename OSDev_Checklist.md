@@ -21,7 +21,7 @@
 
 ---
 
-## 2. Core Kernel Features (11/11 Complete)
+## 2. Core Kernel Features (12/12 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
@@ -30,35 +30,38 @@
 | 8 | **PIT Timer** | ✅ Complete | IRQ0 tick counter, scheduling foundation |
 | 9 | **Keyboard Driver** | ✅ Complete | IRQ1, scancode set 1, shift/caps, input buffer |
 | 10 | **VGA Console Upgrade** | ✅ Complete | Scrolling, cursor control, shell‑ready console |
-| 11 | **Shell** | ✅ Complete | Command interpreter: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest |
+| 11 | **Shell** | ✅ Complete | Command interpreter: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, simple, user, user2 |
 | 12 | **E820 Memory Map** | ✅ Complete | Memory detection, BootInfo struct passed to kernel |
 | 13 | **Physical Memory Manager** | ✅ Complete | Bitmap allocator, page alloc/free, reserved region marking |
-| 14 | **Virtual Memory Manager** | ✅ Complete | Recursive paging implemented at PML4[510]. VMM can read/write PML4 from higher-half kernel. HHDM mapping at PML4[256]. Dynamic page table allocation (PDPT, PD, PT) working. No GP faults when accessing page tables. `vmmtest` command verifies functionality. |
+| 14 | **Virtual Memory Manager** | ✅ Complete | Recursive paging implemented at PML4[510]. VMM can read/write PML4 from higher-half kernel. HHDM mapping at PML4[256]. Dynamic page table allocation (PDPT, PD, PT) working. No GP faults when accessing page tables. `vmmtest` command verifies functionality. User-space page mapping with PT_USER flag working. |
 | 15 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging alongside VGA |
 | 16 | **Heap Allocator** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. `heapstat` command for debugging. `heaptest` command for verification. 64MB initial heap with automatic expansion. Memory reuse verified. |
+| 17 | **User Mode (Ring 3)** | ✅ Complete | GDT with user segments (0x2B code, 0x33 data). TSS configured for stack switching. `iretq`-based transition from kernel to user mode. User code executes at CPL=3 with page protection. `create_user_process()` for launching user code. Test commands: `simple`, `user`, `user2`. ⚠️ NX bit not yet enabled — all pages executable by default. |
 
 ---
 
-## 3. Memory Management (4/4 Complete)
+## 3. Memory Management (5/5 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 17 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
-| 18 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510], HHDM mapping at PML4[256], dynamic page table allocation, `vmmtest` working |
-| 19 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging, integrated with QEMU |
-| 20 | **Kernel Heap** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. Memory reuse verified via `heaptest`. |
+| 18 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
+| 19 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510], HHDM mapping at PML4[256], dynamic page table allocation, `vmmtest` working |
+| 20 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging, integrated with QEMU |
+| 21 | **Kernel Heap** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. Memory reuse verified via `heaptest`. |
+| 22 | **User Memory Mapping** | ✅ Complete | Pages mapped with PT_USER flag for user/kernel isolation |
 
 ---
 
-## 4. User Space & Advanced Features (0/4 Complete)
+## 4. User Space & Advanced Features (0/5 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 21 | **Slab Allocator** | ☐ Not Started | Advanced allocator with size classes and memory pools (future enhancement) |
-| 22 | **Scheduler** | ☐ Not Started | Cooperative → preemptive, PIT‑driven task switching |
-| 23 | **ELF Loader** | ☐ Not Started | Load user programs, parse ELF64, map segments |
-| 24 | **Syscalls** | ☐ Not Started | SYSCALL/SYSRET or interrupt‑based ABI |
-| 25 | **User‑Space** | ☐ Not Started | Process model, isolation, basic libc, shell programs |
+| 23 | **NX Bit Support** | ☐ Not Started | Enable NX bit in EFER, add PT_NX flag for execute permission control |
+| 24 | **Slab Allocator** | ☐ Not Started | Advanced allocator with size classes and memory pools (future enhancement) |
+| 25 | **System Calls** | ☐ Not Started | SYSCALL/SYSRET instruction interface for user programs |
+| 26 | **Process Model** | ☐ Not Started | Page table per process, context switching |
+| 27 | **ELF Loader** | ☐ Not Started | Load user programs, parse ELF64, map segments |
+| 28 | **Scheduler** | ☐ Not Started | Cooperative → preemptive, PIT‑driven task switching |
 
 ---
 
@@ -67,16 +70,27 @@
 | Phase | Completed | Total | Progress |
 |-------|-----------|-------|----------|
 | Boot & System Init | 5 | 5 | **100%** ✅ |
-| Core Kernel | 11 | 11 | **100%** ✅ |
-| Memory Management | 4 | 4 | **100%** ✅ |
-| User Space | 0 | 5 | **0%** ☐ |
-| **Overall** | **20** | **25** | **80%** |
+| Core Kernel | 12 | 12 | **100%** ✅ |
+| Memory Management | 5 | 5 | **100%** ✅ |
+| User Space | 0 | 6 | **0%** ☐ |
+| **Overall** | **22** | **28** | **79%** |
 
 ---
 
 ## Recent Milestone Achievements (Chronological Order - Newest First)
 
-### v0.2.6 — Heap Allocator Complete (Current)
+### v0.3.0 — User Mode (Ring 3) Working (Current) ⭐ NEW
+- ✅ GDT management with user segments (DPL=3)
+- ✅ User code (0x2B) and user data (0x33) segments
+- ✅ TSS initialization for stack switching on interrupts
+- ✅ `iretq`-based transition from kernel to user mode
+- ✅ User code executes at CPL=3 with page protection
+- ✅ User memory mapped with PT_USER flag for user/kernel isolation
+- ✅ `create_user_process()` for launching user code
+- ✅ Test commands: `simple`, `user`, `user2` for user mode verification
+- ⚠️ NX bit not yet enabled — all pages are executable by default
+
+### v0.2.6 — Heap Allocator Complete
 - ✅ `kmalloc()` working with bump allocator
 - ✅ `kfree()` working with free list (memory reuse)
 - ✅ `heapstat` command for debugging heap usage
@@ -179,9 +193,6 @@
 
 ---
 
-### Previous Tags (Summary)
----
-
 ### Previous Tags
 - `v0.0.1-longmode`      - First long‑mode boot
 - `v0.0.2-interrupts`    - IDT, PIC, PIT, keyboard
@@ -194,7 +205,9 @@
 - `v0.2.2-vmm-working`    - VMM stub with HHDM_START and serial
 - `v0.2.3-vmm-stable`    - VMM with recursive paging
 - `v0.2.5-heap-working`  - Heap allocator (kmalloc) working
-- `v0.2.6-heap-stable`  - Heap allocator complete with kmalloc/kfree and memory reuse (CURRENT)
+- `v0.2.6-heap-stable`   - Heap allocator complete with kmalloc/kfree and memory reuse
+- `v0.3.0-userland`      - User mode (Ring 3) working ⭐ NEW
+
 ---
 
 ## Next Steps (Recommended Order)
@@ -204,14 +217,14 @@
 3. ~~**Serial Debug Output**~~ ✅ COMPLETED
 4. ~~**Virtual Memory Manager (Real)**~~ ✅ COMPLETED (recursive paging)
 5. ~~**Kernel Heap** — `kmalloc`/`kfree`~~ ✅ COMPLETED
-6. **Slab Allocator** — Advanced allocator with size classes (future enhancement)
-7. **Userspace Memory** — Map user pages with PT_USER flag
-8. **System Calls** — `syscall` instruction interface
-9. **Scheduler** — Basic task switching
-10. **ELF Loader** — Load and execute user programs
-11. **User-Space** — Process model and user programs
+6. ~~**User Mode (Ring 3)** — GDT, TSS, privilege switching~~ ✅ COMPLETED
+7. **NX Bit Support** — Enable NX bit in EFER, add PT_NX flag
+8. **System Calls** — `syscall` instruction interface for user programs
+9. **Slab Allocator** — Advanced allocator with size classes (future enhancement)
+10. **Process Model** — Page table per process, context switching
+11. **ELF Loader** — Load and execute user programs
+12. **Scheduler** — Basic task switching
 
 ---
 
 *Last Updated: August 2026*
-

@@ -25,30 +25,30 @@ The top‑level Makefile builds and runs all components.
 
 ## 🚀 Building & Running
 
-### Build everything
+#### Build everything
 ```bash
 make all
 ```
 
-### Run individual boot demos
+#### Run individual boot demos
 ```bash
 make run16
 make run32
 make run64
 ```
 
-### Build the 64‑bit kernel
+#### Build the 64‑bit kernel
 ```bash
 make kernel64
 ```
 
-### Build + run the full long‑mode OS
+#### Build + run the full long‑mode OS
 ```bash
 make bootkernel64
 make runkernel64
 ```
 
-### Run with QEMU debug logging
+#### Run with QEMU debug logging
 ```bash
 make logkernel64
 ```
@@ -85,6 +85,9 @@ Once booted, you'll see a prompt > where you can type commands:
 | `maptest` | Test page mapping |
 | `testrec` | Test recursive mapping address |
 | `heaptest` | Test heap allocator with memory reuse |
+| `simple`  | Test user mode (Ring 3) execution |
+| `user`    | Test user mode with process creation |
+| `user2`   | Second user mode test |
 
 ``` 
 DonsDOS v0.1
@@ -230,18 +233,19 @@ This project is designed to be:
 
 ## 🌱 Tags & Milestones
 
-- `**v0.0.1-longmode**`	First successful long-mode boot and flat binary kernel
-- `**v0.0.2-interrupts**`	IDT, PIC remap, PIT timer, IRQ0 (tick), IRQ1 (keyboard)
-- `**v0.0.2-pmm-working**`	PMM bitmap init fixed, E820 validated, allocator stable
-- `**v0.1-stable-keyboard**`	Stable buffered keyboard (shift/caps/backspace/space), clean VGA console, correct IRQ handling
-- `v0.1.1-shell**`	Command shell, cursor control, improved console, bug fixes
-- `v0.1.2-stable`	Full shell with PMM, info, mem commands, linker padding fix, and stable kernel
-- `v0.2.0-higher-half`	Higher-half kernel transition complete (kernel runs at 0xFFFFFFFF80100000)
-- `v0.2.1-exception-handlers`	All exception handlers working (#DE, #PF, #GP)
-- `v0.2.2-vmm-working`	Virtual Memory Manager with HHDM, `vmmtest` command, serial debug output
+- `**v0.0.1-longmode**` First successful long-mode boot and flat binary kernel
+- `**v0.0.2-interrupts**` IDT, PIC remap, PIT timer, IRQ0 (tick), IRQ1 (keyboard)
+- `**v0.0.2-pmm-working**` PMM bitmap init fixed, E820 validated, allocator stable
+- `**v0.1-stable-keyboard**` Stable buffered keyboard (shift/caps/backspace/space), clean VGA console, correct IRQ handling
+- `v0.1.1-shell**` Command shell, cursor control, improved console, bug fixes
+- `v0.1.2-stable` Full shell with PMM, info, mem commands, linker padding fix, and stable kernel
+- `v0.2.0-higher-half` Higher-half kernel transition complete (kernel runs at 0xFFFFFFFF80100000)
+- `v0.2.1-exception-handlers` All exception handlers working (#DE, #PF, #GP)
+- `v0.2.2-vmm-working` Virtual Memory Manager with HHDM, `vmmtest` command, serial debug output
 - `v0.2.3-vmm-stable` — **Recursive paging implemented**, VMM can read/write PML4, stable HHDM mapping, serial console fully integrated
 - `v0.2.5-heap-working` — Heap allocator (kmalloc) working, heapstat command, 256MB memory mapping
 - `v0.2.6-heap-stable` — **Heap fully working with kfree and memory reuse**, free list implemented, heaptest command
+- `v0.3.0-userland` — **User mode (Ring 3) working**, GDT with user segments, TSS stack switching, user code execution at CPL=3 with memory protection. NX bit support planned for next release.
 ---
 
 ## 📌 Project Status (as of August 2026)
@@ -254,6 +258,7 @@ This project is designed to be:
 - Higher-half kernel region (kernel runs at 0xFFFFFFFF80100000)
 - **Recursive paging** at PML4[510] for page table access from higher-half
 - 256MB physical memory mapped (expandable)
+- ✅ **User Mode (Ring 3) Support** — Full privilege separation with user code execution at CPL=3
 
 **Interrupts & Exceptions**
 - Fully functional IDT and ISR stubs
@@ -271,7 +276,7 @@ This project is designed to be:
 
 **Shell / Console**
 - Interactive prompt (`>`)
-- Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest
+- Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, **simple, user, user2**
 - Clean command parsing and line editing
 - Unknown command handling with suggestions
 - Serial console output (COM1) for debugging alongside VGA
@@ -288,12 +293,23 @@ This project is designed to be:
   - Dynamic page table allocation (PDPT, PD, PT)
   - `vmmtest` command verifies page mapping
   - No GP faults when accessing page tables
-  ✅ **Heap Allocator** with `kmalloc()` and `kfree()` support
+- ✅ **Heap Allocator** with `kmalloc()` and `kfree()` support
   - Bump allocator with free list for memory reuse
   - `heapstat` command for debugging
   - `heaptest` command to verify allocation and reuse
   - 64MB heap size (expandable)
   - Memory reuse verified (freed memory is returned)
+- ✅ **User Memory Mapping** — Pages mapped with PT_USER flag for proper user/kernel isolation (execute permission default as NX bit not yet enabled)
+
+**User Mode**
+- ✅ GDT with user code (0x2B) and user data (0x33) segments (DPL=3)
+- ✅ TSS configured for stack switching on interrupts from user mode
+- ✅ `iretq`-based transition from kernel to user mode
+- ✅ User code executes at CPL=3 with page protection
+- ✅ User memory mapped with PT_USER flag for user/kernel isolation
+- ✅ Test commands: `simple`, `user`, `user2` for user mode verification
+- ⚠️ NX bit not yet enabled (all pages executable by default)
+- 📝 Next: Enable NX bit for proper execute permission control
     
 **Build System**
 - Organized source tree with Makefile
@@ -309,18 +325,18 @@ This project is designed to be:
 2. ~~**Exception handlers** — Page fault, GPF, double fault with register dumps~~ ✅ COMPLETED
 3. ~~**Virtual memory manager** — HHDM, dynamic page tables, recursive paging~~ ✅ COMPLETED
 4. ~~**Heap allocator** — `kmalloc`/`kfree` implementation~~ ✅ COMPLETED
-5. **Slab allocator** — Proper `kfree()` with memory reuse (already implemented with free list!)
-6. **Userspace memory** — Map user pages with PT_USER flag
-7. **System calls** — syscall instruction interface
-8. **Process model** — Page table per process, context switching
-9. **ELF loader** — Load and execute user programs
+5. ~~**User mode** — Ring 3 support with GDT, TSS, and privilege switching~~ ✅ COMPLETED
+6. **NX bit support** — Enable NX bit in EFER and add PT_NX flag for proper execute permission control
+7. **Slab allocator** — Proper `kfree()` with memory reuse (already implemented with free list!)
+8. **System calls** — syscall instruction interface
+9. **Process model** — Page table per process, context switching
+10. **ELF loader** — Load and execute user programs
 
 ### Long-term
-10. **Scheduler** — Task switching (cooperative → preemptive)
-11. **Framebuffer graphics** — Move from VGA text mode to graphics
-12. **ELF loader** — Load and execute user programs
+11. **Scheduler** — Task switching (cooperative → preemptive)
+12. **Framebuffer graphics** — Move from VGA text mode to graphics
 13. **File system** — Virtual File System (VFS) layer
-14. **User‑space processes** — Process model, isolation, syscalls
+14. **User‑space programs** — Build and run actual user applications
 
 ---
 

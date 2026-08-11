@@ -107,16 +107,63 @@ long_mode_entry:
     mov rax, 0xFFFFFFFF80100000
     jmp rax
 
+; ============================================
+; GDT - Original working version
+; ; 0x28 - User code (Ring 3) - 64-bit
+; db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFA, 0xAF, 0x00
+;
+; 0x30 - User data (Ring 3) - 64-bit
+; db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xF2, 0xAF, 0x00
+;
+; ============================================
+; Replace the GDT entries with manual byte definitions
 gdt_start:
-    dq 0
-    dq 0x00CF9A000000FFFF
-    dq 0x00CF92000000FFFF
-    dq 0x00AF9A000000FFFF
+    ; 0x00 - Null descriptor
+    dq 0x0000000000000000
+    
+    ; 0x08 - 32-bit Kernel code
+    db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x9A, 0xCF, 0x00
+    
+    ; 0x10 - Kernel data
+    db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x92, 0xCF, 0x00
+    
+    ; 0x18 - 64-bit Kernel code
+    db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x9A, 0xAF, 0x00
+    
+    ; 0x20 - Kernel data (64-bit)
+    db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x92, 0xAF, 0x00
+    
+    ; 0x28 - User code (Ring 3) - 64-bit
+    ; Format: limit[15:0] = 0xFFFF (bytes 0-1)
+    ;         base[23:0]  = 0x000000 (bytes 2-4)
+    ;         access byte = 0xFA (P=1, DPL=3, S=1, E=1, DC=0, R=1, A=0)
+    ;         flags+limit = 0xAF (G=1, D/B=0, L=1, AVL=0) + limit[19:16] = 0xF
+    ;         base[31:24] = 0x00
+    db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFA, 0xAF, 0x00
+    
+    ; 0x30 - User data (Ring 3) - 64-bit
+    ; Format: limit[15:0] = 0xFFFF (bytes 0-1)
+    ;         base[23:0]  = 0x000000 (bytes 2-4)
+    ;         access byte = 0xF2 (P=1, DPL=3, S=1, E=0, ED=0, W=1, A=0)
+    ;         flags+limit = 0xAF (G=1, D/B=0, L=0, AVL=0) + limit[19:16] = 0xF
+    ;         base[31:24] = 0x00
+    ;db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xF2, 0xAF, 0x00
+    ;db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xF2, 0x92, 0x00
+    db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xF2, 0xAF, 0x00
+
+    
+    
+    ; 0x38 - TSS low (will be filled at runtime)
+    dq 0x0000000000000000
+    
+    ; 0x40 - TSS high (will be filled at runtime)
+    dq 0x0000000000000000
+    
 gdt_end:
 
 gdt_descriptor:
-    dw gdt_end - gdt_start - 1
-    dd gdt_start
+    dw gdt_end - gdt_start - 1   ; Size
+    dq gdt_start                  ; Address
 
 align 4096
 pml4:

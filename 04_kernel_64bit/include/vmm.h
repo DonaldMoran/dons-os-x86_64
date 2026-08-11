@@ -7,6 +7,7 @@
 #define PT_PRESENT  0x001
 #define PT_WRITE    0x002
 #define PT_USER     0x004
+#define PT_EXEC    0x008
 #define PT_HUGE     0x080
 
 void vmm_init(void);

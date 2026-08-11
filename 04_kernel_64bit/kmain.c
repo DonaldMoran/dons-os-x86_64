@@ -9,6 +9,9 @@
 #include "include/vmm.h"
 #include "include/serial.h"
 #include "include/heap.h"
+#include "include/ring3.h"
+#include "include/tss.h"
+#include "include/ring3.h"
 
 extern void pit_init(uint32_t freq);
 
@@ -33,7 +36,7 @@ static void handle_command(const char *cmd) {
     const char *valid_commands[] = {
         "help", "clear", "version", "reboot", 
         "pmmtest", "info", "mem", "test", 
-        "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest"
+        "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", "simple"
     };
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
     
@@ -54,6 +57,9 @@ static void handle_command(const char *cmd) {
         vga_print("  maptest  - Test page mapping\n");
         vga_print("  testrec  - Test recursive mapping address\n");
         vga_print("  heaptest - Test heap free list\n");
+        vga_print("  user     - Test user mode (Ring 3)\n");
+        vga_print("  user2    - Test user mode (Ring 3) - second test\n");
+        vga_print("  simple   - Test user mode (Ring 3) - second test\n");
         vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
@@ -381,6 +387,29 @@ static void handle_command(const char *cmd) {
         
         heap_stats();
         serial_print("=== HEAPTEST END ===\n");
+    } else if (strcmp(cmd, "user") == 0) {
+        vga_print("\n=== User Mode Test ===\n");
+        vga_print("Creating user process...\n");
+        create_user_process(user_test, NULL);
+        vga_print("> ");
+    } else if (strcmp(cmd, "user2") == 0) {
+        vga_print("\n=== User Mode Test 2 ===\n");
+        vga_print("Creating user process...\n");
+        create_user_process(user_test2, NULL);
+        vga_print("> ");
+        
+    // Add this to the command list in handle_command()
+    } else if (strcmp(cmd, "simple") == 0) {
+        vga_print("\n=== Simple User Mode Test ===\n");
+        vga_print("Running user code...\n");
+        
+        // Just call the user function directly
+        simple_user_test();
+        
+        // Should never reach here
+        vga_print("Returned from user mode! (shouldn't happen)\n");
+        vga_print("> ");        
+        
     } else {
         // UNKNOWN COMMAND - Improved error handling
         vga_print("\nUnknown command: '");
@@ -430,6 +459,9 @@ void kmain(BootInfo *info) {
     pmm_init(g_bootinfo);
     vmm_init();
     heap_init();
+
+    // Initialize user mode support
+    tss_init();
 
     // ============================================
     // SUCCESSFUL BOOT - Clear and show clean prompt
