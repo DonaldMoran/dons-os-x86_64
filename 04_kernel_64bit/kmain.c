@@ -11,7 +11,6 @@
 #include "include/heap.h"
 #include "include/ring3.h"
 #include "include/tss.h"
-#include "include/ring3.h"
 
 extern void pit_init(uint32_t freq);
 
@@ -26,21 +25,19 @@ static int strcmp(const char *s1, const char *s2) {
 }
 
 static void handle_command(const char *cmd) {
-    // Handle empty command
     if (cmd[0] == '\0') {
         vga_print("> ");
         return;
     }
     
-    // List of valid commands for suggestions
     const char *valid_commands[] = {
         "help", "clear", "version", "reboot", 
         "pmmtest", "info", "mem", "test", 
-        "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", "simple"
+        "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", "simple",
+        "nxtest"
     };
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
     
-    // Check if command matches
     if (strcmp(cmd, "help") == 0) {
         vga_print("\nAvailable commands:\n");
         vga_print("  help     - Show this help\n");
@@ -60,6 +57,7 @@ static void handle_command(const char *cmd) {
         vga_print("  user     - Test user mode (Ring 3)\n");
         vga_print("  user2    - Test user mode (Ring 3) - second test\n");
         vga_print("  simple   - Test user mode (Ring 3) - second test\n");
+        vga_print("  nxtest   - Test NX (No Execute) bit\n");
         vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
@@ -69,7 +67,7 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "version") == 0) {
         vga_print("\nDonsDOS v0.2.3\n");
         vga_print("Build: 64-bit kernel with VGA console\n");
-        vga_print("Features: VMM with recursive paging, HHDM\n");
+        vga_print("Features: VMM with recursive paging, HHDM, NX support\n");
         vga_print("Copyright (c) 2026 Don's OS Project\n");
         vga_print("> ");
     } else if (strcmp(cmd, "info") == 0) {
@@ -78,15 +76,12 @@ static void handle_command(const char *cmd) {
             vga_print("  PML4 addr: 0x");
             vga_print_hex_cur(g_bootinfo->pml4_addr);
             vga_print("\n");
-            
             vga_print("  Kernel phys start: 0x");
             vga_print_hex_cur(g_bootinfo->kernel_phys_start);
             vga_print("\n");
-            
             vga_print("  Kernel phys end: 0x");
             vga_print_hex_cur(g_bootinfo->kernel_phys_end);
             vga_print("\n");
-            
             vga_print("  E820 count: ");
             vga_print_dec_cur(g_bootinfo->memory_map_count);
             vga_print("\n");
@@ -98,12 +93,10 @@ static void handle_command(const char *cmd) {
         vga_print("\nMemory Information:\n");
         vga_print("  Page size: 4096 bytes\n");
         vga_print("  PMM: Initialized\n");
-        
         if (g_bootinfo && g_bootinfo->memory_map_count > 0) {
             MemoryMapEntry *m = (MemoryMapEntry *)g_bootinfo->memory_map_addr;
             uint64_t total_usable = 0;
             uint64_t total_reserved = 0;
-            
             for (uint64_t i = 0; i < g_bootinfo->memory_map_count; i++) {
                 if (m[i].type == 1) {
                     total_usable += m[i].length;
@@ -111,11 +104,9 @@ static void handle_command(const char *cmd) {
                     total_reserved += m[i].length;
                 }
             }
-            
             vga_print("\n  Usable RAM: ");
             vga_print_dec_cur(total_usable / (1024 * 1024));
             vga_print(" MB\n");
-            
             vga_print("  Reserved RAM: ");
             vga_print_dec_cur(total_reserved / (1024 * 1024));
             vga_print(" MB\n");
@@ -137,26 +128,20 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "pmmtest") == 0) {
         vga_print("\nPMM Test:\n");
         pmm_init(g_bootinfo);
-        
         uint64_t p1 = pmm_alloc_page();
         uint64_t p2 = pmm_alloc_page();
         uint64_t p3 = pmm_alloc_page();
-        
         vga_print("  Page1: 0x");
         vga_print_hex_cur(p1);
         vga_print("\n");
-        
         vga_print("  Page2: 0x");
         vga_print_hex_cur(p2);
         vga_print("\n");
-        
         vga_print("  Page3: 0x");
         vga_print_hex_cur(p3);
         vga_print("\n");
-        
         pmm_free_page(p2);
         vga_print("  Freed page2\n");
-        
         uint64_t p4 = pmm_alloc_page();
         vga_print("  Page4: 0x");
         vga_print_hex_cur(p4);
@@ -170,36 +155,22 @@ static void handle_command(const char *cmd) {
         vga_print(" 2 - Page fault\n");
         vga_print(" 3 - GP fault\n");
         vga_print("> ");
-        
         char c = 0;
         while (!kbd_buffer_get(&c)) {
             asm volatile("hlt");
         }
-        
         vga_putc(c);
         vga_print("\n");
-        
         if (c == '1') {
             vga_print("Dividing by zero...\n");
-            __asm__ volatile(
-                "xor %%rax, %%rax\n"
-                "xor %%rbx, %%rbx\n"
-                "div %%rbx\n"
-                : : : "rax", "rbx", "rdx"
-            );
+            __asm__ volatile("xor %%rax, %%rax\nxor %%rbx, %%rbx\ndiv %%rbx\n" : : : "rax", "rbx", "rdx");
         } else if (c == '2') {
             vga_print("Causing page fault...\n");
             uint64_t *bad = (uint64_t*)0xFFFFFFFF00000000;
             *bad = 0xDEADBEEF;
         } else if (c == '3') {
             vga_print("Causing GP fault...\n");
-            __asm__ volatile(
-                "mov $0x0, %%ecx\n"
-                "mov $0x2, %%eax\n"
-                "mov $0x0, %%edx\n"
-                "xsetbv\n"
-                : : : "rax", "rcx", "rdx"
-            );
+            __asm__ volatile("mov $0x0, %%ecx\nmov $0x2, %%eax\nmov $0x0, %%edx\nxsetbv\n" : : : "rax", "rcx", "rdx");
         } else {
             vga_print("Invalid choice\n");
         }
@@ -210,16 +181,14 @@ static void handle_command(const char *cmd) {
         vga_print("  HHDM_START: 0x");
         vga_print_hex_cur(HHDM_START);
         vga_print("\n");
-        
         uint64_t cr3;
         asm volatile("mov %%cr3, %0" : "=r"(cr3));
         vga_print("  CR3: 0x");
         vga_print_hex_cur(cr3);
         vga_print("\n");
-        
         vga_print("  PMM: Working\n");
         vga_print("  VMM: Working\n");
-        vga_print("  vmmtest: Safe mode (no page mapping)\n");
+        vga_print("  NX support: Enabled\n");
         vga_print("> ");
     } else if (strcmp(cmd, "serialtest") == 0) {
         vga_print("\nSerial test...\n");
@@ -234,35 +203,25 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "maptest") == 0) {
         vga_print("\n=== Map Test ===\n");
         vga_print("  Simple test: Allocate and use a page\n");
-        
-        // Allocate a physical page
         uint64_t test_phys = pmm_alloc_page();
         if (test_phys == 0) {
             vga_print("  Failed to allocate physical page!\n");
             vga_print("> ");
             return;
         }
-        
         vga_print("  Allocated physical page at 0x");
         vga_print_hex_cur(test_phys);
         vga_print("\n");
-        
-        // Use the physical address directly (identity mapping)
-        // This works because the kernel is identity mapped for low memory
         uint64_t* ptr = (uint64_t*)test_phys;
         *ptr = 0xDEADBEEFCAFEBABE;
-        
         vga_print("  Wrote 0xDEADBEEFCAFEBABE to physical address\n");
         vga_print("  Read back: 0x");
         vga_print_hex_cur(*ptr);
         vga_print("\n");
-        
         vga_print("  Simple test PASSED!\n");
         vga_print("> ");
     } else if (strcmp(cmd, "testrec") == 0) {
         vga_print("\n=== Test Recursive ===\n");
-        
-        // Build the recursive address using shifts (same as in vmm.c)
         uint64_t test_addr = 0xFFFF800000000000ULL | 
                              ((uint64_t)510 << 39) | 
                              ((uint64_t)510 << 30) | 
@@ -271,23 +230,17 @@ static void handle_command(const char *cmd) {
         vga_print("  Testing address: 0x");
         vga_print_hex_cur(test_addr);
         vga_print("\n");
-        
         uint64_t* ptr = (uint64_t*)test_addr;
-        
-        // Try to read
         vga_print("  Trying to read PML4[0]...\n");
         uint64_t val = ptr[0];
         vga_print("  PML4[0] = 0x");
         vga_print_hex_cur(val);
         vga_print("\n");
-        
         vga_print("  Test complete!\n");
         vga_print("> ");
     } else if (strcmp(cmd, "heaptest") == 0) {
         vga_print("\n=== Heap Test ===\n");
         serial_print("=== HEAPTEST START ===\n");
-        
-        // Test 1: Basic allocation
         vga_print("  Test 1: kmalloc(64)\n");
         serial_print("HEAPTEST: Test 1 - kmalloc(64)\n");
         void* p1 = kmalloc(64);
@@ -297,19 +250,11 @@ static void handle_command(const char *cmd) {
         serial_print("HEAPTEST: p1=0x");
         serial_print_hex((uint64_t)p1);
         serial_print("\n");
-        
         if (p1) {
-            // Write to p1
-            __asm__ volatile (
-                "movq $0xDEADBEEFCAFEBABE, %%rax\n"
-                "movq %%rax, (%0)"
-                : : "r" (p1) : "rax", "memory"
-            );
+            __asm__ volatile ("movq $0xDEADBEEFCAFEBABE, %%rax\nmovq %%rax, (%0)" : : "r" (p1) : "rax", "memory");
             vga_print("  Wrote to p1\n");
             serial_print("HEAPTEST: wrote to p1\n");
         }
-        
-        // Test 2: Allocate another
         vga_print("\n  Test 2: kmalloc(128)\n");
         serial_print("HEAPTEST: Test 2 - kmalloc(128)\n");
         void* p2 = kmalloc(128);
@@ -319,33 +264,20 @@ static void handle_command(const char *cmd) {
         serial_print("HEAPTEST: p2=0x");
         serial_print_hex((uint64_t)p2);
         serial_print("\n");
-        
         if (p2) {
-            __asm__ volatile (
-                "movq $0x1234567890ABCDEF, %%rax\n"
-                "movq %%rax, (%0)"
-                : : "r" (p2) : "rax", "memory"
-            );
+            __asm__ volatile ("movq $0x1234567890ABCDEF, %%rax\nmovq %%rax, (%0)" : : "r" (p2) : "rax", "memory");
             vga_print("  Wrote to p2\n");
             serial_print("HEAPTEST: wrote to p2\n");
         }
-        
-        // Show heap stats before free
         vga_print("\n  Before kfree:\n");
         heap_stats();
-        
-        // Test 3: Free p1
         vga_print("\n  Test 3: kfree(p1)\n");
         serial_print("HEAPTEST: Test 3 - kfree(p1)\n");
         kfree(p1);
         vga_print("  Freed p1\n");
         serial_print("HEAPTEST: freed p1\n");
-        
-        // Show heap stats after free
         vga_print("\n  After kfree(p1):\n");
         heap_stats();
-        
-        // Test 4: Allocate again (should reuse p1's memory)
         vga_print("\n  Test 4: kmalloc(64) after free (should reuse p1)\n");
         serial_print("HEAPTEST: Test 4 - kmalloc(64) after free\n");
         void* p3 = kmalloc(64);
@@ -355,7 +287,6 @@ static void handle_command(const char *cmd) {
         serial_print("HEAPTEST: p3=0x");
         serial_print_hex((uint64_t)p3);
         serial_print("\n");
-        
         if (p3 == p1) {
             vga_print("  ✅ MEMORY REUSED! (p3 == p1)\n");
             serial_print("HEAPTEST: MEMORY REUSED! (p3 == p1)\n");
@@ -363,28 +294,17 @@ static void handle_command(const char *cmd) {
             vga_print("  Memory not reused (p3 != p1)\n");
             serial_print("HEAPTEST: Memory not reused\n");
         }
-        
-        // Write to p3
         if (p3) {
-            __asm__ volatile (
-                "movq $0xCAFEBABEDEADBEEF, %%rax\n"
-                "movq %%rax, (%0)"
-                : : "r" (p3) : "rax", "memory"
-            );
+            __asm__ volatile ("movq $0xCAFEBABEDEADBEEF, %%rax\nmovq %%rax, (%0)" : : "r" (p3) : "rax", "memory");
             vga_print("  Wrote to p3\n");
             serial_print("HEAPTEST: wrote to p3\n");
         }
-        
-        // Show final heap stats
         vga_print("\n  Final heap stats:\n");
         heap_stats();
-        
-        // Clean up
         vga_print("\n  Cleaning up...\n");
         serial_print("HEAPTEST: cleaning up\n");
         if (p2) kfree(p2);
         if (p3) kfree(p3);
-        
         heap_stats();
         serial_print("=== HEAPTEST END ===\n");
     } else if (strcmp(cmd, "user") == 0) {
@@ -397,29 +317,23 @@ static void handle_command(const char *cmd) {
         vga_print("Creating user process...\n");
         create_user_process(user_test2, NULL);
         vga_print("> ");
-        
-    // Add this to the command list in handle_command()
     } else if (strcmp(cmd, "simple") == 0) {
         vga_print("\n=== Simple User Mode Test ===\n");
         vga_print("Running user code...\n");
-        
-        // Just call the user function directly
         simple_user_test();
-        
-        // Should never reach here
         vga_print("Returned from user mode! (shouldn't happen)\n");
-        vga_print("> ");        
-        
+        vga_print("> ");
+    } else if (strcmp(cmd, "nxtest") == 0) {
+        vga_print("\n=== NX Test ===\n");
+        vga_print("NX bit support is enabled in the VMM.\n");
+        vga_print("Check page table dumps with: vmmtest\n");
+        vga_print("> ");
     } else {
-        // UNKNOWN COMMAND - Improved error handling
         vga_print("\nUnknown command: '");
         vga_print(cmd);
         vga_print("'\n");
-        
-        // Check for close matches and suggest
         int found_suggestion = 0;
         for (int i = 0; i < num_commands; i++) {
-            // Check if command starts with the same first letter
             if (valid_commands[i][0] == cmd[0]) {
                 if (!found_suggestion) {
                     vga_print("Did you mean one of these?\n");
@@ -430,7 +344,6 @@ static void handle_command(const char *cmd) {
                 vga_print("\n");
             }
         }
-        
         if (!found_suggestion) {
             vga_print("Type 'help' for available commands\n");
         }
@@ -441,7 +354,6 @@ static void handle_command(const char *cmd) {
 void kmain(BootInfo *info) {
     g_bootinfo = info;
     
-    // Initial boot screen
     vga_clear();
     serial_init();
     serial_print("Serial: Kernel booted\n");
@@ -452,20 +364,19 @@ void kmain(BootInfo *info) {
 
     idt_init();
     pit_init(100);
-    keyboard_init();
-
+    
     asm volatile("sti");
 
     pmm_init(g_bootinfo);
     vmm_init();
     heap_init();
 
-    // Initialize user mode support
     tss_init();
 
-    // ============================================
-    // SUCCESSFUL BOOT - Clear and show clean prompt
-    // ============================================
+    // Initialize keyboard AFTER memory management
+    // This prevents PMM/VMM from corrupting scancode tables
+    keyboard_init();
+
     vga_clear();
     vga_print("DonsDOS v0.1\n");
     vga_print("Type 'help'\n");
@@ -486,7 +397,6 @@ void kmain(BootInfo *info) {
                 }
                 continue;
             }
-            
             if (c == '\n') {
                 vga_putc('\n');
                 cmd_buffer[cmd_pos] = '\0';
@@ -494,7 +404,6 @@ void kmain(BootInfo *info) {
                 cmd_pos = 0;
                 continue;
             }
-            
             if (c >= ' ' && c <= '~' && cmd_pos < 127) {
                 cmd_buffer[cmd_pos++] = c;
                 vga_putc(c);

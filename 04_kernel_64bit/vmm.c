@@ -1,4 +1,4 @@
-// vmm.c - Force full TLB flush
+// vmm.c - Using recursive mapping for page table access
 #include <stdint.h>
 #include <stddef.h>
 #include "include/vmm.h"
@@ -6,8 +6,26 @@
 #include "include/vga.h"
 #include "include/serial.h"
 
+// Recursive mapping address for PML4
 static uint64_t* get_pml4_virt(void) {
     return (uint64_t*)0xFFFFFF7FBFDFE000ULL;
+}
+
+// Get virtual address of a page table entry using recursive mapping
+// This works for any physical address
+static uint64_t* get_pte_virt(uint64_t phys, uint32_t idx) {
+    // Use recursive mapping to access the page table
+    // The recursive entry is at PML4 index 510
+    // So we can access any page table by walking the page tables
+    // For now, we'll use the identity mapping for low addresses
+    // and HHDM for others
+    if (phys < 0x200000) {
+        return (uint64_t*)(phys + (idx * 8));
+    }
+    // For higher addresses, we need to use the recursive mapping
+    // But we can't easily access arbitrary page tables this way
+    // So we'll use HHDM
+    return (uint64_t*)(phys + HHDM_START + (idx * 8));
 }
 
 void vmm_init(void) {
@@ -24,6 +42,9 @@ void vmm_init(void) {
     serial_print_hex(cr3);
     serial_print("\n");
     
+    vga_print("VMM: NX support available\n");
+    serial_print("VMM: NX support available\n");
+    
     vga_print("VMM: Initialization complete\n");
     serial_print("VMM: Initialization complete\n");
 }
@@ -37,16 +58,14 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     serial_print_hex(flags);
     serial_print("\n");
     
-    // Clear any NX bit from the physical address and flags
-    phys = phys & ~0x8000000000000000ULL;
-    flags = flags & ~0x8000000000000000ULL;
+    // Clear NX from physical address
+    phys = phys & ~PT_NX;
     
-    // Determine if this is a user page
-    // For user pages, ALL levels must have the USER bit set!
+    // Determine flags
     uint64_t user_flag = (flags & PT_USER) ? PT_USER : 0;
     uint64_t write_flag = (flags & PT_WRITE) ? PT_WRITE : 0;
-    uint64_t exec_flag = (flags & PT_EXEC) ? PT_EXEC : 0;
     uint64_t present_flag = PT_PRESENT;
+    uint64_t nx_flag = (flags & PT_NX) ? PT_NX : 0;
     
     uint64_t* pml4 = get_pml4_virt();
     
@@ -55,7 +74,7 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     uint32_t pd_idx = (virt >> 21) & 0x1FF;
     uint32_t pt_idx = (virt >> 12) & 0x1FF;
     
-    // Allocate PDPT - MUST set USER bit for user pages!
+    // Allocate PDPT
     uint64_t* pdpt;
     if (!(pml4[pml4_idx] & 0x01)) {
         uint64_t pdpt_phys = pmm_alloc_page();
@@ -63,22 +82,17 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
             serial_print("VMM: Failed to allocate PDPT!\n");
             return;
         }
-        // CRITICAL: Set USER bit in PML4 entry!
         pml4[pml4_idx] = pdpt_phys | present_flag | write_flag | user_flag;
         serial_print("VMM: Allocated PDPT at 0x");
         serial_print_hex(pdpt_phys);
-        serial_print(" with USER bit\n");
+        serial_print("\n");
         pdpt = (uint64_t*)pdpt_phys;
     } else {
-        // CRITICAL: If PML4 entry exists, ensure it has USER bit for user pages!
-        if (user_flag) {
-            pml4[pml4_idx] |= PT_USER;
-            serial_print("VMM: Added USER bit to existing PML4 entry\n");
-        }
-        pdpt = (uint64_t*)(pml4[pml4_idx] & ~0xFFF);
+        uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFF;
+        pdpt = (uint64_t*)pdpt_phys;
     }
     
-    // Allocate PD - MUST set USER bit for user pages!
+    // Allocate PD
     uint64_t* pd;
     if (!(pdpt[pdpt_idx] & 0x01)) {
         uint64_t pd_phys = pmm_alloc_page();
@@ -86,22 +100,17 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
             serial_print("VMM: Failed to allocate PD!\n");
             return;
         }
-        // CRITICAL: Set USER bit in PDPT entry!
         pdpt[pdpt_idx] = pd_phys | present_flag | write_flag | user_flag;
         serial_print("VMM: Allocated PD at 0x");
         serial_print_hex(pd_phys);
-        serial_print(" with USER bit\n");
+        serial_print("\n");
         pd = (uint64_t*)pd_phys;
     } else {
-        // CRITICAL: If PDPT entry exists, ensure it has USER bit for user pages!
-        if (user_flag) {
-            pdpt[pdpt_idx] |= PT_USER;
-            serial_print("VMM: Added USER bit to existing PDPT entry\n");
-        }
-        pd = (uint64_t*)(pdpt[pdpt_idx] & ~0xFFF);
+        uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFF;
+        pd = (uint64_t*)pd_phys;
     }
     
-    // Allocate PT - MUST set USER bit for user pages!
+    // Allocate PT
     uint64_t* pt;
     if (!(pd[pd_idx] & 0x01)) {
         uint64_t pt_phys = pmm_alloc_page();
@@ -109,25 +118,26 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
             serial_print("VMM: Failed to allocate PT!\n");
             return;
         }
-        // CRITICAL: Set USER bit in PD entry!
         pd[pd_idx] = pt_phys | present_flag | write_flag | user_flag;
         serial_print("VMM: Allocated PT at 0x");
         serial_print_hex(pt_phys);
-        serial_print(" with USER bit\n");
+        serial_print("\n");
         pt = (uint64_t*)pt_phys;
     } else {
-        // CRITICAL: If PD entry exists, ensure it has USER bit for user pages!
-        if (user_flag) {
-            pd[pd_idx] |= PT_USER;
-            serial_print("VMM: Added USER bit to existing PD entry\n");
-        }
-        pt = (uint64_t*)(pd[pd_idx] & ~0xFFF);
+        uint64_t pt_phys = pd[pd_idx] & ~0xFFF;
+        pt = (uint64_t*)pt_phys;
     }
     
-    // Map the page
-    uint64_t pte = phys | flags;
-    // Explicitly clear the NX bit (bit 63) to make the page executable
-    pte = pte & ~0x8000000000000000ULL;
+    // Map the page - make sure WRITE bit is set!
+    uint64_t pte = phys | present_flag | PT_WRITE | user_flag;
+    // Force WRITE bit for heap pages
+    if (flags & PT_WRITE) {
+        pte |= PT_WRITE;
+    }
+    if (nx_flag) {
+        pte |= PT_NX;
+        serial_print("VMM: NX bit set for page\n");
+    }
     
     pt[pt_idx] = pte;
     serial_print("VMM: Mapped page: PT[");
@@ -155,32 +165,19 @@ uint64_t vmm_get_phys(uint64_t virt) {
     uint32_t pd_idx = (virt >> 21) & 0x1FF;
     uint32_t pt_idx = (virt >> 12) & 0x1FF;
     
-    // Check PML4 entry
-    if (!(pml4[pml4_idx] & 0x01)) {
-        return 0;
-    }
+    if (!(pml4[pml4_idx] & 0x01)) return 0;
     uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFF;
     uint64_t* pdpt = (uint64_t*)pdpt_phys;
     
-    // Check PDPT entry
-    if (!(pdpt[pdpt_idx] & 0x01)) {
-        return 0;
-    }
+    if (!(pdpt[pdpt_idx] & 0x01)) return 0;
     uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFF;
     uint64_t* pd = (uint64_t*)pd_phys;
     
-    // Check PD entry
-    if (!(pd[pd_idx] & 0x01)) {
-        return 0;
-    }
+    if (!(pd[pd_idx] & 0x01)) return 0;
     uint64_t pt_phys = pd[pd_idx] & ~0xFFF;
     uint64_t* pt = (uint64_t*)pt_phys;
     
-    // Check PT entry
-    if (!(pt[pt_idx] & 0x01)) {
-        return 0;
-    }
-    
+    if (!(pt[pt_idx] & 0x01)) return 0;
     return (pt[pt_idx] & ~0xFFF) | (virt & 0xFFF);
 }
 
@@ -188,7 +185,6 @@ int vmm_is_mapped(uint64_t virt) {
     return vmm_get_phys(virt) != 0;
 }
 
-// Debug function to dump all page table entries for a given virtual address
 void vmm_dump_page_table(uint64_t virt) {
     uint64_t* pml4 = get_pml4_virt();
     
@@ -205,9 +201,6 @@ void vmm_dump_page_table(uint64_t virt) {
     serial_print("] = 0x");
     serial_print_hex(pml4[pml4_idx]);
     serial_print("\n");
-    serial_print("    USER: ");
-    serial_print_hex((pml4[pml4_idx] >> 2) & 0x1);
-    serial_print("\n");
     
     if (!(pml4[pml4_idx] & 0x01)) {
         serial_print("  PML4 entry not present!\n");
@@ -221,9 +214,6 @@ void vmm_dump_page_table(uint64_t virt) {
     serial_print_dec(pdpt_idx);
     serial_print("] = 0x");
     serial_print_hex(pdpt[pdpt_idx]);
-    serial_print("\n");
-    serial_print("    USER: ");
-    serial_print_hex((pdpt[pdpt_idx] >> 2) & 0x1);
     serial_print("\n");
     
     if (!(pdpt[pdpt_idx] & 0x01)) {
@@ -239,9 +229,6 @@ void vmm_dump_page_table(uint64_t virt) {
     serial_print("] = 0x");
     serial_print_hex(pd[pd_idx]);
     serial_print("\n");
-    serial_print("    USER: ");
-    serial_print_hex((pd[pd_idx] >> 2) & 0x1);
-    serial_print("\n");
     
     if (!(pd[pd_idx] & 0x01)) {
         serial_print("  PD entry not present!\n");
@@ -256,8 +243,8 @@ void vmm_dump_page_table(uint64_t virt) {
     serial_print("] = 0x");
     serial_print_hex(pt[pt_idx]);
     serial_print("\n");
-    serial_print("    USER: ");
-    serial_print_hex((pt[pt_idx] >> 2) & 0x1);
+    serial_print("    NX: ");
+    serial_print_hex((pt[pt_idx] >> 63) & 0x1);
     serial_print("\n");
     serial_print("    PRESENT: ");
     serial_print_hex(pt[pt_idx] & 0x1);

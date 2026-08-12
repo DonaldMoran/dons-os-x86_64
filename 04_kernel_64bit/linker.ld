@@ -22,8 +22,12 @@ SECTIONS
         *(.data.tss)
     }
     
+    /* .bss with 8KB padding */
     .bss : {
         *(.bss*)
         *(COMMON)
+        . = ALIGN(4096);
+        . += 8192;
+        . = ALIGN(4096);
     }
 }

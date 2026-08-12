@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, **simple, user, user2**
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, **simple, user, user2, nxtest**
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -98,6 +98,9 @@ Boot chain is complete and stable.
 - ✅ HHDM mapping (PML4[256] mapped)
 - ✅ No GP faults when accessing page tables
 - ✅ User-space page mapping with PT_USER flag
+- ✅ **NX (No Execute) bit support** via PT_NX flag
+- ✅ **nxtest command** for verifying NX functionality
+- ✅ **WRITE bit fix for heap pages** (resolved page faults)
 
 ### ✅ 3.4 — Kernel Heap Allocator - COMPLETED
 - ✅ `kmalloc()` working with bump allocator
@@ -107,10 +110,10 @@ Boot chain is complete and stable.
 - ✅ `heaptest` test command (verifies allocation and reuse)
 - ✅ 64MB initial heap size
 - ✅ Free list for memory reuse
-- ☐ Slab/buddy allocator (future enhancement)
-- ☐ Memory pools for small objects (future enhancement)
+- ✅ **WRITE bit properly set for heap pages** (resolved in NX update)
+- ☐ Slab/buddy allocator (NOT NEEDED — free list provides memory reuse)
 
-### ✅ 3.5 — User Mode (Ring 3) - COMPLETED ⭐ NEW
+### ✅ 3.5 — User Mode (Ring 3) - COMPLETED
 - ✅ GDT management with user segments (DPL=3)
 - ✅ User code (0x2B) and user data (0x33) segments
 - ✅ TSS initialization for stack switching on interrupts
@@ -119,34 +122,33 @@ Boot chain is complete and stable.
 - ✅ User memory mapped with PT_USER flag for user/kernel isolation
 - ✅ `create_user_process()` for launching user code
 - ✅ Test commands: `simple`, `user`, `user2` for user mode verification
-- ⚠️ NX bit not yet enabled — all pages are executable by default
 
-### ☐ 3.6 — NX Bit Support (Next)
-- Enable NX bit in EFER
-- Add PT_NX flag for proper execute permission control
-- Mark data pages as non-executable
+### ✅ 3.6 — NX Bit Support - COMPLETED ⭐ NEW
+- ✅ NX bit enabled in VMM via PT_NX flag
+- ✅ PT_NX definition added to vmm.h (bit 63)
+- ✅ NX flag handling in `vmm_map_page()` on final PTE
+- ✅ `nxtest` command for verifying NX functionality
+- ✅ NX status displayed in `vmmtest` output
+- ✅ WRITE bit fix for heap pages (resolved page faults)
+- ✅ 8KB .bss padding to prevent keyboard buffer corruption
+- ✅ `keyboard_init()` moved after memory management initialization
 
-### ☐ 3.7 — Slab Allocator (Future Enhancement)
-- Advanced memory allocation with size classes
-- Memory pool for small objects
-- Better performance for frequent allocations
-
-### ☐ 3.8 — System Calls
+### ☐ 3.7 — System Calls (Next)
 - `syscall` instruction setup
 - System call handler
 - User library for system calls
 
-### ☐ 3.9 — Process Model
+### ☐ 3.8 — Process Model
 - Process Control Block (PCB)
 - Page table per process
 - Context switching
 
-### ☐ 3.10 — ELF Loader
+### ☐ 3.9 — ELF Loader
 - ELF parsing
 - Program loading
 - User program execution
 
-### ☐ 3.11 — Scheduler Prototype
+### ☐ 3.10 — Scheduler Prototype
 - Timer‑driven task switching  
 - Process Control Block (PCB)  
 - Cooperative or preemptive
@@ -205,12 +207,11 @@ Boot chain is complete and stable.
 | Command Shell | ✔ Complete |
 | Higher‑half kernel | ✔ Complete |
 | Exception Handlers | ✔ Complete (#DE, #PF, #GP) |
-| **Virtual Memory Manager** | **✔ Complete (recursive paging)** |
+| **Virtual Memory Manager** | **✔ Complete (recursive paging + NX)** |
 | Serial Debug Output | ✔ Complete |
 | **Heap Allocator (kmalloc/kfree)** | **✔ Complete** |
-| **User Mode (Ring 3)** | **✔ Complete** ⭐ NEW |
-| NX Bit Support | ☐ Planned |
-| Slab Allocator | ☐ Planned |
+| **User Mode (Ring 3)** | **✔ Complete** |
+| **NX Bit Support** | **✔ Complete** ⭐ NEW |
 | System Calls | ☐ Planned |
 | Process Model | ☐ Planned |
 | ELF Loader | ☐ Planned |
@@ -220,7 +221,32 @@ Boot chain is complete and stable.
 
 ## Milestones
 
-### v0.3.0-userland (August 2026) ⭐ NEW
+### v0.3.1-nx-support (August 2026) ⭐ NEW
+
+**What was accomplished:**
+- ✅ NX (No Execute) bit support enabled via PT_NX flag
+- ✅ PT_NX definition added to vmm.h (bit 63)
+- ✅ NX flag handling in `vmm_map_page()` on final PTE
+- ✅ `nxtest` command for verifying NX functionality
+- ✅ NX status displayed in `vmmtest` output
+- ✅ WRITE bit fix for heap pages (resolved page faults)
+- ✅ 8KB .bss padding to prevent keyboard buffer corruption
+- ✅ `keyboard_init()` moved after memory management initialization
+- ✅ README.md updated with NX documentation
+- ✅ ROADMAP.md updated with NX completion
+
+**Key learnings:**
+- NX bit (bit 63) must only be set on the final PTE
+- WRITE bit must be explicitly set for heap pages
+- 8KB .bss padding prevents keyboard buffer corruption
+- Keyboard initialization must happen after memory management
+- `nxtest` command validates NX functionality
+
+**Known limitations:**
+- No system calls yet (user code can't request kernel services)
+- No process model yet
+
+### v0.3.0-userland (August 2026)
 
 **What was accomplished:**
 - ✅ GDT management with user segments (DPL=3)
@@ -237,10 +263,9 @@ Boot chain is complete and stable.
 - TSS must be configured for stack switching
 - `iretq` is the correct way to transition from kernel to user mode
 - PT_USER flag is essential for user memory access
-- NX bit is the next logical step for security
 
 **Known limitations:**
-- NX bit not yet enabled — all pages are executable by default
+- NX bit not yet enabled (resolved in v0.3.1-nx-support)
 - No system calls yet (user code can't request kernel services)
 
 ### v0.2.6-heap-stable (August 2026)

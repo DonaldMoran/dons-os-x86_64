@@ -15,3 +15,5 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags);
 void vmm_unmap_page(uint64_t virt);
 uint64_t vmm_get_phys(uint64_t virt);
 int vmm_is_mapped(uint64_t virt);
+
+#define PT_NX       0x8000000000000000ULL  // Bit 63 - No Execute
