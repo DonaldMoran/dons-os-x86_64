@@ -11,6 +11,7 @@
 #include "include/heap.h"
 #include "include/ring3.h"
 #include "include/tss.h"
+#include "include/syscall.h"  // ADDED: Include syscall header
 
 extern void pit_init(uint32_t freq);
 
@@ -34,7 +35,7 @@ static void handle_command(const char *cmd) {
         "help", "clear", "version", "reboot", 
         "pmmtest", "info", "mem", "test", 
         "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", "simple",
-        "nxtest"
+        "nxtest", "syscall"  // ADDED: syscall command
     };
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
     
@@ -58,6 +59,7 @@ static void handle_command(const char *cmd) {
         vga_print("  user2    - Test user mode (Ring 3) - second test\n");
         vga_print("  simple   - Test user mode (Ring 3) - second test\n");
         vga_print("  nxtest   - Test NX (No Execute) bit\n");
+        vga_print("  syscall  - Test system calls\n");  // ADDED: Help entry
         vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
@@ -67,7 +69,7 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "version") == 0) {
         vga_print("\nDonsDOS v0.2.3\n");
         vga_print("Build: 64-bit kernel with VGA console\n");
-        vga_print("Features: VMM with recursive paging, HHDM, NX support\n");
+        vga_print("Features: VMM with recursive paging, HHDM, NX support, Syscalls\n");  // UPDATED
         vga_print("Copyright (c) 2026 Don's OS Project\n");
         vga_print("> ");
     } else if (strcmp(cmd, "info") == 0) {
@@ -328,6 +330,22 @@ static void handle_command(const char *cmd) {
         vga_print("NX bit support is enabled in the VMM.\n");
         vga_print("Check page table dumps with: vmmtest\n");
         vga_print("> ");
+    // ADDED: Syscall test command
+    } else if (strcmp(cmd, "syscall") == 0) {
+        vga_print("\n=== Syscall Test ===\n");
+        vga_print("Testing SYS_WRITE...\n");
+        
+        const char* msg = "Hello from syscall test!\n";
+        long ret = sys_write(1, msg, 25);
+        
+        vga_print("sys_write returned: ");
+        vga_print_dec_cur(ret);
+        vga_print("\n");
+        
+        vga_print("Testing SYS_EXIT... (will halt)\n");
+        vga_print("> ");
+        sys_exit(0);
+        // Should not reach here
     } else {
         vga_print("\nUnknown command: '");
         vga_print(cmd);
@@ -376,6 +394,10 @@ void kmain(BootInfo *info) {
     // Initialize keyboard AFTER memory management
     // This prevents PMM/VMM from corrupting scancode tables
     keyboard_init();
+
+    // ADDED: Initialize system calls
+    serial_print("Serial: Initializing syscalls...\n");
+    syscall_init();
 
     vga_clear();
     vga_print("DonsDOS v0.1\n");

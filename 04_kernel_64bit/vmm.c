@@ -11,22 +11,22 @@ static uint64_t* get_pml4_virt(void) {
     return (uint64_t*)0xFFFFFF7FBFDFE000ULL;
 }
 
-// Get virtual address of a page table entry using recursive mapping
-// This works for any physical address
-static uint64_t* get_pte_virt(uint64_t phys, uint32_t idx) {
-    // Use recursive mapping to access the page table
-    // The recursive entry is at PML4 index 510
-    // So we can access any page table by walking the page tables
-    // For now, we'll use the identity mapping for low addresses
-    // and HHDM for others
-    if (phys < 0x200000) {
-        return (uint64_t*)(phys + (idx * 8));
-    }
-    // For higher addresses, we need to use the recursive mapping
-    // But we can't easily access arbitrary page tables this way
-    // So we'll use HHDM
-    return (uint64_t*)(phys + HHDM_START + (idx * 8));
-}
+//~ // Get virtual address of a page table entry using recursive mapping
+//~ // This works for any physical address
+//~ static uint64_t* get_pte_virt(uint64_t phys, uint32_t idx) {
+    //~ // Use recursive mapping to access the page table
+    //~ // The recursive entry is at PML4 index 510
+    //~ // So we can access any page table by walking the page tables
+    //~ // For now, we'll use the identity mapping for low addresses
+    //~ // and HHDM for others
+    //~ if (phys < 0x200000) {
+        //~ return (uint64_t*)(phys + (idx * 8));
+    //~ }
+    //~ // For higher addresses, we need to use the recursive mapping
+    //~ // But we can't easily access arbitrary page tables this way
+    //~ // So we'll use HHDM
+    //~ return (uint64_t*)(phys + HHDM_START + (idx * 8));
+//~ }
 
 void vmm_init(void) {
     vga_print("VMM: Initializing...\n");

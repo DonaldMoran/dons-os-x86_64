@@ -22,7 +22,7 @@
 
 ---
 
-## 2. Core Kernel Features (13/13 Complete)
+## 2. Core Kernel Features (14/14 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
@@ -31,7 +31,7 @@
 | 8 | **PIT Timer** | ✅ Complete | IRQ0 tick counter, scheduling foundation |
 | 9 | **Keyboard Driver** | ✅ Complete | IRQ1, scancode set 1, shift/caps, input buffer |
 | 10 | **VGA Console Upgrade** | ✅ Complete | Scrolling, cursor control, shell‑ready console |
-| 11 | **Shell** | ✅ Complete | Command interpreter: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, simple, user, user2, **nxtest** |
+| 11 | **Shell** | ✅ Complete | Command interpreter: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, simple, user, user2, nxtest, **syscall** |
 | 12 | **E820 Memory Map** | ✅ Complete | Memory detection, BootInfo struct passed to kernel |
 | 13 | **Physical Memory Manager** | ✅ Complete | Bitmap allocator, page alloc/free, reserved region marking |
 | 14 | **Virtual Memory Manager** | ✅ Complete | Recursive paging implemented at PML4[510]. VMM can read/write PML4 from higher-half kernel. HHDM mapping at PML4[256]. Dynamic page table allocation (PDPT, PD, PT) working. No GP faults when accessing page tables. `vmmtest` command verifies functionality. User-space page mapping with PT_USER flag working. **NX (No Execute) bit support via PT_NX flag.** |
@@ -39,6 +39,7 @@
 | 16 | **Heap Allocator** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. `heapstat` command for debugging. `heaptest` command for verification. 64MB initial heap with automatic expansion. Memory reuse verified. **WRITE bit fix for heap pages.** |
 | 17 | **User Mode (Ring 3)** | ✅ Complete | GDT with user segments (0x2B code, 0x33 data). TSS configured for stack switching. `iretq`-based transition from kernel to user mode. User code executes at CPL=3 with page protection. `create_user_process()` for launching user code. Test commands: `simple`, `user`, `user2`. |
 | 18 | **NX (No Execute) Bit Support** | ✅ Complete | PT_NX flag added to vmm.h (bit 63). NX flag handling in `vmm_map_page()` on final PTE. `nxtest` command for verifying NX functionality. NX status displayed in `vmmtest` output. **8KB .bss padding** to prevent keyboard buffer corruption. **`keyboard_init()` moved after memory management initialization.** |
+| 19 | **System Calls** | ✅ Complete | SYSCALL/SYSRET instruction interface via MSRs (IA32_STAR, IA32_LSTAR, IA32_FMASK). SYS_WRITE (syscall #1) and SYS_EXIT (syscall #60) implemented. Syscall dispatcher with proper x86_64 ABI. `syscall` test command for verification. Proper register preservation across syscalls. |
 
 ---
 
@@ -46,24 +47,24 @@
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 19 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
-| 20 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510], HHDM mapping at PML4[256], dynamic page table allocation, `vmmtest` working, **NX bit support** |
-| 21 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging, integrated with QEMU |
-| 22 | **Kernel Heap** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. Memory reuse verified via `heaptest`. **WRITE bit fix for heap pages.** |
-| 23 | **User Memory Mapping** | ✅ Complete | Pages mapped with PT_USER flag for user/kernel isolation |
-| 24 | **NX (No Execute) Bit** | ✅ Complete | PT_NX flag in VMM, `nxtest` command, NX status in `vmmtest`, **8KB .bss padding**, **keyboard_init() moved after memory management** |
+| 20 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
+| 21 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510], HHDM mapping at PML4[256], dynamic page table allocation, `vmmtest` working, **NX bit support** |
+| 22 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging, integrated with QEMU |
+| 23 | **Kernel Heap** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. Memory reuse verified via `heaptest`. **WRITE bit fix for heap pages.** |
+| 24 | **User Memory Mapping** | ✅ Complete | Pages mapped with PT_USER flag for user/kernel isolation |
+| 25 | **NX (No Execute) Bit** | ✅ Complete | PT_NX flag in VMM, `nxtest` command, NX status in `vmmtest`, **8KB .bss padding**, **keyboard_init() moved after memory management** |
 
 ---
 
-## 4. User Space & Advanced Features (0/5 Complete)
+## 4. User Space & Advanced Features (1/5 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 25 | **System Calls** | ☐ Not Started | SYSCALL/SYSRET instruction interface for user programs |
-| 26 | **Process Model** | ☐ Not Started | Page table per process, context switching |
-| 27 | **ELF Loader** | ☐ Not Started | Load user programs, parse ELF64, map segments |
-| 28 | **Scheduler** | ☐ Not Started | Cooperative → preemptive, PIT‑driven task switching |
-| 29 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
+| 26 | **System Calls** | ✅ Complete | SYSCALL/SYSRET with SYS_WRITE and SYS_EXIT, MSR configuration, `syscall` test command ⭐ NEW |
+| 27 | **Process Model** | ☐ Not Started | Page table per process, context switching |
+| 28 | **ELF Loader** | ☐ Not Started | Load user programs, parse ELF64, map segments |
+| 29 | **Scheduler** | ☐ Not Started | Cooperative → preemptive, PIT‑driven task switching |
+| 30 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
 
 ---
 
@@ -72,16 +73,26 @@
 | Phase | Completed | Total | Progress |
 |-------|-----------|-------|----------|
 | Boot & System Init | 5 | 5 | **100%** ✅ |
-| Core Kernel | 13 | 13 | **100%** ✅ |
+| Core Kernel | 14 | 14 | **100%** ✅ |
 | Memory Management | 6 | 6 | **100%** ✅ |
-| User Space | 0 | 5 | **0%** ☐ |
-| **Overall** | **24** | **29** | **83%** |
+| User Space | 1 | 5 | **20%** 🚧 |
+| **Overall** | **26** | **30** | **87%** |
 
 ---
 
 ## Recent Milestone Achievements (Chronological Order - Newest First)
 
-### v0.3.1 — NX (No Execute) Bit Support (Current) ⭐ NEW
+### v0.3.2 — System Calls (Current) ⭐ NEW
+- ✅ SYSCALL/SYSRET instruction setup via MSRs (IA32_STAR, IA32_LSTAR, IA32_FMASK)
+- ✅ Assembly syscall handler with full register preservation
+- ✅ SYS_WRITE (syscall #1) — VGA + serial output, returns count
+- ✅ SYS_EXIT (syscall #60) — Process termination with status, halts (correct behavior)
+- ✅ Syscall dispatcher with x86_64 ABI (rax, rdi, rsi, rdx, r10, r8, r9)
+- ✅ `syscall` test command for verification
+- ✅ README.md, ROADMAP.md, and OSDev_Checklist.md updated
+- ✅ All tests passing: `syscall`, `nxtest`, `heaptest`, keyboard, shell
+
+### v0.3.1 — NX (No Execute) Bit Support
 - ✅ PT_NX flag added to vmm.h (bit 63)
 - ✅ NX flag handling in `vmm_map_page()` on final PTE
 - ✅ `nxtest` command for verifying NX functionality
@@ -219,7 +230,8 @@
 - `v0.2.5-heap-working`  - Heap allocator (kmalloc) working
 - `v0.2.6-heap-stable`   - Heap allocator complete with kmalloc/kfree and memory reuse
 - `v0.3.0-userland`      - User mode (Ring 3) working
-- `v0.3.1-nx-support`    - NX (No Execute) bit support enabled ⭐ NEW
+- `v0.3.1-nx-support`    - NX (No Execute) bit support enabled
+- `v0.3.2-syscalls`      - System calls implemented (SYS_WRITE, SYS_EXIT) ⭐ NEW
 
 ---
 
@@ -232,7 +244,7 @@
 5. ~~**Kernel Heap** — `kmalloc`/`kfree`~~ ✅ COMPLETED
 6. ~~**User Mode (Ring 3)** — GDT, TSS, privilege switching~~ ✅ COMPLETED
 7. ~~**NX Bit Support** — Enable NX bit in EFER, add PT_NX flag~~ ✅ COMPLETED
-8. **System Calls** — `syscall` instruction interface for user programs
+8. ~~**System Calls** — `syscall` instruction interface for user programs~~ ✅ COMPLETED
 9. **Process Model** — Page table per process, context switching
 10. **ELF Loader** — Load and execute user programs
 11. **Scheduler** — Basic task switching

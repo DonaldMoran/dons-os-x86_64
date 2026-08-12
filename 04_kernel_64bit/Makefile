@@ -10,7 +10,9 @@ LDFLAGS := -nostdlib
 
 all: kernel.bin
 
-OBJS = entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o idt_load.o isr.o vga.o keyboard.o serial.o tss.o gdt.o ring3.o
+OBJS = entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o \
+       idt_load.o isr.o vga.o keyboard.o serial.o tss.o gdt.o ring3.o \
+       syscall.o syscall_init.o
 
 kernel.elf: $(OBJS)
 	$(LD) $(LDFLAGS) -T linker.ld -o kernel.elf $(OBJS)
@@ -30,11 +32,18 @@ entry.o: entry.asm
 ring3_entry.o: ring3_entry.S
 	$(AS) -f elf64 ring3_entry.S -o ring3_entry.o
 
+syscall_init.o: syscall_init.asm
+	$(AS) -f elf64 syscall_init.asm -o syscall_init.o
+
 %.o: %.c
 	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
 
+# Specific rules for C files that need include path
 vga.o: vga.c
 	$(CC) $(CFLAGS) -Iinclude -I. -c vga.c -o vga.o
+
+syscall.o: syscall.c
+	$(CC) $(CFLAGS) -Iinclude -I. -c syscall.c -o syscall.o
 
 clean:
 	rm -f *.o kernel.elf kernel.bin

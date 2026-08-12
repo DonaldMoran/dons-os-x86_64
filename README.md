@@ -16,7 +16,7 @@ Each stage is isolated, minimal, and fully bootable.
 - **03_boot_64bit** — PAE paging, PML4/PDPT/PD/PT, IA32_EFER.LME, long‑mode entry  
 
 ### Kernel Development 
-- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**  
+- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**, **system calls**   
 - **05_boot_kernel64** — Full boot chain: stage2 loads kernel, enters long mode, jumps to `_start`
 
 The top‑level Makefile builds and runs all components.
@@ -61,7 +61,7 @@ This boots:
  4. stage2 enters long mode  
  5. stage2 jumps to kernel at 0xFFFFFFFF80100000 (higher-half)  
  6. kernel executes `_start` → `kmain`  
- 7. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM, Heap
+ 7. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM, Heap, **Syscalls**
  8. kernel displays command prompt `>`  
  9. User can type commands and receive responses
 
@@ -89,6 +89,7 @@ Once booted, you'll see a prompt > where you can type commands:
 | `user`    | Test user mode with process creation |
 | `user2`   | Second user mode test |
 | `nxtest` | Verify NX (No Execute) bit support is available in the VMM |
+| `syscall` | Test system call interface (SYS_WRITE, SYS_EXIT) |
 
 ``` 
 DonsDOS v0.1
@@ -158,6 +159,15 @@ Check page table dumps with: vmmtest
   PMM: Working
   VMM: Working
   NX support: Enabled
+  
+> syscall
+ 
+  === Syscall Test ===
+  Testing SYS_WRITE...
+  Hello from syscall test!
+  sys_write returned: 25
+  Testing SYS_EXIT... (will halt)
+  
 ```
 ---
 
@@ -263,6 +273,7 @@ This project is designed to be:
 - `v0.2.6-heap-stable` — Heap fully working with kfree and memory reuse, free list implemented, heaptest command
 - `v0.3.0-userland` — User mode (Ring 3) working, GDT with user segments, TSS stack switching, user code execution at CPL=3 with memory protection
 - `v0.3.1-nx-support` — **NX (No Execute) bit support enabled**, PT_NX flag in VMM, `nxtest` command, heap WRITE bit fix, keyboard buffer corruption resolved
+- `v0.3.2-syscalls` — **System call interface implemented** (SYS_WRITE, SYS_EXIT), SYSCALL/SYSRET support via MSRs, `syscall` test command
 
 ---
 
@@ -294,7 +305,7 @@ This project is designed to be:
 
 **Shell / Console**
 - Interactive prompt (`>`)
-- Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, **simple, user, user2**
+- Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, simple, user, user2, nxtest, **syscall**
 - Clean command parsing and line editing
 - Unknown command handling with suggestions
 - Serial console output (COM1) for debugging alongside VGA
@@ -322,6 +333,14 @@ This project is designed to be:
 - ✅ **NX (No Execute) Bit** — Fully supported via PT_NX flag in VMM
 - ✅ **NX Support Verified** — `nxtest` command confirms NX functionality
 
+**System Calls**
+- ✅ **SYSCALL/SYSRET support** via MSR (IA32_STAR, IA32_LSTAR, IA32_FMASK)
+- ✅ **SYS_WRITE** (syscall #1) — Writes to VGA console and serial output, returns count
+- ✅ **SYS_EXIT** (syscall #60) — Terminates process, prints status, halts (correct behavior without scheduler)
+- ✅ **Syscall dispatcher** with argument handling (x86_64 syscall ABI)
+- ✅ **Test command** (`syscall`) to verify both system calls
+- ✅ Proper register preservation across syscalls
+
 **User Mode**
 - ✅ GDT with user code (0x2B) and user data (0x33) segments (DPL=3)
 - ✅ TSS configured for stack switching on interrupts from user mode
@@ -344,22 +363,29 @@ This project is designed to be:
 ## 🌱 Next Steps (Roadmap)
 
 ### Short-term
-1. ~~**Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED
-2. ~~**Exception handlers** — Page fault, GPF, double fault with register dumps~~ ✅ COMPLETED
-3. ~~**Virtual memory manager** — HHDM, dynamic page tables, recursive paging~~ ✅ COMPLETED
-4. ~~**Heap allocator** — `kmalloc`/`kfree` implementation~~ ✅ COMPLETED
-5. ~~**User mode** — Ring 3 support with GDT, TSS, and privilege switching~~ ✅ COMPLETED
-6. ~~**NX bit support** — Enable NX bit in EFER and add PT_NX flag for proper execute permission control~~ ✅ COMPLETED
-7. ~~**Slab allocator** — Proper `kfree()` with memory reuse~~ ✅ NOT NEEDED (free list implementation already provides memory reuse)
-8. **System calls** — syscall instruction interface
-9. **Process model** — Page table per process, context switching
-10. **ELF loader** — Load and execute user programs
+-  1. ~~**Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED
+-  2. ~~**Exception handlers** — Page fault, GPF, double fault with register dumps~~ ✅ COMPLETED
+-  3. ~~**Virtual memory manager** — HHDM, dynamic page tables, recursive paging~~ ✅ COMPLETED
+-  4. ~~**Heap allocator** — `kmalloc`/`kfree` implementation~~ ✅ COMPLETED
+-  5. ~~**User mode** — Ring 3 support with GDT, TSS, and privilege switching~~ ✅ COMPLETED
+-  6. ~~**NX bit support** — Enable NX bit in EFER and add PT_NX flag~~ ✅ COMPLETED
+-  7. **System calls** — syscall instruction interface
+-  8. **Process model** — Page table per process, context switching
+-  9. **ELF loader** — Load and execute user programs
+-  7. ~~**System calls** — syscall instruction interface~~ ✅ COMPLETED
+-  8. **Process model** — Page table per process, context switching
+-  9. **ELF loader** — Load and execute user programs
 
 ### Long-term
-11. **Scheduler** — Task switching (cooperative → preemptive)
-12. **Framebuffer graphics** — Move from VGA text mode to graphics
-13. **File system** — Virtual File System (VFS) layer
-14. **User‑space programs** — Build and run actual user applications
+- 10. **Scheduler** — Task switching (cooperative → preemptive)
+- 11. **Framebuffer graphics** — Move from VGA text mode to graphics
+- 12. **File system** — Virtual File System (VFS) layer
+- 13. **User‑space programs** — Build and run actual user applications
+- 10. **Scheduler** — Task switching (cooperative → preemptive)
+- 11. **Framebuffer graphics** — Move from VGA text mode to graphics
+- 12. **File system** — Virtual File System (VFS) layer
+- 13. **User‑space programs** — Build and run actual user applications
+
 ---
 
 ## 📜 License

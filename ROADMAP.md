@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, **simple, user, user2, nxtest**
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, simple, user, user2, nxtest, **syscall**
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -123,7 +123,7 @@ Boot chain is complete and stable.
 - ✅ `create_user_process()` for launching user code
 - ✅ Test commands: `simple`, `user`, `user2` for user mode verification
 
-### ✅ 3.6 — NX Bit Support - COMPLETED ⭐ NEW
+### ✅ 3.6 — NX Bit Support - COMPLETED
 - ✅ NX bit enabled in VMM via PT_NX flag
 - ✅ PT_NX definition added to vmm.h (bit 63)
 - ✅ NX flag handling in `vmm_map_page()` on final PTE
@@ -133,12 +133,17 @@ Boot chain is complete and stable.
 - ✅ 8KB .bss padding to prevent keyboard buffer corruption
 - ✅ `keyboard_init()` moved after memory management initialization
 
-### ☐ 3.7 — System Calls (Next)
-- `syscall` instruction setup
-- System call handler
-- User library for system calls
+### ✅ 3.7 — System Calls - COMPLETED ⭐ NEW
+- ✅ `syscall` instruction setup via MSRs (IA32_STAR, IA32_LSTAR, IA32_FMASK)
+- ✅ System call handler in assembly with register preservation
+- ✅ SYS_WRITE (syscall #1) — Writes to VGA console and serial output
+- ✅ SYS_EXIT (syscall #60) — Terminates process, prints status, halts
+- ✅ Syscall dispatcher with argument handling (x86_64 syscall ABI)
+- ✅ `syscall` test command for verification
+- ✅ Proper x86_64 syscall ABI (rax=syscall#, rdi, rsi, rdx, r10, r8, r9)
+- ✅ SYSRET returns to user mode
 
-### ☐ 3.8 — Process Model
+### ☐ 3.8 — Process Model (Next)
 - Process Control Block (PCB)
 - Page table per process
 - Context switching
@@ -207,12 +212,12 @@ Boot chain is complete and stable.
 | Command Shell | ✔ Complete |
 | Higher‑half kernel | ✔ Complete |
 | Exception Handlers | ✔ Complete (#DE, #PF, #GP) |
-| **Virtual Memory Manager** | **✔ Complete (recursive paging + NX)** |
+| Virtual Memory Manager | ✔ Complete (recursive paging + NX) |
 | Serial Debug Output | ✔ Complete |
-| **Heap Allocator (kmalloc/kfree)** | **✔ Complete** |
-| **User Mode (Ring 3)** | **✔ Complete** |
-| **NX Bit Support** | **✔ Complete** ⭐ NEW |
-| System Calls | ☐ Planned |
+| Heap Allocator (kmalloc/kfree) | ✔ Complete |
+| User Mode (Ring 3) | ✔ Complete |
+| NX Bit Support | ✔ Complete |
+| **System Calls** | **✔ Complete** ⭐ NEW |
 | Process Model | ☐ Planned |
 | ELF Loader | ☐ Planned |
 | Scheduler | ☐ Planned |
@@ -221,7 +226,32 @@ Boot chain is complete and stable.
 
 ## Milestones
 
-### v0.3.1-nx-support (August 2026) ⭐ NEW
+### v0.3.2-syscalls (August 2026) ⭐ NEW
+
+**What was accomplished:**
+- ✅ System call interface using `syscall`/`sysret` instructions
+- ✅ MSR configuration (IA32_STAR, IA32_LSTAR, IA32_FMASK)
+- ✅ Assembly syscall handler with full register preservation
+- ✅ SYS_WRITE (syscall #1) — VGA + serial output
+- ✅ SYS_EXIT (syscall #60) — Process termination with status
+- ✅ Syscall dispatcher with proper x86_64 ABI
+- ✅ `syscall` test command for verification
+- ✅ Updated README.md and ROADMAP.md with syscall documentation
+
+**Key learnings:**
+- `syscall` instruction uses MSRs to set up the entry point
+- x86_64 syscall ABI: rax=syscall#, rdi, rsi, rdx, r10, r8, r9
+- r10 is used for 4th argument (must be moved to rcx for C calling convention)
+- SYSRET restores RCX to RIP and R11 to RFLAGS
+- Register preservation is critical across syscalls
+- SYS_EXIT correctly halts the system (proper behavior without scheduler)
+
+**Known limitations:**
+- No process model yet (SYS_EXIT halts instead of switching processes)
+- No ELF loader yet
+- Limited to SYS_WRITE and SYS_EXIT (more syscalls to come)
+
+### v0.3.1-nx-support (August 2026)
 
 **What was accomplished:**
 - ✅ NX (No Execute) bit support enabled via PT_NX flag
@@ -243,7 +273,7 @@ Boot chain is complete and stable.
 - `nxtest` command validates NX functionality
 
 **Known limitations:**
-- No system calls yet (user code can't request kernel services)
+- No system calls yet (resolved in v0.3.2-syscalls)
 - No process model yet
 
 ### v0.3.0-userland (August 2026)
@@ -266,7 +296,7 @@ Boot chain is complete and stable.
 
 **Known limitations:**
 - NX bit not yet enabled (resolved in v0.3.1-nx-support)
-- No system calls yet (user code can't request kernel services)
+- No system calls yet (resolved in v0.3.2-syscalls)
 
 ### v0.2.6-heap-stable (August 2026)
 

@@ -1,4 +1,6 @@
-#include <stdint.h>
+#include "include/serial.h"
+#include <stddef.h>    // ADD THIS for size_t
+#include <stdint.h>    // ADD THIS for uint64_t
 
 static inline void outb(uint16_t port, uint8_t val) {
     __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
@@ -22,6 +24,12 @@ void serial_init(void) {
 void serial_putc(char c) {
     while ((inb(0x3F8 + 5) & 0x20) == 0);
     outb(0x3F8, c);
+}
+
+void serial_write(const char* buf, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        serial_putc(buf[i]);
+    }
 }
 
 void serial_print(const char* str) {
