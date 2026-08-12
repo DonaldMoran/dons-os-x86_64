@@ -1,6 +1,22 @@
 [bits 16]
 [org 0x10000]
 
+; ============================================
+; DAP entries - at the beginning for fixed offsets
+; ============================================
+
+dap_kernel:
+    db 16
+    db 0
+    dw 128
+    dw 0x0000
+    dw 0x8000
+    dq 64
+
+; ============================================
+; Real Mode Code
+; ============================================
+
 start:
     cli
     mov ax, 0x1000
@@ -13,11 +29,14 @@ start:
     or  al, 00000010b
     out 0x92, al
 
+    ; Load kernel
     mov si, dap_kernel
     mov dl, 0x80
     mov ah, 0x42
     int 0x13
+    jc disk_error
 
+    ; Get memory map
     xor ebx, ebx
     mov di, e820_buffer
     mov dword [e820_count], 0
@@ -43,14 +62,17 @@ e820_done:
     mov cr0, eax
     jmp dword 0x08:pm_entry
 
-dap_kernel:
-    db 16
-    db 0
-    dw 128
-    dw 0x0000
-    dw 0x8000
-    dq 64
+disk_error:
+    mov ax, 0xB800
+    mov ds, ax
+    mov byte [0], 'E'
+    mov byte [1], 0x0C
+    hlt
+    jmp disk_error
 
+; ============================================
+; 32-bit Protected Mode
+; ============================================
 [bits 32]
 pm_entry:
     mov ax, 0x10
@@ -79,9 +101,11 @@ pm_entry:
     push dword long_mode_entry
     retf
 
+; ============================================
+; 64-bit Long Mode
+; ============================================
 [bits 64]
 long_mode_entry:
-[default rel]
     mov rsp, 0x80000
 
     mov rbx, bootinfo
@@ -108,62 +132,27 @@ long_mode_entry:
     jmp rax
 
 ; ============================================
-; GDT - Original working version
-; ; 0x28 - User code (Ring 3) - 64-bit
-; db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFA, 0xAF, 0x00
-;
-; 0x30 - User data (Ring 3) - 64-bit
-; db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xF2, 0xAF, 0x00
-;
+; GDT
 ; ============================================
-; Replace the GDT entries with manual byte definitions
 gdt_start:
-    ; 0x00 - Null descriptor
     dq 0x0000000000000000
-    
-    ; 0x08 - 32-bit Kernel code
     db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x9A, 0xCF, 0x00
-    
-    ; 0x10 - Kernel data
     db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x92, 0xCF, 0x00
-    
-    ; 0x18 - 64-bit Kernel code
     db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x9A, 0xAF, 0x00
-    
-    ; 0x20 - Kernel data (64-bit)
     db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x92, 0xAF, 0x00
-    
-    ; 0x28 - User code (Ring 3) - 64-bit
-    ; Format: limit[15:0] = 0xFFFF (bytes 0-1)
-    ;         base[23:0]  = 0x000000 (bytes 2-4)
-    ;         access byte = 0xFA (P=1, DPL=3, S=1, E=1, DC=0, R=1, A=0)
-    ;         flags+limit = 0xAF (G=1, D/B=0, L=1, AVL=0) + limit[19:16] = 0xF
-    ;         base[31:24] = 0x00
     db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFA, 0xAF, 0x00
-    
-    ; 0x30 - User data (Ring 3) - 64-bit
-    ; Format: limit[15:0] = 0xFFFF (bytes 0-1)
-    ;         base[23:0]  = 0x000000 (bytes 2-4)
-    ;         access byte = 0xF2 (P=1, DPL=3, S=1, E=0, ED=0, W=1, A=0)
-    ;         flags+limit = 0xAF (G=1, D/B=0, L=0, AVL=0) + limit[19:16] = 0xF
-    ;         base[31:24] = 0x00
-    ;db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xF2, 0xAF, 0x00
-    ;db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xF2, 0x92, 0x00
     db 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xF2, 0xAF, 0x00
-
-    
-    
-    ; 0x38 - TSS low (will be filled at runtime)
     dq 0x0000000000000000
-    
-    ; 0x40 - TSS high (will be filled at runtime)
     dq 0x0000000000000000
-    
 gdt_end:
 
 gdt_descriptor:
-    dw gdt_end - gdt_start - 1   ; Size
-    dq gdt_start                  ; Address
+    dw gdt_end - gdt_start - 1
+    dq gdt_start
+
+; ============================================
+; Page Tables
+; ============================================
 
 align 4096
 pml4:
@@ -184,15 +173,14 @@ pdpt_higher:
     dq pd + 3
     dq 0
 
-; Identity PD - maps 128 * 2MB = 256MB
 align 4096
 pd:
     %assign i 0
-    %rep 128
+    %rep 512
         dq (i * 0x200000) + 0x83
         %assign i i+1
     %endrep
-    times (512 - 128) dq 0
+    times (512 - 512) dq 0
 
 bootinfo:
     dq 0

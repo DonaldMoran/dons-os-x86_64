@@ -44,7 +44,7 @@ disk_error:
 dap_stage2:
     db 16                 ; size of DAP
     db 0                  ; reserved
-    dw 40                 ; number of sectors to read
+    dw 64                 ; number of sectors to read
     dw 0x0000             ; offset
     dw 0x1000             ; segment (0x1000:0000 = 0x00010000)
     dq 1                  ; starting LBA (stage2 at LBA 1)
