@@ -1,6 +1,6 @@
 #include "pmm.h"
 
-#define MAX_PHYS_MEM   (512ULL * 1024 * 1024)   // support up to 512 MB for now
+#define MAX_PHYS_MEM   (128ULL * 1024 * 1024)   // support up to 512 MB for now
 #define MAX_PAGES      (MAX_PHYS_MEM / PAGE_SIZE)
 #define BITMAP_SIZE    (MAX_PAGES / 8)
 
