@@ -369,9 +369,6 @@ This project is designed to be:
 -  4. ~~**Heap allocator** — `kmalloc`/`kfree` implementation~~ ✅ COMPLETED
 -  5. ~~**User mode** — Ring 3 support with GDT, TSS, and privilege switching~~ ✅ COMPLETED
 -  6. ~~**NX bit support** — Enable NX bit in EFER and add PT_NX flag~~ ✅ COMPLETED
--  7. **System calls** — syscall instruction interface
--  8. **Process model** — Page table per process, context switching
--  9. **ELF loader** — Load and execute user programs
 -  7. ~~**System calls** — syscall instruction interface~~ ✅ COMPLETED
 -  8. **Process model** — Page table per process, context switching
 -  9. **ELF loader** — Load and execute user programs
