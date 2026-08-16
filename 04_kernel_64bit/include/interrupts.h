@@ -14,13 +14,15 @@ void pit_init(uint32_t freq);
 extern volatile uint64_t g_ticks;
 
 typedef struct exception_frame {
-    uint64_t error_code;   // CPU pushes error code FIRST (for exceptions with error codes)
+    uint64_t error_code;
     uint64_t rip;
     uint64_t cs;
     uint64_t rflags;
-    uint64_t rsp;
-    uint64_t ss;           // Only if privilege change occurred
 } exception_frame_t;
+
+
+
+
 
 void isr8_handler(void);
 void isr13_handler(exception_frame_t *frame);

@@ -25,12 +25,6 @@ static int bitmap_test(uint64_t page) {
     return (pmm_bitmap[byte] >> bit) & 1;
 }
 
-//void pmm_init(BootInfo *info) {
-//    // mark everything used by default
-//    for (uint64_t i = 0; i < BITMAP_SIZE; i++) {
-//        pmm_bitmap[i] = 0xFF;
-//    }
-
 void pmm_init(BootInfo *info) {
     // mark everything used by default — force simple byte loop
     for (uint64_t i = 0; i < BITMAP_SIZE; i++) {
@@ -81,28 +75,20 @@ void pmm_init(BootInfo *info) {
     }
 }
 
-//uint64_t pmm_alloc_page(void) {
-//    for (uint64_t page = 0; page < MAX_PAGES; page++) {
-//        if (!bitmap_test(page)) {
-//            bitmap_set(page);
-//            return page * PAGE_SIZE;
-//        }
-//    }
-//    return 0; // out of memory
-//}
-
 uint64_t pmm_alloc_page(void) {
-    for (uint64_t page = 0; page < MAX_PAGES; page++) {
+    // Allocate from the END of memory (high addresses first)
+    for (uint64_t page = MAX_PAGES - 1; page > 0; page--) {
         uint64_t phys = page * PAGE_SIZE;
-
-//        // TEMP: only allow pages below 64 MB
-//        if (phys >= 0x04000000) {
-//            continue;
-//        }
-
         if (!bitmap_test(page)) {
             bitmap_set(page);
             return phys;
+        }
+    }
+    // Fallback: scan from beginning
+    for (uint64_t page = 0; page < MAX_PAGES; page++) {
+        if (!bitmap_test(page)) {
+            bitmap_set(page);
+            return page * PAGE_SIZE;
         }
     }
     return 0; // out of memory

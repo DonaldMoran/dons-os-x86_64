@@ -2,6 +2,7 @@
 #include "include/vga.h"
 #include "include/keyboard.h"
 #include "include/interrupts.h"  // Add this include
+#include "include/serial.h"
 
 #define PIC1_CMD  0x20
 #define PIC1_DATA 0x21
@@ -123,39 +124,91 @@ void isr8_handler(void) {
 
 // GP Fault handler with color
 void isr13_handler(exception_frame_t *frame) {
-    (void)frame;
+    uint64_t *raw = (uint64_t *)frame;
+
+    vga_print("\n");
+    vga_print_color("=== GENERAL PROTECTION FAULT (#GP) ===\n", 0x0C);
+
+    vga_print("Error Code : 0x");
+    vga_print_hex_cur(raw[0]);
+    vga_print("\n");
+
+    vga_print("RIP        : 0x");
+    vga_print_hex_cur(raw[1]);
+    vga_print("\n");
+
+    vga_print("CS         : 0x");
+    vga_print_hex_cur(raw[2]);
+    vga_print("\n");
+
+    vga_print("RFLAGS     : 0x");
+    vga_print_hex_cur(raw[3]);
+    vga_print("\n");
+
+    vga_print("\nRaw Frame Dump:\n");
+    vga_print("  RAW[0] (error) : 0x"); vga_print_hex_cur(raw[0]); vga_print("\n");
+    vga_print("  RAW[1] (rip)   : 0x"); vga_print_hex_cur(raw[1]); vga_print("\n");
+    vga_print("  RAW[2] (cs)    : 0x"); vga_print_hex_cur(raw[2]); vga_print("\n");
+    vga_print("  RAW[3] (rflags): 0x"); vga_print_hex_cur(raw[3]); vga_print("\n");
     
-    vga_print("\n");
-    vga_print_color("!!! GP FAULT !!!\n", 0x0C);  // Red text
-    vga_print("ERR: 0x");
-    vga_print_hex_cur(frame->error_code);
-    vga_print("\n");
-    vga_print("RIP: 0x");
-    vga_print_hex_cur(frame->rip);
-    vga_print("\n");
-    vga_print("CS: 0x");
-    vga_print_hex_cur(frame->cs);
-    vga_print("\n");
+    uint64_t fault_rip = raw[1] & 0xFFFFFFFFFFFFULL;
+
+    serial_print("GP: fault RIP = 0x");
+    serial_print_hex(fault_rip);
+    serial_print("\n");
+
     
+        serial_print("\n=== GP FAULT FRAME (raw) ===\n");
+    for (int i = 0; i < 8; i++) {
+        serial_print("  raw[");
+        serial_print_hex(i);
+        serial_print("] = 0x");
+        serial_print_hex(raw[i]);
+        serial_print("\n");
+    }
+    serial_print("=== END GP FRAME ===\n");
+
     while (1) __asm__ volatile("hlt");
 }
 
+
+
 // Page Fault handler with color
 void isr14_handler(exception_frame_t *frame) {
+    uint64_t *raw = (uint64_t *)frame;
+
     uint64_t cr2;
     __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
 
     vga_print("\n");
-    vga_print_color("*** PAGE FAULT (#PF) ***\n", 0x0C);  // Red text
-    vga_print("CR2 (fault addr): 0x");
+    vga_print_color("=== PAGE FAULT (#PF) ===\n", 0x0C);
+
+    vga_print("CR2 (addr) : 0x");
     vga_print_hex_cur(cr2);
     vga_print("\n");
-    vga_print("ERR: 0x");
-    vga_print_hex_cur(frame->error_code);
+
+    vga_print("Error Code : 0x");
+    vga_print_hex_cur(raw[0]);
     vga_print("\n");
-    vga_print("RIP: 0x");
-    vga_print_hex_cur(frame->rip);
+
+    vga_print("RIP        : 0x");
+    vga_print_hex_cur(raw[1]);
     vga_print("\n");
-    vga_print("System halted.\n");
+
+    vga_print("CS         : 0x");
+    vga_print_hex_cur(raw[2]);
+    vga_print("\n");
+
+    vga_print("RFLAGS     : 0x");
+    vga_print_hex_cur(raw[3]);
+    vga_print("\n");
+
+    vga_print("\nRaw Frame Dump:\n");
+    vga_print("  RAW[0] (error) : 0x"); vga_print_hex_cur(raw[0]); vga_print("\n");
+    vga_print("  RAW[1] (rip)   : 0x"); vga_print_hex_cur(raw[1]); vga_print("\n");
+    vga_print("  RAW[2] (cs)    : 0x"); vga_print_hex_cur(raw[2]); vga_print("\n");
+    vga_print("  RAW[3] (rflags): 0x"); vga_print_hex_cur(raw[3]); vga_print("\n");
+
     while (1) __asm__ volatile("hlt");
 }
+

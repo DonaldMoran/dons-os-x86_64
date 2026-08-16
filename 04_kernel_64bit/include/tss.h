@@ -22,6 +22,14 @@ typedef struct {
     uint16_t iopb_base;
 } __attribute__((packed)) tss_t;
 
+// I/O Permission Bitmap size (65536 ports = 8192 bytes)
+#define TSS_IOMAP_SIZE 8192
+// Total TSS size including I/O bitmap + terminator
+#define TSS_TOTAL_SIZE (sizeof(tss_t) + TSS_IOMAP_SIZE + 1)
+
+// TSS physical address
+#define TSS_PHYS_ADDR 0x5000
+
 // Function prototypes
 void tss_init(void);
 void tss_set_kernel_stack(uint64_t stack);

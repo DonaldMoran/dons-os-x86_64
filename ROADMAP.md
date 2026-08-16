@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, simple, user, user2, nxtest, **syscall**
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, simple, user, user2, nxtest, syscall, **elfload**
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -133,7 +133,7 @@ Boot chain is complete and stable.
 - ✅ 8KB .bss padding to prevent keyboard buffer corruption
 - ✅ `keyboard_init()` moved after memory management initialization
 
-### ✅ 3.7 — System Calls - COMPLETED ⭐ NEW
+### ✅ 3.7 — System Calls - COMPLETED
 - ✅ `syscall` instruction setup via MSRs (IA32_STAR, IA32_LSTAR, IA32_FMASK)
 - ✅ System call handler in assembly with register preservation
 - ✅ SYS_WRITE (syscall #1) — Writes to VGA console and serial output
@@ -143,15 +143,22 @@ Boot chain is complete and stable.
 - ✅ Proper x86_64 syscall ABI (rax=syscall#, rdi, rsi, rdx, r10, r8, r9)
 - ✅ SYSRET returns to user mode
 
-### ☐ 3.8 — Process Model (Next)
+### ✅ 3.8 — ELF Loader - COMPLETED ⭐ NEW
+- ✅ Parses ELF64 headers and program headers
+- ✅ Maps LOAD segments with correct permissions (Read, Write, Execute, User)
+- ✅ Allocates and maps user stack pages (16 pages, 64KB)
+- ✅ Transitions to user mode via IRETQ with proper selectors (CS=0x2B, SS=0x33)
+- ✅ Sets IOPL=3 for user I/O access
+- ✅ Page table execute permissions at all levels (PML4 → PDPT → PD → PT)
+- ✅ **`elfload` command** to load and run embedded ELF programs
+- ✅ **Tested with "Hello from Userland!" output via serial**
+- ☐ Load ELF files from disk (future enhancement)
+- ☐ Support for dynamically linked ELF files (future enhancement)
+
+### ☐ 3.9 — Process Model (Next)
 - Process Control Block (PCB)
 - Page table per process
 - Context switching
-
-### ☐ 3.9 — ELF Loader
-- ELF parsing
-- Program loading
-- User program execution
 
 ### ☐ 3.10 — Scheduler Prototype
 - Timer‑driven task switching  
@@ -217,16 +224,41 @@ Boot chain is complete and stable.
 | Heap Allocator (kmalloc/kfree) | ✔ Complete |
 | User Mode (Ring 3) | ✔ Complete |
 | NX Bit Support | ✔ Complete |
-| **System Calls** | **✔ Complete** ⭐ NEW |
+| System Calls | ✔ Complete |
+| **ELF Loader** | **✔ Complete ⭐ NEW** |
 | Process Model | ☐ Planned |
-| ELF Loader | ☐ Planned |
 | Scheduler | ☐ Planned |
 
 ---
 
 ## Milestones
 
-### v0.3.2-syscalls (August 2026) ⭐ NEW
+### v0.4.0-elf-loader (August 2026) ⭐ NEW
+
+**What was accomplished:**
+- ✅ ELF loader fully functional!
+- ✅ Parses ELF64 headers and program headers
+- ✅ Maps LOAD segments with correct permissions
+- ✅ Allocates and maps user stack pages
+- ✅ Transitions to user mode via IRETQ (CS=0x2B, SS=0x33)
+- ✅ Sets IOPL=3 for user I/O access
+- ✅ Page table execute permissions at all levels
+- ✅ `elfload` command for loading and running embedded ELF programs
+- ✅ Tested with "Hello from Userland!" output via serial
+
+**Key learnings:**
+- GDT user segments must be 64-bit (L-bit set)
+- Execute permission must be set at ALL page table levels (PML4 → PDPT → PD → PT)
+- IOPL=3 is required for user mode I/O (serial, VGA)
+- Always allocate a new PT instead of reusing garbage entries
+- The `out` instruction requires IOPL=3 in user mode
+
+**Known limitations:**
+- Only embedded ELF files supported (disk loading coming soon)
+- No dynamic linking support yet
+- No process model yet (SYS_EXIT halts instead of switching)
+
+### v0.3.2-syscalls (August 2026)
 
 **What was accomplished:**
 - ✅ System call interface using `syscall`/`sysret` instructions
@@ -248,7 +280,6 @@ Boot chain is complete and stable.
 
 **Known limitations:**
 - No process model yet (SYS_EXIT halts instead of switching processes)
-- No ELF loader yet
 - Limited to SYS_WRITE and SYS_EXIT (more syscalls to come)
 
 ### v0.3.1-nx-support (August 2026)

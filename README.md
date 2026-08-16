@@ -16,7 +16,7 @@ Each stage is isolated, minimal, and fully bootable.
 - **03_boot_64bit** — PAE paging, PML4/PDPT/PD/PT, IA32_EFER.LME, long‑mode entry  
 
 ### Kernel Development 
-- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**, **system calls**   
+- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**, **system calls**, **ELF loader**
 - **05_boot_kernel64** — Full boot chain: stage2 loads kernel, enters long mode, jumps to `_start`
 
 The top‑level Makefile builds and runs all components.
@@ -61,11 +61,28 @@ This boots:
  4. stage2 enters long mode  
  5. stage2 jumps to kernel at 0xFFFFFFFF80100000 (higher-half)  
  6. kernel executes `_start` → `kmain`  
- 7. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM, Heap, **Syscalls**
+ 7. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM, Heap, Syscalls, **ELF loader**
  8. kernel displays command prompt `>`  
  9. User can type commands and receive responses
 
 ---
+
+### ELF Loader
+
+The ELF loader is fully functional and can execute user programs from memory:
+
+- ✅ Parses ELF64 headers and program headers
+- ✅ Maps LOAD segments with correct permissions (Read, Write, Execute, User)
+- ✅ Allocates and maps user stack pages
+- ✅ Transitions to user mode via IRETQ with proper selectors (CS=0x2B, SS=0x33)
+- ✅ Sets IOPL=3 for user I/O access
+- ✅ Page table execute permissions at all levels (PML4 → PDPT → PD → PT)
+- ✅ Tested with "Hello from Userland!" output via serial
+
+**User programs** can be embedded in the kernel and loaded with the `elfload` command.
+
+---
+
 ### Command Shell
 
 Once booted, you'll see a prompt > where you can type commands:
@@ -90,6 +107,7 @@ Once booted, you'll see a prompt > where you can type commands:
 | `user2`   | Second user mode test |
 | `nxtest` | Verify NX (No Execute) bit support is available in the VMM |
 | `syscall` | Test system call interface (SYS_WRITE, SYS_EXIT) |
+| **`elfload`** | **Load and run embedded ELF program from user mode** |
 
 ``` 
 DonsDOS v0.1
@@ -101,74 +119,24 @@ Available commands:
   clear    - Clear the screen
   version  - Show version info
   reboot   - Reboot the system
-  pmmtest  - Test Physical Memory Manager
-  info     - Show boot information
-  mem      - Show memory information
-  test     - Exception Handling test
-  vmmtest  - Test Virtual Memory Manager
-  serialtest - Test serial output
-  heapstat - Show heap statistics
-  maptest  - Test page mapping
-  testrec  - Test recursive mapping address
-  heaptest - Test heap free list
-> pmmtest
-
-PMM Test:
-  Page1: 0x0000000000108000
-  Page2: 0x0000000000109000
-  Page3: 0x000000000010A000
-  Freed page2
-  Page4: 0x0000000000109000
-Test complete.
-> heapstat
-
-=== Heap Stats ===
-Used: 16384 KB
-Free: 49152 KB
-Total: 65536 KB
-Free list: 0 blocks
-> vmmtest
-
-=== VMM Status ===
-  Status: Working (recursive paging verified)
-  HHDM_START: 0xFFFF800000000000
-  CR3: 0x0000000000011000
-  PMM: Working
-  VMM: Working
-> heaptest
-
-=== Heap Test ===
-  p1 = 0xFFFF900000000000
-  Write succeeded
-  Read: 0xDEADBEEFCAFEBABE
-  Freed p1
-  p2 = 0xFFFF900000000000
-  Memory reused!
-
-> nxtest
-
-=== NX Test ===
-NX bit support is enabled in the VMM.
-Check page table dumps with: vmmtest
-> vmmtest
-
-=== VMM Status ===
-  Status: Working (recursive paging verified)
-  HHDM_START: 0xFFFF800000000000
-  CR3: 0x0000000000011000
-  PMM: Working
-  VMM: Working
-  NX support: Enabled
-  
-> syscall
- 
-  === Syscall Test ===
-  Testing SYS_WRITE...
-  Hello from syscall test!
-  sys_write returned: 25
-  Testing SYS_EXIT... (will halt)
+  pmmtest  - Test Physical Memory Manager (allocate/free pages)
+  info     - Show boot information (PML4, kernel addresses, E820 entries)
+  mem      - Show memory information (usable/reserved RAM)
+  test     - Exception Handling test (#DE, #PF, #GP)
+  vmmtest  - Show VMM status (recursive paging, HHDM, CR3, NX support)
+  serialtest - Test serial output debugging
+  heapstat - Show heap statistics (used/free/total memory)
+  maptest  - Test page mapping (allocate and write to a physical page)
+  testrec  - Test recursive mapping address (read PML4 entry)
+  heaptest - Test heap allocator with memory reuse
+  user     - Test user mode (Ring 3) with process creation
+  user2    - Test user mode (Ring 3) - second test
+  simple   - Test user mode (Ring 3) - simple test (writes to VGA)
+  syscall  - Test system calls (SYS_WRITE, SYS_EXIT)
+  elfload  - Load and run embedded ELF program in user mode
   
 ```
+
 ---
 
 ## 🐞 Debug Mode (QEMU)
@@ -274,6 +242,7 @@ This project is designed to be:
 - `v0.3.0-userland` — User mode (Ring 3) working, GDT with user segments, TSS stack switching, user code execution at CPL=3 with memory protection
 - `v0.3.1-nx-support` — **NX (No Execute) bit support enabled**, PT_NX flag in VMM, `nxtest` command, heap WRITE bit fix, keyboard buffer corruption resolved
 - `v0.3.2-syscalls` — **System call interface implemented** (SYS_WRITE, SYS_EXIT), SYSCALL/SYSRET support via MSRs, `syscall` test command
+- `v0.4.0-elf-loader` — **ELF loader fully functional!** Parses and loads ELF64 files, maps user code and stack, transitions to user mode, runs user programs with "Hello from Userland!" output. `elfload` command added.
 
 ---
 
@@ -352,6 +321,16 @@ This project is designed to be:
 - ✅ **NX (No Execute) Bit** — Fully supported via PT_NX flag in VMM
 - ✅ Test commands: `simple`, `user`, `user2`, **`nxtest`** for user mode and NX verification
 - ✅ `nxtest` command verifies NX bit support in the VMM
+
+**ELF Loader** ⭐ NEW ⭐
+- ✅ Parses ELF64 headers and program headers
+- ✅ Maps LOAD segments with correct permissions (Read, Write, Execute, User)
+- ✅ Allocates and maps user stack pages
+- ✅ Transitions to user mode via IRETQ with proper selectors (CS=0x2B, SS=0x33)
+- ✅ Sets IOPL=3 for user I/O access
+- ✅ Page table execute permissions at all levels (PML4 → PDPT → PD → PT)
+- ✅ **`elfload` command** to load and run embedded ELF programs
+- ✅ **Tested with "Hello from Userland!" output via serial**
     
 **Build System**
 - Organized source tree with Makefile
@@ -370,14 +349,10 @@ This project is designed to be:
 -  5. ~~**User mode** — Ring 3 support with GDT, TSS, and privilege switching~~ ✅ COMPLETED
 -  6. ~~**NX bit support** — Enable NX bit in EFER and add PT_NX flag~~ ✅ COMPLETED
 -  7. ~~**System calls** — syscall instruction interface~~ ✅ COMPLETED
--  8. **Process model** — Page table per process, context switching
--  9. **ELF loader** — Load and execute user programs
+-  8. ~~ELF loader~~ ✅ **COMPLETED!** — Load and execute user programs
 
 ### Long-term
-- 10. **Scheduler** — Task switching (cooperative → preemptive)
-- 11. **Framebuffer graphics** — Move from VGA text mode to graphics
-- 12. **File system** — Virtual File System (VFS) layer
-- 13. **User‑space programs** — Build and run actual user applications
+-  9. **Process model** — Page table per process, context switching
 - 10. **Scheduler** — Task switching (cooperative → preemptive)
 - 11. **Framebuffer graphics** — Move from VGA text mode to graphics
 - 12. **File system** — Virtual File System (VFS) layer

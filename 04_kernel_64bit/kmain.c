@@ -11,11 +11,79 @@
 #include "include/heap.h"
 #include "include/ring3.h"
 #include "include/tss.h"
-#include "include/syscall.h"  // ADDED: Include syscall header
-
+#include "include/syscall.h"
+#include "include/elf.h"
+#include "include/gdt.h"
+#include "include/debug.h"
+#include "include/user_msr.h"
 extern void pit_init(uint32_t freq);
-
+// Embedded ELF test program (from test_program.bin)
+extern unsigned char test_program[];
+extern unsigned int test_program_len;
 static BootInfo *g_bootinfo = NULL;
+
+void dump_iretq_frame_serial(void) {
+    uint64_t* rsp;
+    uint64_t frame_rsp;
+    
+    // Get the frame stack pointer (original rsp before the call)
+    __asm__ volatile (
+        "mov %%rsp, %0\n"
+        "add $8, %0\n"  // Skip the return address that was pushed
+        : "=r"(frame_rsp)
+        : 
+        : "memory"
+    );
+    
+    rsp = (uint64_t*)frame_rsp;
+    
+    serial_print("\n=== IRETQ FRAME DUMP (before iretq) ===\n");
+    
+    serial_print("SS     : 0x");
+    serial_print_hex(rsp[5]);  // rsp+40
+    serial_print("\n");
+    
+    serial_print("RSP    : 0x");
+    serial_print_hex(rsp[4]);  // rsp+32
+    serial_print("\n");
+    
+    serial_print("RFLAGS : 0x");
+    serial_print_hex(rsp[3]);  // rsp+24
+    serial_print("\n");
+    
+    serial_print("CS     : 0x");
+    serial_print_hex(rsp[2]);  // rsp+16
+    serial_print("\n");
+    
+    serial_print("RIP    : 0x");
+    serial_print_hex(rsp[1]);  // rsp+8
+    serial_print("\n");
+    
+    serial_print("=== END FRAME DUMP ===\n\n");
+}
+
+extern void user_syscall_entry(void);
+
+void user_syscall_init(void)
+{
+    serial_print("Initializing **RING** 3 syscalls...\n");
+
+    uint64_t star =
+        ((uint64_t)0x2B << 48) |   // user CS (0x28 | 3)
+        ((uint64_t)0x08 << 32);    // kernel CS
+
+    wrmsr(MSR_STAR, star);
+    wrmsr(MSR_LSTAR, (uint64_t)user_syscall_entry);
+    wrmsr(MSR_FMASK, (1ULL << 9)); // mask IF
+
+    serial_print("SYSCALL init done\n");
+
+    uint64_t lstar = rdmsr(MSR_LSTAR);
+    serial_print("LSTAR = 0x");
+    serial_print_hex(lstar);
+    serial_print("\n");
+}
+
 
 static int strcmp(const char *s1, const char *s2) {
     while (*s1 && (*s1 == *s2)) {
@@ -35,7 +103,7 @@ static void handle_command(const char *cmd) {
         "help", "clear", "version", "reboot", 
         "pmmtest", "info", "mem", "test", 
         "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", "simple",
-        "nxtest", "syscall"  // ADDED: syscall command
+        "nxtest", "syscall", "elfload", "segtest"
     };
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
     
@@ -57,19 +125,20 @@ static void handle_command(const char *cmd) {
         vga_print("  heaptest - Test heap free list\n");
         vga_print("  user     - Test user mode (Ring 3)\n");
         vga_print("  user2    - Test user mode (Ring 3) - second test\n");
-        vga_print("  simple   - Test user mode (Ring 3) - second test\n");
+        vga_print("  simple   - Test user mode (Ring 3) - simple test\n");
         vga_print("  nxtest   - Test NX (No Execute) bit\n");
-        vga_print("  syscall  - Test system calls\n");  // ADDED: Help entry
+        vga_print("  syscall  - Test system calls\n");
+        vga_print("  elfload  - Load and run ELF program\n");
         vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
-        vga_print("DonsDOS v0.1\n");
+        vga_print("DonsDOS v0.4.0\n");
         vga_print("Type 'help'\n");
         vga_print("> ");
     } else if (strcmp(cmd, "version") == 0) {
-        vga_print("\nDonsDOS v0.2.3\n");
+        vga_print("\nDonsDOS v0.4.0\n");
         vga_print("Build: 64-bit kernel with VGA console\n");
-        vga_print("Features: VMM with recursive paging, HHDM, NX support, Syscalls\n");  // UPDATED
+        vga_print("Features: VMM with recursive paging, HHDM, NX support, Syscalls, ELF loader\n");
         vga_print("Copyright (c) 2026 Don's OS Project\n");
         vga_print("> ");
     } else if (strcmp(cmd, "info") == 0) {
@@ -117,17 +186,21 @@ static void handle_command(const char *cmd) {
         }
         vga_print("> ");
     } else if (strcmp(cmd, "reboot") == 0) {
-        vga_print("\nRebooting...\n");
-        __asm__ volatile (
-            "cli\n"
-            "mov $0x64, %%al\n"
-            "outb %%al, $0x64\n"
-            "mov $0xFE, %%al\n"
-            "outb %%al, $0x64\n"
-            "hlt\n"
-            : : : "memory"
-        );
-    } else if (strcmp(cmd, "pmmtest") == 0) {
+            vga_print("\nRebooting...\n");
+            serial_print("\nRebooting...\n");
+            vga_print("\nWill likely hang in QEMU...\n");
+            serial_print("\nWill likely hang in QEMU...\n");
+            __asm__ volatile (
+                "cli\n"
+                "mov $0x0F, %%al\n"
+                "outb %%al, $0x70\n"
+                "mov $0x00, %%al\n"
+                "outb %%al, $0x71\n"
+                "hlt\n"
+                : : : "memory", "al"
+            );
+        } else if (strcmp(cmd, "pmmtest") == 0) {
+    
         vga_print("\nPMM Test:\n");
         pmm_init(g_bootinfo);
         uint64_t p1 = pmm_alloc_page();
@@ -252,11 +325,71 @@ static void handle_command(const char *cmd) {
         serial_print("HEAPTEST: p1=0x");
         serial_print_hex((uint64_t)p1);
         serial_print("\n");
+        //~ if (p1) {
+            //~ serial_print("HEAPTEST: About to write to p1=0x");
+            //~ serial_print_hex((uint64_t)p1);
+            //~ serial_print("\n");
+            //~ __asm__ volatile ("movq $0xDEADBEEFCAFEBABE, %%rax\nmovq %%rax, (%0)" : : "r" (p1) : "rax", "memory");
+            //~ vga_print("  Wrote to p1\n");
+            //~ serial_print("HEAPTEST: wrote to p1\n");
+        //~ }
+        
         if (p1) {
-            __asm__ volatile ("movq $0xDEADBEEFCAFEBABE, %%rax\nmovq %%rax, (%0)" : : "r" (p1) : "rax", "memory");
+            serial_print("HEAPTEST: About to write to p1=0x");
+            serial_print_hex((uint64_t)p1);
+            serial_print("\n");
+            
+            // Try writing with a simple C assignment
+            // This will cause a page fault if the page isn't mapped/writable
+            
+            serial_print("Page fault will happen on next line!\n");
+            serial_print("\n");
+            uint64_t* test_ptr = (uint64_t*)p1;
+            
+            
+            
+            uint32_t pml4_idx = ((uint64_t)p1 >> 39) & 0x1FF;
+            uint32_t pdpt_idx = ((uint64_t)p1 >> 30) & 0x1FF;
+            uint32_t pd_idx = ((uint64_t)p1 >> 21) & 0x1FF;
+            uint32_t pt_idx = ((uint64_t)p1 >> 12) & 0x1FF;
+            
+            uint64_t* pte_ptr = (uint64_t*)(0xFFFFFF7FBFDFE000ULL | 
+                                             ((uint64_t)pml4_idx << 12) |
+                                             ((uint64_t)pdpt_idx << 12) |
+                                             ((uint64_t)pd_idx << 12) |
+                                             ((uint64_t)pt_idx << 3));
+            serial_print("HEAP: PTE for 0x");
+            serial_print_hex((uint64_t)p1);
+            serial_print(" = 0x");
+            serial_print_hex(*pte_ptr);
+            serial_print("\n");
+            serial_print("HEAP: PTE flags: Present=");
+            serial_print_dec(*pte_ptr & 0x1);
+            serial_print(" Write=");
+            serial_print_dec((*pte_ptr >> 1) & 0x1);
+            serial_print(" User=");
+            serial_print_dec((*pte_ptr >> 2) & 0x1);
+            serial_print(" Exec=");
+            serial_print_dec((*pte_ptr >> 3) & 0x1);
+            serial_print("\n");
+            
+            serial_print("Point A");
+            serial_print("\n");
+            *test_ptr = 0xDEADBEEFCAFEBABE;
+            serial_print("Point B");
+            serial_print("\n");
+            
+            // If we get here, it worked!
+            serial_print("HEAPTEST: Write succeeded via C assignment!\n");
             vga_print("  Wrote to p1\n");
-            serial_print("HEAPTEST: wrote to p1\n");
+            
+            // Now try the inline assembly
+            __asm__ volatile ("movq $0xDEADBEEFCAFEBABE, %%rax\nmovq %%rax, (%0)" : : "r" (p1) : "rax", "memory");
+            vga_print("  Wrote to p1 via inline asm\n");
+            serial_print("HEAPTEST: wrote to p1 via inline asm\n");
         }
+        
+        
         vga_print("\n  Test 2: kmalloc(128)\n");
         serial_print("HEAPTEST: Test 2 - kmalloc(128)\n");
         void* p2 = kmalloc(128);
@@ -330,7 +463,6 @@ static void handle_command(const char *cmd) {
         vga_print("NX bit support is enabled in the VMM.\n");
         vga_print("Check page table dumps with: vmmtest\n");
         vga_print("> ");
-    // ADDED: Syscall test command
     } else if (strcmp(cmd, "syscall") == 0) {
         vga_print("\n=== Syscall Test ===\n");
         vga_print("Testing SYS_WRITE...\n");
@@ -346,7 +478,36 @@ static void handle_command(const char *cmd) {
         vga_print("> ");
         sys_exit(0);
         // Should not reach here
-    } else {
+        
+    } else if (strcmp(cmd, "elfload") == 0) {
+        vga_print("\n=== ELF Load Test ===\n");
+        vga_print("Loading embedded ELF program...\n");
+        
+        // Check if test program exists
+        if (test_program_len == 0) {
+            vga_print("No ELF program embedded!\n");
+            vga_print("> ");
+            return;
+        }
+        vga_print("ELF size: ");
+        vga_print_dec_cur(test_program_len);
+        vga_print(" bytes\n");
+        
+        // Print first few bytes to verify it's an ELF
+        vga_print("ELF magic: ");
+        for (int i = 0; i < 4; i++) {
+            vga_print_hex_cur(test_program[i]);
+            vga_print(" ");
+        }
+        vga_print("\n");
+        
+        // Load and run the ELF
+        extern void elf_load(const void* elf_data);
+        debug_rsp("kmain before elf_load");
+        elf_load(test_program);
+        debug_rsp("kmain after elf_load");
+        vga_print("> ");
+    }  else {
         vga_print("\nUnknown command: '");
         vga_print(cmd);
         vga_print("'\n");
@@ -371,38 +532,103 @@ static void handle_command(const char *cmd) {
 
 void kmain(BootInfo *info) {
     g_bootinfo = info;
-    
     vga_clear();
-    serial_init();
-    serial_print("Serial: Kernel booted\n");
-    vga_set_cursor_shape(0x00, 0x0F);
     
-    vga_print("DonsDOS v0.1\n");
+    serial_print("serial_init\n");
+    serial_init();
+    
+    //serial_print("Serial: Kernel booted\n");
+    vga_set_cursor_shape(0x00, 0x0F);
+    vga_print("DonsDOS v0.4.0\n");
     vga_print("Initializing...\n");
 
+    serial_print("idt_init\n");
     idt_init();
+    
+    serial_print("pit_init\n");
     pit_init(100);
     
     asm volatile("sti");
-
+    
+    serial_print("pm_init\n");
     pmm_init(g_bootinfo);
+    
+    serial_print("vmm_init\n");
     vmm_init();
+    
+    serial_print("heap_init\n");
     heap_init();
 
+    // FIX: Patch user segments to be 64-bit before TSS init
+    gdt_fix_user_segments(); 
+    gdt_debug_print();
+    struct {
+    uint16_t limit;
+    uint64_t base __attribute__((packed));
+    } gdt_ptr;
+    __asm__ volatile ("sgdt %0" : "=m"(gdt_ptr));
+    //uint64_t *gdt = (uint64_t *)gdt_ptr.base;   
+    serial_print("=== GDT FOCUSED DUMP ===\n");
+    serial_print("Kernel code (0x08): 0x");
+    serial_print_hex(((uint64_t*)gdt_ptr.base)[1]);
+    serial_print("\n");
+    serial_print("Kernel data (0x10): 0x");
+    serial_print_hex(((uint64_t*)gdt_ptr.base)[2]);
+    serial_print("\n");
+    serial_print("User code   (0x28): 0x");
+    serial_print_hex(((uint64_t*)gdt_ptr.base)[5]);
+    serial_print("\n");
+    serial_print("User data   (0x30): 0x");
+    serial_print_hex(((uint64_t*)gdt_ptr.base)[6]);
+    serial_print("========================\n");
+    serial_print("\n");
+
+    //serial_print("kmain: about to debug GDT before TS_INIT\n");
+    //gdt_debug_print();
+    
+    serial_print("tss_init\n");
     tss_init();
+    
+    // Test I/O permission after TSS init
+    serial_print("Testing I/O permission...\n");
+    uint8_t tmp;
+    __asm__ volatile (
+        "inb $0x64, %%al\n"
+        : "=a"(tmp)
+    );
+    serial_print("I/O port 0x64 readable, value=0x");
+    serial_print_hex(tmp);
+    serial_print("\n");
 
     // Initialize keyboard AFTER memory management
-    // This prevents PMM/VMM from corrupting scancode tables
     keyboard_init();
 
-    // ADDED: Initialize system calls
-    serial_print("Serial: Initializing syscalls...\n");
+    // Initialize ring 0 system calls
+    serial_print("Initializing **RING** 0 syscalls...\n");
     syscall_init();
+    serial_print("RING 0 Done.\n");
+    
+    // Initialize ring 3 user system calls
+    serial_print("Initializing **RING** 3 syscalls...\n");
+    user_syscall_init();
+    serial_print("RING 3 Done.\n");
+    
+    uint64_t lstar = rdmsr(MSR_LSTAR);
+    serial_print("LSTAR = 0x");
+    serial_print_hex(lstar);
+    serial_print("\n");
 
+    serial_print("Done.\n");
     vga_clear();
-    vga_print("DonsDOS v0.1\n");
+
+    vga_print("DonsDOS v0.4.0\n");
+    serial_print("DonsDOS v0.4.0\n");
+    
     vga_print("Type 'help'\n");
+    serial_print("Type 'help'\n");
+    
     vga_print("> ");
+    serial_print("> ");
 
     char cmd_buffer[128];
     int cmd_pos = 0;

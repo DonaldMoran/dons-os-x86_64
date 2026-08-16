@@ -2,6 +2,7 @@
 #include "include/tss.h"
 #include "include/serial.h"
 #include <stdint.h>
+#include "include/vga.h"
 
 void gdt_init(void) {
     // If needed, you can implement GDT initialization here
@@ -66,20 +67,27 @@ void gdt_set_tss(uint64_t tss_addr, uint32_t tss_size) {
     uint64_t desc_low = 0;
     uint64_t desc_high = 0;
     
-    // Cast to uint64_t before shifting to avoid shift overflow warnings
     uint64_t base = tss_addr;
     uint64_t limit = tss_size;
+    
+    // ============================================================
+    // FIX: Make sure the TSS limit includes the I/O Permission Bitmap
+    // The limit should be at least TSS_TOTAL_SIZE - 1
+    // ============================================================
+    if (limit < 0x67) {
+        limit = 0x67;  // Minimum TSS size for 64-bit
+    }
     
     // Low 64 bits
     desc_low |= (limit & 0xFFFF);                    // Limit[15:0]
     desc_low |= ((base & 0xFFFFFF) << 16);           // Base[23:0]
     desc_low |= ((uint64_t)0x89 << 40);              // Access byte (64-bit TSS, present, DPL=0)
-    desc_low |= ((limit >> 16) & 0xF) << 48;         // Limit[19:16] - now using uint64_t
+    desc_low |= ((limit >> 16) & 0xF) << 48;         // Limit[19:16]
     // Flags: G=0, D=0, L=0, AVL=0 - all zeros at bits 52-55
     desc_low |= ((base >> 24) & 0xFF) << 56;         // Base[31:24]
     
     // High 64 bits
-    desc_high |= ((base >> 32) & 0xFFFFFFFF) << 32;  // Base[63:32]
+    desc_high = (base >> 32) & 0xFFFFFFFF;           // Base[63:32] in bits 0–31
     
     // Write the descriptor
     *tss_desc_low = desc_low;
@@ -169,4 +177,85 @@ void gdt_debug_print(void) {
     }
     
     serial_print("=== END GDT DEBUG ===\n\n");
+}
+
+void gdt_fix_user_segments(void) {
+    vga_print("GDT: Fixing user segments for Ring 3...\n");
+    
+    // Get the current GDT base and limit
+    struct {
+        uint16_t limit;
+        uint64_t base __attribute__((packed));
+    } gdt_ptr;
+    
+    __asm__ volatile ("sgdt %0" : "=m"(gdt_ptr));
+    
+    uint64_t* gdt = (uint64_t*)gdt_ptr.base;
+    
+    // Debug: Print old values
+    uint64_t old_user_code = gdt[GDT_USER_CODE / 8];
+    uint64_t old_user_data = gdt[GDT_USER_DATA / 8];
+    
+    serial_print("GDT: Old user code at 0x28 = 0x");
+    serial_print_hex(old_user_code);
+    serial_print("\n");
+    serial_print("GDT: Old user data at 0x30 = 0x");
+    serial_print_hex(old_user_data);
+    serial_print("\n");
+    
+    // CORRECT 64-bit user code segment (selector 0x28)
+    // 0x00AFFA000000FFFF = 64-bit code, DPL=3, Present, Executable, Readable
+    gdt[GDT_USER_CODE / 8] = 0x00AFFA000000FFFFULL;
+    
+    // CORRECT user data segment (selector 0x30)
+    // 0x00CFF2000000FFFF = 64-bit data, DPL=3, Present, Writable
+    gdt[GDT_USER_DATA / 8] = 0x00CFF2000000FFFFULL;
+    
+    // Debug: Print new values
+    serial_print("GDT: New user code at 0x28 = 0x");
+    serial_print_hex(gdt[GDT_USER_CODE / 8]);
+    serial_print("\n");
+    serial_print("GDT: New user data at 0x30 = 0x");
+    serial_print_hex(gdt[GDT_USER_DATA / 8]);
+    serial_print("\n");
+    
+    // Reload data segment registers
+    __asm__ volatile (
+        "mov $0x20, %%ax\n\t"
+        "mov %%ax, %%ds\n\t"
+        "mov %%ax, %%es\n\t"
+        "mov %%ax, %%fs\n\t"
+        "mov %%ax, %%gs\n\t"
+        "mov %%ax, %%ss\n\t"
+        : : : "rax", "memory"
+    );
+    
+    serial_print("GDT: User segments fixed for Ring 3\n");
+    vga_print("GDT: User segments fixed for Ring 3\n");
+}
+
+void gdt_dump_entry(int index) {
+    // Get current GDT pointer
+    struct {
+        uint16_t limit;
+        uint64_t base __attribute__((packed));
+    } gdt_ptr;
+
+    __asm__ volatile ("sgdt %0" : "=m"(gdt_ptr));
+
+    uint64_t *gdt = (uint64_t *)gdt_ptr.base;
+    int max_entries = (gdt_ptr.limit + 1) / 8;  // each entry is 8 bytes
+
+    if (index < 0 || index >= max_entries) {
+        vga_print("Invalid GDT index\n");
+        return;
+    }
+
+    uint64_t desc = gdt[index];
+
+    vga_print("GDT[");
+    vga_print_dec_cur(index);
+    vga_print("] = 0x");
+    vga_print_hex_cur(desc);
+    vga_print("\n");
 }

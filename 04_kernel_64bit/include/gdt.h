@@ -19,5 +19,8 @@ void gdt_init(void);
 void gdt_reload(void);
 void gdt_set_tss(uint64_t tss_addr, uint32_t tss_size);
 void gdt_debug_print(void);
+void gdt_fix_user_segments(void);  // ADDED: Fix user segments to 64-bit
+void gdt_dump_entry(int index);
+
 
 #endif // GDT_H

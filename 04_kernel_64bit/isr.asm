@@ -64,19 +64,28 @@ isr13_stub:
     cli
     push rbp
     mov  rbp, rsp
-    lea  rdi, [rsp + 8]  ; Skip rbp, point to error code
-    call isr13_handler
-    pop  rbp
-    add  rsp, 8          ; Remove error code
-    iretq
 
-; Page Fault - call C handler
+    ; rdi -> error_code (start of frame)
+    lea  rdi, [rsp + 8]
+
+    call isr13_handler
+
+    pop  rbp
+    add  rsp, 8      ; drop error_code
+    iretq
+    
+; Page Fault
 isr14_stub:
     cli
     push rbp
     mov  rbp, rsp
-    lea  rdi, [rsp + 8]  ; Skip rbp, point to error code
+
+    lea  rdi, [rsp + 8]
+
     call isr14_handler
+
     pop  rbp
-    add  rsp, 8          ; Remove error code
+    add  rsp, 8
     iretq
+
+

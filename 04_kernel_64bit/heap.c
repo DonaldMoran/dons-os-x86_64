@@ -28,7 +28,34 @@ static int heap_expand(size_t size) {
         if (phys == 0) {
             return -1;
         }
+        
+        //serial_print("HEAP: pmm_alloc_page returned 0x");
+        // serial_print_hex(phys);
+        //serial_print("\n");
+        
+        // vmm_map_page(addr, phys, PT_PRESENT | PT_WRITE);
+        // In heap.c, in heap_expand:
         vmm_map_page(addr, phys, PT_PRESENT | PT_WRITE);
+
+        // Debug: Check if the page is mapped
+        if (vmm_is_mapped(addr)) {
+            //serial_print("HEAP: Page 0x");
+            //serial_print_hex(addr);
+            //serial_print(" is mapped\n");
+        } else {
+            serial_print("HEAP: Page 0x");
+            serial_print_hex(addr);
+            serial_print(" is NOT mapped!\n");
+        }
+        
+        // Debug: Check if page is writable
+        uint64_t* test_ptr = (uint64_t*)addr;
+        *test_ptr = 0x1234567890ABCDEF;
+        //serial_print("HEAP: Test write to 0x");
+        //serial_print_hex(addr);
+        //serial_print(" = 0x");
+        //serial_print_hex(*test_ptr);
+        //serial_print("\n");
     }
     
     heap_mapped_end = new_mapped_end;
