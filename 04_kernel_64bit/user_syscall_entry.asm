@@ -10,6 +10,10 @@ user_syscall_entry:
     push rbp
     mov rbp, rsp
 
+    ; Save user RIP (RCX) and user RFLAGS (R11) for SYSRET
+    push rcx
+    push r11
+
     ; rax = syscall number
     mov r14, rax        ; save syscall number
 
@@ -32,10 +36,14 @@ user_syscall_entry:
     cmp r14, 2
     je .return_to_kernel
 
-    ; Normal syscall: return to user via SYSRET
+    ; Normal syscall: restore user RIP/RFLAGS and return via SYSRET
+    pop r11             ; restore user RFLAGS
+    pop rcx             ; restore user RIP
     pop rbp
-    sysret              ; uses current RCX/R11 as user RIP/RFLAGS
+    o64 sysret          ; 64-bit SYSRET using RCX/R11
 
 .return_to_kernel:
+    pop r11             ; discard saved user RFLAGS
+    pop rcx             ; discard saved user RIP
     pop rbp
     jmp kmain_shell_loop

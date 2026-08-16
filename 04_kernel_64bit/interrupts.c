@@ -173,10 +173,46 @@ void isr13_handler(exception_frame_t *frame) {
 
 
 
-// Page Fault handler with color
-void isr14_handler(exception_frame_t *frame) {
-    uint64_t *raw = (uint64_t *)frame;
+//~ // Page Fault handler with color
+//~ void isr14_handler(exception_frame_t *frame) {
+    //~ uint64_t *raw = (uint64_t *)frame;
 
+    //~ uint64_t cr2;
+    //~ __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+
+    //~ vga_print("\n");
+    //~ vga_print_color("=== PAGE FAULT (#PF) ===\n", 0x0C);
+
+    //~ vga_print("CR2 (addr) : 0x");
+    //~ vga_print_hex_cur(cr2);
+    //~ vga_print("\n");
+
+    //~ vga_print("Error Code : 0x");
+    //~ vga_print_hex_cur(raw[0]);
+    //~ vga_print("\n");
+
+    //~ vga_print("RIP        : 0x");
+    //~ vga_print_hex_cur(raw[1]);
+    //~ vga_print("\n");
+
+    //~ vga_print("CS         : 0x");
+    //~ vga_print_hex_cur(raw[2]);
+    //~ vga_print("\n");
+
+    //~ vga_print("RFLAGS     : 0x");
+    //~ vga_print_hex_cur(raw[3]);
+    //~ vga_print("\n");
+
+    //~ vga_print("\nRaw Frame Dump:\n");
+    //~ vga_print("  RAW[0] (error) : 0x"); vga_print_hex_cur(raw[0]); vga_print("\n");
+    //~ vga_print("  RAW[1] (rip)   : 0x"); vga_print_hex_cur(raw[1]); vga_print("\n");
+    //~ vga_print("  RAW[2] (cs)    : 0x"); vga_print_hex_cur(raw[2]); vga_print("\n");
+    //~ vga_print("  RAW[3] (rflags): 0x"); vga_print_hex_cur(raw[3]); vga_print("\n");
+
+    //~ while (1) __asm__ volatile("hlt");
+//~ }
+
+void isr14_handler(exception_frame_t *frame) {
     uint64_t cr2;
     __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
 
@@ -188,26 +224,110 @@ void isr14_handler(exception_frame_t *frame) {
     vga_print("\n");
 
     vga_print("Error Code : 0x");
-    vga_print_hex_cur(raw[0]);
+    vga_print_hex_cur(frame->error_code);
     vga_print("\n");
 
     vga_print("RIP        : 0x");
-    vga_print_hex_cur(raw[1]);
+    vga_print_hex_cur(frame->rip);
     vga_print("\n");
 
     vga_print("CS         : 0x");
-    vga_print_hex_cur(raw[2]);
+    vga_print_hex_cur(frame->cs);
     vga_print("\n");
 
     vga_print("RFLAGS     : 0x");
-    vga_print_hex_cur(raw[3]);
+    vga_print_hex_cur(frame->rflags);
     vga_print("\n");
 
+    vga_print("RSP        : 0x");
+    vga_print_hex_cur(frame->rsp);
+    vga_print("\n");
+
+    vga_print("SS         : 0x");
+    vga_print_hex_cur(frame->ss);
+    vga_print("\n");
+
+    // Decode error code
+    vga_print("\nError Code Decode:\n");
+    vga_print("  P  (bit 0) Present?        : ");
+    vga_print((frame->error_code & 1) ? "YES\n" : "NO\n");
+
+    vga_print("  W/R(bit 1) Write access?   : ");
+    vga_print((frame->error_code & 2) ? "WRITE\n" : "READ\n");
+
+    vga_print("  U/S(bit 2) From usermode?  : ");
+    vga_print((frame->error_code & 4) ? "USER\n" : "KERNEL\n");
+
+    vga_print("  RSVD(bit 3) Reserved bit?  : ");
+    vga_print((frame->error_code & 8) ? "YES\n" : "NO\n");
+
+    vga_print("  I/D(bit 4) Instr fetch?    : ");
+    vga_print((frame->error_code & 16) ? "YES\n" : "NO\n");
+
     vga_print("\nRaw Frame Dump:\n");
-    vga_print("  RAW[0] (error) : 0x"); vga_print_hex_cur(raw[0]); vga_print("\n");
-    vga_print("  RAW[1] (rip)   : 0x"); vga_print_hex_cur(raw[1]); vga_print("\n");
-    vga_print("  RAW[2] (cs)    : 0x"); vga_print_hex_cur(raw[2]); vga_print("\n");
-    vga_print("  RAW[3] (rflags): 0x"); vga_print_hex_cur(raw[3]); vga_print("\n");
+    vga_print("  RAW[0] (error) : 0x"); vga_print_hex_cur(frame->error_code); vga_print("\n");
+    vga_print("  RAW[1] (rip)   : 0x"); vga_print_hex_cur(frame->rip);        vga_print("\n");
+    vga_print("  RAW[2] (cs)    : 0x"); vga_print_hex_cur(frame->cs);         vga_print("\n");
+    vga_print("  RAW[3] (rflags): 0x"); vga_print_hex_cur(frame->rflags);     vga_print("\n");
+    vga_print("  RAW[4] (rsp)   : 0x"); vga_print_hex_cur(frame->rsp);        vga_print("\n");
+    vga_print("  RAW[5] (ss)    : 0x"); vga_print_hex_cur(frame->ss);         vga_print("\n");
+    
+    // Print to the console as well
+    serial_print("\n");
+    serial_print("=== PAGE FAULT (#PF) ===\n");
+
+    serial_print("CR2 (addr) : 0x");
+    serial_print_hex(cr2);
+    serial_print("\n");
+
+    serial_print("Error Code : 0x");
+    serial_print_hex(frame->error_code);
+    serial_print("\n");
+
+    serial_print("RIP        : 0x");
+    serial_print_hex(frame->rip);
+    serial_print("\n");
+
+    serial_print("CS         : 0x");
+    serial_print_hex(frame->cs);
+    serial_print("\n");
+
+    serial_print("RFLAGS     : 0x");
+    serial_print_hex(frame->rflags);
+    serial_print("\n");
+
+    serial_print("RSP        : 0x");
+    serial_print_hex(frame->rsp);
+    serial_print("\n");
+
+    serial_print("SS         : 0x");
+    serial_print_hex(frame->ss);
+    serial_print("\n");
+
+    // Decode error code
+    serial_print("\nError Code Decode:\n");
+    serial_print("  P  (bit 0) Present?        : ");
+    serial_print((frame->error_code & 1) ? "YES\n" : "NO\n");
+
+    serial_print("  W/R(bit 1) Write access?   : ");
+    serial_print((frame->error_code & 2) ? "WRITE\n" : "READ\n");
+
+    serial_print("  U/S(bit 2) From usermode?  : ");
+    serial_print((frame->error_code & 4) ? "USER\n" : "KERNEL\n");
+
+    serial_print("  RSVD(bit 3) Reserved bit?  : ");
+    serial_print((frame->error_code & 8) ? "YES\n" : "NO\n");
+
+    serial_print("  I/D(bit 4) Instr fetch?    : ");
+    serial_print((frame->error_code & 16) ? "YES\n" : "NO\n");
+
+    serial_print("\nRaw Frame Dump:\n");
+    serial_print("  RAW[0] (error) : 0x"); serial_print_hex(frame->error_code); serial_print("\n");
+    serial_print("  RAW[1] (rip)   : 0x"); serial_print_hex(frame->rip);        serial_print("\n");
+    serial_print("  RAW[2] (cs)    : 0x"); serial_print_hex(frame->cs);         serial_print("\n");
+    serial_print("  RAW[3] (rflags): 0x"); serial_print_hex(frame->rflags);     serial_print("\n");
+    serial_print("  RAW[4] (rsp)   : 0x"); serial_print_hex(frame->rsp);        serial_print("\n");
+    serial_print("  RAW[5] (ss)    : 0x"); serial_print_hex(frame->ss);         serial_print("\n");
 
     while (1) __asm__ volatile("hlt");
 }
