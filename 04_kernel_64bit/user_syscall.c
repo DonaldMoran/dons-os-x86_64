@@ -1,3 +1,4 @@
+#include <user_syscall.h>
 #include <stdint.h>
 #include "include/serial.h"
 
@@ -51,4 +52,10 @@ uint64_t syscall_dispatch(uint64_t num,
         serial_print("\n");
         return (uint64_t)-1;
     }
+}
+
+void syscall_init(void) {
+    extern void syscall_init_asm(void);
+    syscall_init_asm();
+    serial_print("SYSCALL init done\n");
 }

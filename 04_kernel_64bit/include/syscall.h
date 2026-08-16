@@ -9,7 +9,7 @@
 #define SYS_EXIT  60
 
 // Function prototypes
-void syscall_init(void);
+//~ void syscall_init(void);
 void syscall_handler(void);
 
 // System call functions (for kernel use)

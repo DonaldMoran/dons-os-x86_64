@@ -12,10 +12,12 @@
 #include "include/ring3.h"
 #include "include/tss.h"
 #include "include/syscall.h"
+#include "include/user_syscall.h"
 #include "include/elf.h"
 #include "include/gdt.h"
 #include "include/debug.h"
 #include "include/user_msr.h"
+
 extern void pit_init(uint32_t freq);
 // Embedded ELF test program (from test_program.bin)
 extern unsigned char test_program[];

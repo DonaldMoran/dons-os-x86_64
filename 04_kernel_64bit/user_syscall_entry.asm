@@ -1,12 +1,46 @@
 [bits 64]
 default rel
 
+section .bss
+global user_rsp_storage
+user_rsp_storage:    resq 1
+
 section .text
 global user_syscall_entry
+global syscall_init_asm
+
 extern syscall_dispatch
 extern kmain_shell_loop
 extern kernel_stack_top
 
+; ---------------------------------------------------------------------------
+; Syscall init: set up EFER, STAR, LSTAR, FMASK
+; ---------------------------------------------------------------------------
+syscall_init_asm:
+    mov ecx, 0xC0000080          ; IA32_EFER
+    rdmsr
+    or eax, 0x1                  ; SCE
+    wrmsr
+
+    mov ecx, 0xC0000081          ; IA32_STAR
+    mov eax, 0
+    mov edx, 0x002B0018          ; user CS=0x2B, kernel CS=0x18
+    wrmsr
+
+    mov ecx, 0xC0000082          ; IA32_LSTAR
+    mov rax, user_syscall_entry  ; syscall entry point
+    wrmsr
+
+    mov ecx, 0xC0000084          ; IA32_FMASK
+    xor eax, eax
+    xor edx, edx
+    wrmsr
+
+    ret
+
+; ---------------------------------------------------------------------------
+; Syscall entry from usermode
+; ---------------------------------------------------------------------------
 user_syscall_entry:
     push rbp
     mov rbp, rsp

@@ -5,31 +5,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-long syscall_dispatcher(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, 
-                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
-    long ret = -1;
-    
-    (void)arg4; (void)arg5;
-    
-    switch (syscall_num) {
-        case SYS_WRITE:
-            ret = sys_write((uint32_t)arg1, (const char*)arg2, (size_t)arg3);
-            break;
-        case SYS_EXIT:
-            sys_exit((int)arg1);
-            ret = 0;
-            break;
-        default:
-            serial_print("Unknown syscall: ");
-            serial_print_hex(syscall_num);
-            serial_print("\n");
-            ret = -1;
-            break;
-    }
-    
-    return ret;
-}
-
 long sys_write(uint32_t fd, const char* buf, size_t count) {
     serial_print("sys_write: fd=");
     serial_print_dec(fd);
@@ -59,8 +34,4 @@ void sys_exit(int status) {
     while(1) __asm__("hlt");
 }
 
-void syscall_init(void) {
-    extern void syscall_init_asm(void);
-    syscall_init_asm();
-    serial_print("SYSCALL init done\n");
-}
+

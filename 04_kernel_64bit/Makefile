@@ -14,7 +14,7 @@ all: kernel.bin
 
 OBJS = entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o \
 	idt_load.o isr.o vga.o keyboard.o serial.o tss.o gdt.o ring3.o \
-	syscall.o syscall_asm.o elf.o test_program_data.o \
+	syscall.o elf.o test_program_data.o \
 	user_syscall.o user_syscall_entry.o     # ← ADDED
 
 kernel.elf: $(OBJS)
@@ -48,9 +48,6 @@ idt_load.o: idt_load.asm
 
 isr.o: isr.asm
 	$(AS) -f elf64 isr.asm -o isr.o
-
-syscall_asm.o: syscall.asm
-	$(AS) -f elf64 syscall.asm -o syscall_asm.o
 
 # ADDED: usermode syscall entry
 user_syscall_entry.o: user_syscall_entry.asm
