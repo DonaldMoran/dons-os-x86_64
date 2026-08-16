@@ -5,6 +5,7 @@ section .text
 global user_syscall_entry
 extern syscall_dispatch
 extern kmain_shell_loop
+extern kernel_stack_top
 
 user_syscall_entry:
     push rbp
@@ -46,4 +47,8 @@ user_syscall_entry:
     pop r11             ; discard saved user RFLAGS
     pop rcx             ; discard saved user RIP
     pop rbp
+    
+    ; switch to kernel stack (same one TSS uses)
+    mov rsp, [kernel_stack_top]
+     
     jmp kmain_shell_loop

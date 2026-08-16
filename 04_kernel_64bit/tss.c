@@ -13,7 +13,12 @@ static uint8_t* iomap = (uint8_t*)(TSS_PHYS_ADDR + sizeof(tss_t));
 // ============================================================
 
 // Kernel stack in normal kernel memory
-static uint64_t kernel_stack[4096] __attribute__((aligned(16)));
+// static uint64_t kernel_stack[4096] __attribute__((aligned(16)));
+// Kernel stack in normal kernel memory
+uint64_t kernel_stack[4096] __attribute__((aligned(16)));
+// Export the top-of-stack symbol
+uint64_t *kernel_stack_top = &kernel_stack[4096];
+
 
 static int tss_loaded = 0;
 

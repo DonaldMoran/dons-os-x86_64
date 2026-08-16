@@ -122,70 +122,12 @@ void isr8_handler(void) {
     while (1) __asm__ volatile("hlt");
 }
 
-// GP Fault handler with color
-void isr13_handler(exception_frame_t *frame) {
-    uint64_t *raw = (uint64_t *)frame;
-
-    vga_print("\n");
-    vga_print_color("=== GENERAL PROTECTION FAULT (#GP) ===\n", 0x0C);
-
-    vga_print("Error Code : 0x");
-    vga_print_hex_cur(raw[0]);
-    vga_print("\n");
-
-    vga_print("RIP        : 0x");
-    vga_print_hex_cur(raw[1]);
-    vga_print("\n");
-
-    vga_print("CS         : 0x");
-    vga_print_hex_cur(raw[2]);
-    vga_print("\n");
-
-    vga_print("RFLAGS     : 0x");
-    vga_print_hex_cur(raw[3]);
-    vga_print("\n");
-
-    vga_print("\nRaw Frame Dump:\n");
-    vga_print("  RAW[0] (error) : 0x"); vga_print_hex_cur(raw[0]); vga_print("\n");
-    vga_print("  RAW[1] (rip)   : 0x"); vga_print_hex_cur(raw[1]); vga_print("\n");
-    vga_print("  RAW[2] (cs)    : 0x"); vga_print_hex_cur(raw[2]); vga_print("\n");
-    vga_print("  RAW[3] (rflags): 0x"); vga_print_hex_cur(raw[3]); vga_print("\n");
-    
-    uint64_t fault_rip = raw[1] & 0xFFFFFFFFFFFFULL;
-
-    serial_print("GP: fault RIP = 0x");
-    serial_print_hex(fault_rip);
-    serial_print("\n");
-
-    
-        serial_print("\n=== GP FAULT FRAME (raw) ===\n");
-    for (int i = 0; i < 8; i++) {
-        serial_print("  raw[");
-        serial_print_hex(i);
-        serial_print("] = 0x");
-        serial_print_hex(raw[i]);
-        serial_print("\n");
-    }
-    serial_print("=== END GP FRAME ===\n");
-
-    while (1) __asm__ volatile("hlt");
-}
-
-
-
-//~ // Page Fault handler with color
-//~ void isr14_handler(exception_frame_t *frame) {
+//~ // GP Fault handler with color
+//~ void isr13_handler(exception_frame_t *frame) {
     //~ uint64_t *raw = (uint64_t *)frame;
 
-    //~ uint64_t cr2;
-    //~ __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
-
     //~ vga_print("\n");
-    //~ vga_print_color("=== PAGE FAULT (#PF) ===\n", 0x0C);
-
-    //~ vga_print("CR2 (addr) : 0x");
-    //~ vga_print_hex_cur(cr2);
-    //~ vga_print("\n");
+    //~ vga_print_color("=== GENERAL PROTECTION FAULT (#GP) ===\n", 0x0C);
 
     //~ vga_print("Error Code : 0x");
     //~ vga_print_hex_cur(raw[0]);
@@ -208,9 +150,54 @@ void isr13_handler(exception_frame_t *frame) {
     //~ vga_print("  RAW[1] (rip)   : 0x"); vga_print_hex_cur(raw[1]); vga_print("\n");
     //~ vga_print("  RAW[2] (cs)    : 0x"); vga_print_hex_cur(raw[2]); vga_print("\n");
     //~ vga_print("  RAW[3] (rflags): 0x"); vga_print_hex_cur(raw[3]); vga_print("\n");
+    
+    //~ uint64_t fault_rip = raw[1] & 0xFFFFFFFFFFFFULL;
+
+    //~ serial_print("GP: fault RIP = 0x");
+    //~ serial_print_hex(fault_rip);
+    //~ serial_print("\n");
+
+    
+    //~ serial_print("\n=== GP FAULT FRAME (raw) ===\n");
+    //~ for (int i = 0; i < 8; i++) {
+        //~ serial_print("  raw[");
+        //~ serial_print_hex(i);
+        //~ serial_print("] = 0x");
+        //~ serial_print_hex(raw[i]);
+        //~ serial_print("\n");
+    //~ }
+    //~ serial_print("=== END GP FRAME ===\n");
 
     //~ while (1) __asm__ volatile("hlt");
 //~ }
+
+void isr13_handler(exception_frame_t *frame) {
+    uint64_t *raw = (uint64_t *)frame;
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+
+    vga_print_color("=== GENERAL PROTECTION FAULT (#GP) ===\n", 0x0C);
+    vga_print("Error Code : 0x"); vga_print_hex_cur(raw[0]); vga_print("\n");
+    vga_print("RIP        : 0x"); vga_print_hex_cur(raw[1]); vga_print("\n");
+    vga_print("CS         : 0x"); vga_print_hex_cur(raw[2]); vga_print("\n");
+    vga_print("RFLAGS     : 0x"); vga_print_hex_cur(raw[3]); vga_print("\n");
+    vga_print("RSP        : 0x"); vga_print_hex_cur(raw[4]); vga_print("\n");
+    vga_print("SS         : 0x"); vga_print_hex_cur(raw[5]); vga_print("\n");
+    vga_print("CR3        : 0x"); vga_print_hex_cur(cr3);   vga_print("\n");
+    
+    serial_print("\n=== GP FAULT FRAME (raw) ===\n");
+    for (int i = 0; i < 8; i++) {
+        serial_print("  raw[");
+        serial_print_hex(i);
+        serial_print("] = 0x");
+        serial_print_hex(raw[i]);
+        serial_print("\n");
+    }
+    serial_print("=== END GP FRAME ===\n");
+    
+    while (1) __asm__ volatile("hlt");
+}
+
 
 void isr14_handler(exception_frame_t *frame) {
     uint64_t cr2;

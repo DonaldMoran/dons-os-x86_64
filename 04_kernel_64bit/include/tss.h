@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 
+extern uint64_t kernel_stack[];
+extern uint64_t *kernel_stack_top;
+
+
 // TSS structure (64-bit format)
 typedef struct {
     uint32_t reserved0;
