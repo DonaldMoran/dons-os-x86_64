@@ -1,6 +1,6 @@
 #include "pmm.h"
 
-#define MAX_PHYS_MEM   (128ULL * 1024 * 1024)   // support up to 512 MB for now
+#define MAX_PHYS_MEM   (128ULL * 1024 * 1024)   // 128 MB
 #define MAX_PAGES      (MAX_PHYS_MEM / PAGE_SIZE)
 #define BITMAP_SIZE    (MAX_PAGES / 8)
 
@@ -26,12 +26,10 @@ static int bitmap_test(uint64_t page) {
 }
 
 void pmm_init(BootInfo *info) {
-    // mark everything used by default — force simple byte loop
+    // mark everything used by default
     for (uint64_t i = 0; i < BITMAP_SIZE; i++) {
         ((volatile uint8_t *)pmm_bitmap)[i] = 0xFF;
     }
-
-    // ...rest of your code unchanged...
 
     MemoryMapEntry *m = (MemoryMapEntry *)info->memory_map_addr;
 
@@ -45,11 +43,10 @@ void pmm_init(BootInfo *info) {
         uint64_t length = m[i].length;
         uint64_t end = base + length;
 
-        // walk pages in this region
         for (uint64_t addr = base; addr < end; addr += PAGE_SIZE) {
             uint64_t page = addr / PAGE_SIZE;
             if (page < MAX_PAGES) {
-                bitmap_clear(page);   // mark as free
+                bitmap_clear(page);
                 pmm_total_pages++;
             }
         }
@@ -76,7 +73,6 @@ void pmm_init(BootInfo *info) {
 }
 
 uint64_t pmm_alloc_page(void) {
-    // Allocate from the END of memory (high addresses first)
     for (uint64_t page = MAX_PAGES - 1; page > 0; page--) {
         uint64_t phys = page * PAGE_SIZE;
         if (!bitmap_test(page)) {
@@ -84,16 +80,14 @@ uint64_t pmm_alloc_page(void) {
             return phys;
         }
     }
-    // Fallback: scan from beginning
     for (uint64_t page = 0; page < MAX_PAGES; page++) {
         if (!bitmap_test(page)) {
             bitmap_set(page);
             return page * PAGE_SIZE;
         }
     }
-    return 0; // out of memory
+    return 0;
 }
-
 
 void pmm_free_page(uint64_t phys_addr) {
     uint64_t page = phys_addr / PAGE_SIZE;

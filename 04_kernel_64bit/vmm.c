@@ -6,9 +6,21 @@
 #include "include/vga.h"
 #include "include/serial.h"
 
+#define RECURSIVE_PML4_INDEX 510
+#define HHDM_START 0xFFFF800000000000ULL
+
 // Recursive mapping address for PML4
 static uint64_t* get_pml4_virt(void) {
-    return (uint64_t*)0xFFFFFF7FBFDFE000ULL;
+    return (uint64_t*)(HHDM_START | 
+                       ((uint64_t)RECURSIVE_PML4_INDEX << 39) |
+                       ((uint64_t)RECURSIVE_PML4_INDEX << 30) |
+                       ((uint64_t)RECURSIVE_PML4_INDEX << 21) |
+                       ((uint64_t)RECURSIVE_PML4_INDEX << 12));
+}
+
+// Convert physical to virtual using HHDM
+static inline uint64_t* phys_to_virt(uint64_t phys) {
+    return (uint64_t*)(HHDM_START + phys);
 }
 
 void vmm_init(void) {
@@ -38,14 +50,6 @@ void vmm_init(void) {
 }
 
 void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
-//    serial_print("VMM: Mapping 0x");
-//    serial_print_hex(virt);
-//    serial_print(" -> 0x");
-//    serial_print_hex(phys);
-//    serial_print(" flags 0x");
-//    serial_print_hex(flags);
-//    serial_print("\n");
-    
     phys = phys & ~PT_NX;
     
     uint64_t user_flag   = (flags & PT_USER) ? PT_USER : 0;
@@ -61,74 +65,77 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     uint32_t pd_idx   = (virt >> 21) & 0x1FF;
     uint32_t pt_idx   = (virt >> 12) & 0x1FF;
     
+    // Allocate/access PDPT
     uint64_t* pdpt;
     if (!(pml4[pml4_idx] & 0x01)) {
-        uint64_t pdpt_phys = pmm_alloc_page();
-        if (!pdpt_phys) {
+        uint64_t new_pdpt_phys = pmm_alloc_page();
+        if (!new_pdpt_phys) {
             serial_print("VMM: Failed to allocate PDPT!\n");
             return;
         }
-        pml4[pml4_idx] = pdpt_phys | present_flag | write_flag | user_flag;
+        pml4[pml4_idx] = new_pdpt_phys | present_flag | write_flag | user_flag;
         if (flags & PT_USER) pml4[pml4_idx] |= exec_flag;
         serial_print("VMM: Allocated PDPT at 0x");
-        serial_print_hex(pdpt_phys);
+        serial_print_hex(new_pdpt_phys);
         serial_print("\n");
-        pdpt = (uint64_t*)pdpt_phys;
+        pdpt = phys_to_virt(new_pdpt_phys);
     } else {
-        uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFF;
-        pml4[pml4_idx] = pdpt_phys | present_flag | write_flag | user_flag;
+        uint64_t existing_pdpt_phys = pml4[pml4_idx] & ~0xFFF;
+        pml4[pml4_idx] = existing_pdpt_phys | present_flag | write_flag | user_flag;
         if (flags & PT_USER) pml4[pml4_idx] |= exec_flag;
-        pdpt = (uint64_t*)pdpt_phys;
+        pdpt = phys_to_virt(existing_pdpt_phys);
     }
     
+    // Allocate/access PD
     uint64_t* pd;
     if (!(pdpt[pdpt_idx] & 0x01)) {
-        uint64_t pd_phys = pmm_alloc_page();
-        if (!pd_phys) {
+        uint64_t new_pd_phys = pmm_alloc_page();
+        if (!new_pd_phys) {
             serial_print("VMM: Failed to allocate PD!\n");
             return;
         }
-        pdpt[pdpt_idx] = pd_phys | present_flag | write_flag | user_flag;
+        pdpt[pdpt_idx] = new_pd_phys | present_flag | write_flag | user_flag;
         if (flags & PT_USER) pdpt[pdpt_idx] |= exec_flag;
         serial_print("VMM: Allocated PD at 0x");
-        serial_print_hex(pd_phys);
+        serial_print_hex(new_pd_phys);
         serial_print("\n");
-        pd = (uint64_t*)pd_phys;
+        pd = phys_to_virt(new_pd_phys);
     } else {
-        uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFF;
-        pdpt[pdpt_idx] = pd_phys | present_flag | write_flag | user_flag;
+        uint64_t existing_pd_phys = pdpt[pdpt_idx] & ~0xFFF;
+        pdpt[pdpt_idx] = existing_pd_phys | present_flag | write_flag | user_flag;
         if (flags & PT_USER) pdpt[pdpt_idx] |= exec_flag;
-        pd = (uint64_t*)pd_phys;
+        pd = phys_to_virt(existing_pd_phys);
     }
     
+    // Allocate/access PT
     uint64_t* pt;
     if (flags & PT_USER) {
-        uint64_t pt_phys = pmm_alloc_page();
-        if (!pt_phys) {
+        uint64_t new_pt_phys = pmm_alloc_page();
+        if (!new_pt_phys) {
             serial_print("VMM: Failed to allocate PT for user page!\n");
             return;
         }
-        pd[pd_idx] = pt_phys | present_flag | write_flag | user_flag;
+        pd[pd_idx] = new_pt_phys | present_flag | write_flag | user_flag;
         if (flags & PT_USER) pd[pd_idx] |= exec_flag;
         serial_print("VMM: Allocated NEW PT for user page at 0x");
-        serial_print_hex(pt_phys);
+        serial_print_hex(new_pt_phys);
         serial_print("\n");
-        pt = (uint64_t*)pt_phys;
+        pt = phys_to_virt(new_pt_phys);
     } else {
         if (!(pd[pd_idx] & 0x01)) {
-            uint64_t pt_phys = pmm_alloc_page();
-            if (!pt_phys) {
+            uint64_t new_pt_phys = pmm_alloc_page();
+            if (!new_pt_phys) {
                 serial_print("VMM: Failed to allocate PT!\n");
                 return;
             }
-            pd[pd_idx] = pt_phys | present_flag | write_flag | user_flag;
+            pd[pd_idx] = new_pt_phys | present_flag | write_flag | user_flag;
             serial_print("VMM: Allocated PT at 0x");
-            serial_print_hex(pt_phys);
+            serial_print_hex(new_pt_phys);
             serial_print("\n");
-            pt = (uint64_t*)pt_phys;
+            pt = phys_to_virt(new_pt_phys);
         } else {
-            uint64_t pt_phys = pd[pd_idx] & ~0xFFF;
-            pt = (uint64_t*)pt_phys;
+            uint64_t existing_pt_phys = pd[pd_idx] & ~0xFFF;
+            pt = phys_to_virt(existing_pt_phys);
         }
     }
     
@@ -140,11 +147,6 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     }
     
     pt[pt_idx] = pte;
-//    serial_print("VMM: Mapped page: PT[");
-//    serial_print_dec(pt_idx);
-//    serial_print("]=0x");
-//    serial_print_hex(pt[pt_idx]);
-//    serial_print("\n");
     
     uint64_t cr3;
     asm volatile("mov %%cr3, %0" : "=r"(cr3));
@@ -166,15 +168,15 @@ uint64_t vmm_get_phys(uint64_t virt) {
     
     if (!(pml4[pml4_idx] & 0x01)) return 0;
     uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFF;
-    uint64_t* pdpt = (uint64_t*)pdpt_phys;
+    uint64_t* pdpt = phys_to_virt(pdpt_phys);
     
     if (!(pdpt[pdpt_idx] & 0x01)) return 0;
     uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFF;
-    uint64_t* pd = (uint64_t*)pd_phys;
+    uint64_t* pd = phys_to_virt(pd_phys);
     
     if (!(pd[pd_idx] & 0x01)) return 0;
     uint64_t pt_phys = pd[pd_idx] & ~0xFFF;
-    uint64_t* pt = (uint64_t*)pt_phys;
+    uint64_t* pt = phys_to_virt(pt_phys);
     
     if (!(pt[pt_idx] & 0x01)) return 0;
     return (pt[pt_idx] & ~0xFFF) | (virt & 0xFFF);
@@ -222,7 +224,7 @@ void vmm_dump_page_table(uint64_t virt) {
     serial_print("\n");
     
     uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFF;
-    uint64_t* pdpt = (uint64_t*)pdpt_phys;
+    uint64_t* pdpt = phys_to_virt(pdpt_phys);
     
     serial_print("  PDPT[");
     serial_print_dec(pdpt_idx);
@@ -241,7 +243,7 @@ void vmm_dump_page_table(uint64_t virt) {
     serial_print("\n");
     
     uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFF;
-    uint64_t* pd = (uint64_t*)pd_phys;
+    uint64_t* pd = phys_to_virt(pd_phys);
     
     serial_print("  PD[");
     serial_print_dec(pd_idx);
@@ -260,7 +262,7 @@ void vmm_dump_page_table(uint64_t virt) {
     serial_print("\n");
     
     uint64_t pt_phys = pd[pd_idx] & ~0xFFF;
-    uint64_t* pt = (uint64_t*)pt_phys;
+    uint64_t* pt = phys_to_virt(pt_phys);
     
     serial_print("  PT[");
     serial_print_dec(pt_idx);

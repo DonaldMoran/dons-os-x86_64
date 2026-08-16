@@ -1,5 +1,4 @@
 [bits 16]
-[default rel]
 [org 0x10000]
 
 ; ============================================
@@ -152,19 +151,39 @@ gdt_descriptor:
     dq gdt_start
 
 ; ============================================
-; Page Tables
+; Page Tables - ORIGINAL + HHDM mapping
 ; ============================================
 
 align 4096
 pml4:
+    ; PML4[0] -> Identity mapping for low memory
     dq pdpt_identity + 3
-    times 509 dq 0
+    
+    ; PML4[1] to PML4[255] = 0
+    times 255 dq 0
+    
+    ; PML4[256] -> HHDM mapping (ADDED for kernel VMM!)
+    dq pdpt_hhdm + 3
+    
+    ; PML4[257] to PML4[509] = 0
+    times 253 dq 0
+    
+    ; PML4[510] -> Recursive mapping
     dq pml4 + 0x003
+    
+    ; PML4[511] -> Higher-half kernel mapping
     dq pdpt_higher + 3
 
 align 4096
 pdpt_identity:
     dq pd + 3
+    times 511 dq 0
+
+align 4096
+pdpt_hhdm:
+    ; HHDM: Identity map the same physical memory
+    ; Maps physical memory at HHDM_START (0xFFFF800000000000)
+    dq pd_hhdm + 3
     times 511 dq 0
 
 align 4096
@@ -183,17 +202,31 @@ pd:
     %endrep
     times (512 - 512) dq 0
 
+; HHDM page directory - maps the same physical memory
+align 4096
+pd_hhdm:
+    %assign i 0
+    %rep 512
+        dq (i * 0x200000) + 0x83
+        %assign i i+1
+    %endrep
+    times (512 - 512) dq 0
+
+; ============================================
+; Data Structures
+; ============================================
+
 bootinfo:
-    dq 0
-    dq 0
-    dq 0
-    dd 0
-    dd 0
-    dd 0
-    dd 0
-    dq 0
-    dq 0
-    dq 0
+    dq 0  ; memory_map_addr
+    dq 0  ; memory_map_count
+    dq 0  ; kernel_phys_start
+    dd 0  ; kernel_phys_end
+    dd 0  ; (padding)
+    dd 0  ; (padding)
+    dd 0  ; (padding)
+    dq 0  ; pml4_phys
+    dq 0  ; (padding)
+    dq 0  ; (padding)
 
 e820_buffer:
     times 64*24 db 0
