@@ -40,11 +40,10 @@ uint64_t syscall_dispatch(uint64_t num,
         serial_print("sys_exit: status=");
         serial_print_hex(arg0);
         serial_print("\n");
-        for (;;) ;
-        return 0;
-        // For now: just return to kernel with status in RAX
-        //~ return arg0;
+        // Return status to syscall entry
+        return arg0;
     }
+
 
     default:
         serial_print("sys_unknown: num=");

@@ -70,7 +70,8 @@ void user_syscall_init(void)
 
     uint64_t star =
         ((uint64_t)0x2B << 48) |   // user CS (0x28 | 3)
-        ((uint64_t)0x08 << 32);    // kernel CS
+        ((uint64_t)0x18 << 32);    // kernel CS (0x18 is your 64‑bit code)
+
 
     wrmsr(MSR_STAR, star);
     wrmsr(MSR_LSTAR, (uint64_t)user_syscall_entry);
@@ -530,6 +531,47 @@ static void handle_command(const char *cmd) {
     }
 }
 
+void kmain_shell_loop(void) {
+    vga_print("DonsDOS v0.4.0\n");
+    serial_print("DonsDOS v0.4.0\n");
+    
+    vga_print("Type 'help'\n");
+    serial_print("Type 'help'\n");
+    
+    vga_print("> ");
+    serial_print("> ");
+
+    char cmd_buffer[128];
+    int cmd_pos = 0;
+
+    for (;;) {
+        asm volatile("hlt");
+
+        char c;
+        if (kbd_buffer_get(&c)) {
+            if (c == '\b') {
+                if (cmd_pos > 0) {
+                    cmd_pos--;
+                    vga_putc('\b');
+                }
+                continue;
+            }
+            if (c == '\n') {
+                vga_putc('\n');
+                cmd_buffer[cmd_pos] = '\0';
+                handle_command(cmd_buffer);
+                cmd_pos = 0;
+                continue;
+            }
+            if (c >= ' ' && c <= '~' && cmd_pos < 127) {
+                cmd_buffer[cmd_pos++] = c;
+                vga_putc(c);
+            }
+        }
+    }
+}
+
+
 void kmain(BootInfo *info) {
     g_bootinfo = info;
     vga_clear();
@@ -620,42 +662,7 @@ void kmain(BootInfo *info) {
 
     serial_print("Done.\n");
     vga_clear();
-
-    vga_print("DonsDOS v0.4.0\n");
-    serial_print("DonsDOS v0.4.0\n");
     
-    vga_print("Type 'help'\n");
-    serial_print("Type 'help'\n");
-    
-    vga_print("> ");
-    serial_print("> ");
+    kmain_shell_loop();
 
-    char cmd_buffer[128];
-    int cmd_pos = 0;
-
-    for (;;) {
-        asm volatile("hlt");
-
-        char c;
-        if (kbd_buffer_get(&c)) {
-            if (c == '\b') {
-                if (cmd_pos > 0) {
-                    cmd_pos--;
-                    vga_putc('\b');
-                }
-                continue;
-            }
-            if (c == '\n') {
-                vga_putc('\n');
-                cmd_buffer[cmd_pos] = '\0';
-                handle_command(cmd_buffer);
-                cmd_pos = 0;
-                continue;
-            }
-            if (c >= ' ' && c <= '~' && cmd_pos < 127) {
-                cmd_buffer[cmd_pos++] = c;
-                vga_putc(c);
-            }
-        }
-    }
 }

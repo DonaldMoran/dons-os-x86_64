@@ -4,44 +4,48 @@ default rel
 section .text
 global user_syscall_entry
 extern syscall_dispatch
+extern kmain_shell_loop
 
 user_syscall_entry:
-     push rbp
-     mov rbp, rsp
-     
-     ; Linux syscall ABI on entry:
-     ;   rax = num
-     ;   rdi = arg0 (fd)
-     ;   rsi = arg1 (buf)
-     ;   rdx = arg2 (count)
-     ;   r10 = arg3
-     ;   r8  = arg4
-     ;   r9  = arg5
-     
-     ; Save original args in temps
-     mov r11, rdi        ; save fd
-     mov r12, rsi        ; save buf
-     mov r13, rdx        ; save count
-     
-     ; System V C ABI for syscall_dispatch:
-     ;   rdi = num
-     ;   rsi = arg0
-     ;   rdx = arg1
-     ;   rcx = arg2
-     ;   r8  = arg3
-     ;   r9  = arg4
-     
-     mov rdi, rax        ; num
-     mov rsi, r11        ; arg0 = fd
-     mov rdx, r12        ; arg1 = buf
-     mov rcx, r13        ; arg2 = count
-     mov r8,  r10        ; arg3
-     ; r9 already holds arg5
-     
-     call syscall_dispatch
-     
-     pop rbp
-     
-     ; Just halt instead of trying to return
-     cli
-     hlt
+    push rbp
+    mov rbp, rsp
+
+    ; Save SYSCALL return state
+    push rcx            ; user RIP
+    push r11            ; user RFLAGS
+
+    mov r14, rax        ; syscall number
+
+    ; Save original args
+    mov r11, rdi        ; fd
+    mov r12, rsi        ; buf
+    mov r13, rdx        ; count
+
+    ; System V ABI for syscall_dispatch
+    mov rdi, r14        ; num
+    mov rsi, r11        ; arg0
+    mov rdx, r12        ; arg1
+    mov rcx, r13        ; arg2
+    mov r8,  r10        ; arg3
+    ; r9 already holds arg5
+
+    call syscall_dispatch
+
+    ; Check for SYS_EXIT (2)
+    cmp r14, 2
+    je .return_to_kernel
+    
+    ; TEMP: don’t sysret, just treat all syscalls as exit
+    jmp kmain_shell_loop
+
+    ; Normal syscall: return to user via SYSRETQ
+    pop r11             ; restore user RFLAGS
+    pop rcx             ; restore user RIP
+    pop rbp
+    sysret              ; NASM does not support sysretq, that is intel syntax
+
+.return_to_kernel:
+    pop r11             ; discard saved RFLAGS
+    pop rcx             ; discard saved RIP
+    pop rbp
+    jmp kmain_shell_loop
