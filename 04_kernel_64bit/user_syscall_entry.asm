@@ -10,22 +10,19 @@ user_syscall_entry:
     push rbp
     mov rbp, rsp
 
-    ; Save SYSCALL return state
-    push rcx            ; user RIP
-    push r11            ; user RFLAGS
+    ; rax = syscall number
+    mov r14, rax        ; save syscall number
 
-    mov r14, rax        ; syscall number
+    ; Save original args (avoid r11, it's special for sysret)
+    mov r12, rdi        ; arg0
+    mov r13, rsi        ; arg1
+    mov r15, rdx        ; arg2
 
-    ; Save original args
-    mov r11, rdi        ; fd
-    mov r12, rsi        ; buf
-    mov r13, rdx        ; count
-
-    ; System V ABI for syscall_dispatch
+    ; System V ABI: syscall_dispatch(num, arg0, arg1, arg2, arg3, arg4, arg5)
     mov rdi, r14        ; num
-    mov rsi, r11        ; arg0
-    mov rdx, r12        ; arg1
-    mov rcx, r13        ; arg2
+    mov rsi, r12        ; arg0
+    mov rdx, r13        ; arg1
+    mov rcx, r15        ; arg2
     mov r8,  r10        ; arg3
     ; r9 already holds arg5
 
@@ -34,18 +31,11 @@ user_syscall_entry:
     ; Check for SYS_EXIT (2)
     cmp r14, 2
     je .return_to_kernel
-    
-    ; TEMP: don’t sysret, just treat all syscalls as exit
-    jmp kmain_shell_loop
 
-    ; Normal syscall: return to user via SYSRETQ
-    pop r11             ; restore user RFLAGS
-    pop rcx             ; restore user RIP
+    ; Normal syscall: return to user via SYSRET
     pop rbp
-    sysret              ; NASM does not support sysretq, that is intel syntax
+    sysret              ; uses current RCX/R11 as user RIP/RFLAGS
 
 .return_to_kernel:
-    pop r11             ; discard saved RFLAGS
-    pop rcx             ; discard saved RIP
     pop rbp
     jmp kmain_shell_loop

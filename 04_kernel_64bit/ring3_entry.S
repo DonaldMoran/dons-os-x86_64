@@ -11,13 +11,13 @@ jump_to_user_mode:
 
     ; entry in rdi, stack in rsi (already aligned by C)
 
-    push qword 0x33        ; SS = user data (0x30 | 3)
+    push qword 0x2B        ; SS = user data
     push rsi               ; RSP = user stack
     pushfq
     pop rax
     or rax, 0x3200         ; IF=1, IOPL=3
     push rax               ; RFLAGS
-    push qword 0x2B        ; CS = user code (0x28 | 3, 64‑bit)
+    push qword 0x33        ; CS = user code
     push rdi               ; RIP = entry
 
     ; After building the frame, before iretq:

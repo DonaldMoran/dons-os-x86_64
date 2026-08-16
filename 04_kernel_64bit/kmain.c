@@ -68,10 +68,10 @@ void user_syscall_init(void)
 {
     serial_print("Initializing **RING** 3 syscalls...\n");
 
+    // U = 0x20 → SYSRET CS = 0x30 (user code), SS = 0x28 (user data)
     uint64_t star =
-        ((uint64_t)0x2B << 48) |   // user CS (0x28 | 3)
-        ((uint64_t)0x18 << 32);    // kernel CS (0x18 is your 64‑bit code)
-
+        ((uint64_t)0x20 << 48) |   // user CS base
+        ((uint64_t)0x18 << 32);    // kernel 64-bit code (GDT_CODE64)
 
     wrmsr(MSR_STAR, star);
     wrmsr(MSR_LSTAR, (uint64_t)user_syscall_entry);
@@ -84,7 +84,6 @@ void user_syscall_init(void)
     serial_print_hex(lstar);
     serial_print("\n");
 }
-
 
 static int strcmp(const char *s1, const char *s2) {
     while (*s1 && (*s1 == *s2)) {
@@ -622,7 +621,7 @@ void kmain(BootInfo *info) {
     serial_print("\n");
     serial_print("User data   (0x30): 0x");
     serial_print_hex(((uint64_t*)gdt_ptr.base)[6]);
-    serial_print("========================\n");
+    serial_print("\n========================\n");
     serial_print("\n");
 
     //serial_print("kmain: about to debug GDT before TS_INIT\n");
@@ -653,6 +652,11 @@ void kmain(BootInfo *info) {
     // Initialize ring 3 user system calls
     serial_print("Initializing **RING** 3 syscalls...\n");
     user_syscall_init();
+    uint64_t star = rdmsr(MSR_STAR);
+    serial_print("STAR = 0x");
+    serial_print_hex(star);
+    serial_print("\n");
+
     serial_print("RING 3 Done.\n");
     
     uint64_t lstar = rdmsr(MSR_LSTAR);

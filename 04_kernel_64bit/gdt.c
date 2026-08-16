@@ -181,45 +181,49 @@ void gdt_debug_print(void) {
 
 void gdt_fix_user_segments(void) {
     vga_print("GDT: Fixing user segments for Ring 3...\n");
-    
-    // Get the current GDT base and limit
+
     struct {
         uint16_t limit;
         uint64_t base __attribute__((packed));
     } gdt_ptr;
-    
+
     __asm__ volatile ("sgdt %0" : "=m"(gdt_ptr));
-    
+
     uint64_t* gdt = (uint64_t*)gdt_ptr.base;
-    
-    // Debug: Print old values
+
     uint64_t old_user_code = gdt[GDT_USER_CODE / 8];
     uint64_t old_user_data = gdt[GDT_USER_DATA / 8];
-    
-    serial_print("GDT: Old user code at 0x28 = 0x");
+
+    serial_print("GDT: Old user code at 0x");
+    serial_print_hex(GDT_USER_CODE);
+    serial_print(" = 0x");
     serial_print_hex(old_user_code);
     serial_print("\n");
-    serial_print("GDT: Old user data at 0x30 = 0x");
+
+    serial_print("GDT: Old user data at 0x");
+    serial_print_hex(GDT_USER_DATA);
+    serial_print(" = 0x");
     serial_print_hex(old_user_data);
     serial_print("\n");
-    
-    // CORRECT 64-bit user code segment (selector 0x28)
-    // 0x00AFFA000000FFFF = 64-bit code, DPL=3, Present, Executable, Readable
-    gdt[GDT_USER_CODE / 8] = 0x00AFFA000000FFFFULL;
-    
-    // CORRECT user data segment (selector 0x30)
-    // 0x00CFF2000000FFFF = 64-bit data, DPL=3, Present, Writable
+
+    // User data segment at 0x28: 64-bit data, DPL=3, Present, Writable
     gdt[GDT_USER_DATA / 8] = 0x00CFF2000000FFFFULL;
-    
-    // Debug: Print new values
-    serial_print("GDT: New user code at 0x28 = 0x");
-    serial_print_hex(gdt[GDT_USER_CODE / 8]);
-    serial_print("\n");
-    serial_print("GDT: New user data at 0x30 = 0x");
+
+    // User code segment at 0x30: 64-bit code, DPL=3, Present, Executable, Readable
+    gdt[GDT_USER_CODE / 8] = 0x00AFFA000000FFFFULL;
+
+    serial_print("GDT: New user data at 0x");
+    serial_print_hex(GDT_USER_DATA);
+    serial_print(" = 0x");
     serial_print_hex(gdt[GDT_USER_DATA / 8]);
     serial_print("\n");
-    
-    // Reload data segment registers
+
+    serial_print("GDT: New user code at 0x");
+    serial_print_hex(GDT_USER_CODE);
+    serial_print(" = 0x");
+    serial_print_hex(gdt[GDT_USER_CODE / 8]);
+    serial_print("\n");
+
     __asm__ volatile (
         "mov $0x20, %%ax\n\t"
         "mov %%ax, %%ds\n\t"
@@ -229,10 +233,11 @@ void gdt_fix_user_segments(void) {
         "mov %%ax, %%ss\n\t"
         : : : "rax", "memory"
     );
-    
+
     serial_print("GDT: User segments fixed for Ring 3\n");
     vga_print("GDT: User segments fixed for Ring 3\n");
 }
+
 
 void gdt_dump_entry(int index) {
     // Get current GDT pointer
