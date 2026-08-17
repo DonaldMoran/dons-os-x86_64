@@ -67,12 +67,6 @@ void create_user_process(void (*entry)(void*), void* arg) {
     serial_print("\n");
 }
 
-void simple_user_test(void) {
-    volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
-    vga[0] = 0x0F55;
-    while(1) __asm__ volatile ("hlt");
-}
-
 void user_test(void* arg) {
     (void)arg;
     vga_print("USER: This should never be called directly!\n");

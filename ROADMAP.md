@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, simple, user, user2, nxtest, syscall, **elfload**
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, **user**, **user2**, nxtest, syscall, **elfload**
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -75,95 +75,94 @@ Boot chain is complete and stable.
 ## 3. Core Kernel Features (Completed)
 
 ### ✔ 3.1 — Higher‑Half Kernel
-- Map kernel to `0xFFFFFFFF80100000` (completed)  
-- Update linker script (completed)  
-- Clean identity map and higher-half mapping working (completed)
+- Map kernel to `0xFFFFFFFF80100000`  
+- Updated linker script  
+- Clean identity map and higher-half mapping working
 
-### ✔ 3.2 — Exception Handlers (Completed)
-- ✅ Page Fault handler (dump CR2, error code, RIP)
-- ✅ Divide by Zero handler (message and halt)
-- ✅ General Protection Fault handler (dump ERR, RIP, CS)
-- ✅ Double Fault handler (registered)
+### ✔ 3.2 — Exception Handlers
+- Page Fault handler (dump CR2, error code, RIP)
+- Divide by Zero handler
+- General Protection Fault handler (ERR, RIP, CS)
+- Double Fault handler registered
 - Test command (`test`) for triggering all exceptions
-- Stack trace on panic - ☐ Planned
 
-### ✅ 3.3 — Virtual Memory Manager (VMM) - COMPLETED
-- ✅ CR3/PML4 read and displayed at boot
-- ✅ HHDM_START defined and printed
-- ✅ vmmtest command implemented
-- ✅ Serial debug output (COM1)
-- ✅ **Recursive paging** implemented at PML4[510]
-- ✅ PML4 read/write from higher-half kernel
-- ✅ Dynamic page table allocation (PDPT, PD, PT)
-- ✅ HHDM mapping (PML4[256] mapped)
-- ✅ No GP faults when accessing page tables
-- ✅ User-space page mapping with PT_USER flag
-- ✅ **NX (No Execute) bit support** via PT_NX flag
-- ✅ **nxtest command** for verifying NX functionality
-- ✅ **WRITE bit fix for heap pages** (resolved page faults)
+### ✔ 3.3 — Virtual Memory Manager (VMM)
+- CR3/PML4 read and displayed at boot
+- HHDM_START defined and printed
+- vmmtest command implemented
+- Serial debug output (COM1)
+- **Recursive paging** at PML4[510]
+- PML4 read/write from higher-half kernel
+- Dynamic page table allocation (PDPT, PD, PT)
+- HHDM mapping (PML4[256])
+- User-space page mapping with PT_USER flag
+- **NX (No Execute) bit support** via PT_NX flag
+- `nxtest` command for verifying NX functionality
 
-### ✅ 3.4 — Kernel Heap Allocator - COMPLETED
-- ✅ `kmalloc()` working with bump allocator
-- ✅ `kfree()` working with free list (memory reuse)
-- ✅ Automatic heap expansion
-- ✅ `heapstat` debugging command
-- ✅ `heaptest` test command (verifies allocation and reuse)
-- ✅ 64MB initial heap size
-- ✅ Free list for memory reuse
-- ✅ **WRITE bit properly set for heap pages** (resolved in NX update)
-- ☐ Slab/buddy allocator (NOT NEEDED — free list provides memory reuse)
+### ✔ 3.4 — Kernel Heap Allocator
+- `kmalloc()` bump allocator
+- `kfree()` free list (memory reuse)
+- Automatic heap expansion
+- `heapstat` debugging command
+- `heaptest` allocation/reuse verification
+- 64MB initial heap size
 
-### ✅ 3.5 — User Mode (Ring 3) - COMPLETED
-- ✅ GDT management with user segments (DPL=3)
-- ✅ User code (0x2B) and user data (0x33) segments
-- ✅ TSS initialization for stack switching on interrupts
-- ✅ `iretq`-based transition from kernel to user mode
-- ✅ User code executes at CPL=3 with page protection
-- ✅ User memory mapped with PT_USER flag for user/kernel isolation
-- ✅ `create_user_process()` for launching user code
-- ✅ Test commands: `simple`, `user`, `user2` for user mode verification
+### ✔ 3.5 — User Mode (Ring 3)
+- GDT with user segments (DPL=3)
+- User code (0x2B) and user data (0x33) segments
+- TSS initialization for stack switching
+- `iretq` transition from kernel to user mode
+- User memory mapped with PT_USER flag
+- `create_user_process()` for launching user code
+- Test commands: **user**, **user2** (placeholders for future usermode tests)
 
-### ✅ 3.6 — NX Bit Support - COMPLETED
-- ✅ NX bit enabled in VMM via PT_NX flag
-- ✅ PT_NX definition added to vmm.h (bit 63)
-- ✅ NX flag handling in `vmm_map_page()` on final PTE
-- ✅ `nxtest` command for verifying NX functionality
-- ✅ NX status displayed in `vmmtest` output
-- ✅ WRITE bit fix for heap pages (resolved page faults)
-- ✅ 8KB .bss padding to prevent keyboard buffer corruption
-- ✅ `keyboard_init()` moved after memory management initialization
+### ✔ 3.6 — NX Bit Support
+- NX bit enabled via PT_NX flag
+- NX flag handling in `vmm_map_page()`
+- `nxtest` command for verifying NX functionality
+- WRITE bit fix for heap pages
+- Keyboard buffer corruption resolved
 
-### ✅ 3.7 — System Calls - COMPLETED
-- ✅ `syscall` instruction setup via MSRs (IA32_STAR, IA32_LSTAR, IA32_FMASK)
-- ✅ System call handler in assembly with register preservation
-- ✅ SYS_WRITE (syscall #1) — Writes to VGA console and serial output
-- ✅ SYS_EXIT (syscall #60) — Terminates process, prints status, halts
-- ✅ Syscall dispatcher with argument handling (x86_64 syscall ABI)
-- ✅ `syscall` test command for verification
-- ✅ Proper x86_64 syscall ABI (rax=syscall#, rdi, rsi, rdx, r10, r8, r9)
-- ✅ SYSRET returns to user mode
+### ✔ 3.7 — System Calls
+- `syscall` instruction setup via MSRs (IA32_STAR, IA32_LSTAR, IA32_FMASK)
+- System call handler with register preservation
+- SYS_WRITE (syscall #1)
+- SYS_EXIT (syscall #60)
+- Syscall dispatcher with x86_64 ABI
+- `syscall` test command
+- SYSRET returns to user mode
 
-### ✅ 3.8 — ELF Loader - COMPLETED ⭐ NEW
-- ✅ Parses ELF64 headers and program headers
-- ✅ Maps LOAD segments with correct permissions (Read, Write, Execute, User)
-- ✅ Allocates and maps user stack pages (16 pages, 64KB)
-- ✅ Transitions to user mode via IRETQ with proper selectors (CS=0x2B, SS=0x33)
-- ✅ Sets IOPL=3 for user I/O access
-- ✅ Page table execute permissions at all levels (PML4 → PDPT → PD → PT)
-- ✅ **`elfload` command** to load and run embedded ELF programs
-- ✅ **Tested with "Hello from Userland!" output via serial**
-- ☐ Load ELF files from disk (future enhancement)
-- ☐ Support for dynamically linked ELF files (future enhancement)
+### ✔ 3.8 — ELF Loader ⭐ NEW
+- Parses ELF64 headers and program headers
+- Maps LOAD segments with correct permissions
+- Allocates and maps user stack pages
+- Transitions to user mode via IRETQ (CS=0x2B, SS=0x33)
+- Sets IOPL=3 for user I/O access
+- Page table execute permissions at all levels
+- **`elfload` command** for running embedded ELF programs
+- Tested with "Hello from Userland!" via serial
 
-### ☐ 3.9 — Process Model (Next)
-- Process Control Block (PCB)
-- Page table per process
-- Context switching
+---
 
-### ☐ 3.10 — Scheduler Prototype
-- Timer‑driven task switching  
-- Process Control Block (PCB)  
-- Cooperative or preemptive
+## ⭐ 3.9 — v0.4.1-syscall-stack-stable (August 2026)
+
+**What was accomplished:**
+- Unified kernel stack model for syscall entry/exit  
+- Stabilized SYSRET path for user → kernel → shell transitions  
+- Verified clean return from ELF user programs  
+- Correct handling of RCX/R11 for SYSRET  
+- **Removed the `simple` command** (redundant; replaced by ELF loader + future usermode tests)  
+- `user` and `user2` retained as placeholders for upcoming process work
+
+**Key learnings:**
+- SYSRET requires valid user RIP and RFLAGS  
+- Kernel stack must be restored before returning to shell  
+- TSS.RSP0 must always point to a stable kernel stack  
+- Redundant usermode tests can be retired once ELF loader is stable
+
+**Known limitations:**
+- No scheduler yet (SYS_EXIT halts instead of switching)  
+- No process teardown beyond returning to shell  
 
 ---
 
@@ -180,25 +179,24 @@ Boot chain is complete and stable.
 - File operations (open, read, write, close)
 
 ### ☐ 4.3 — Device Drivers
-- ✅ Serial/COM port (working)
-- ☐ PCI enumeration
-- ☐ AHCI disk driver
-- ☐ PS/2 mouse
+- Serial/COM port (working)
+- PCI enumeration
+- AHCI disk driver
+- PS/2 mouse
 
 ---
 
 ## 5. Development Tools
 
-### ✅ QEMU Debug Mode
+### ✔ QEMU Debug Mode
 - `-serial stdio` for real-time serial console output
 - `-serial file:qemu.log` for saving serial output
 - `-d int,cpu_reset,guest_errors` for interrupt logging
 - `-no-reboot -no-shutdown` for debugging crashes
-- Multiple run modes: `run`, `run-log`, `run-debug`, `run-verbose`, `run-headless`, `run-kvm`
+- Multiple run modes: run, run-log, run-debug, run-verbose, run-headless, run-kvm
 
-### ✅ GDB Remote Debugging
+### ✔ GDB Remote Debugging
 - `make runkernel64-debug` for GDB server
-- `-s -S` flags enabled
 - Connect with: `gdb -ex "target remote localhost:1234" kernel.elf`
 
 ### ✔ Build Automation
@@ -218,170 +216,17 @@ Boot chain is complete and stable.
 | VGA Console | ✔ Complete |
 | Command Shell | ✔ Complete |
 | Higher‑half kernel | ✔ Complete |
-| Exception Handlers | ✔ Complete (#DE, #PF, #GP) |
-| Virtual Memory Manager | ✔ Complete (recursive paging + NX) |
+| Exception Handlers | ✔ Complete |
+| Virtual Memory Manager | ✔ Complete |
 | Serial Debug Output | ✔ Complete |
-| Heap Allocator (kmalloc/kfree) | ✔ Complete |
+| Heap Allocator | ✔ Complete |
 | User Mode (Ring 3) | ✔ Complete |
 | NX Bit Support | ✔ Complete |
 | System Calls | ✔ Complete |
 | **ELF Loader** | **✔ Complete ⭐ NEW** |
+| Syscall Stack Stability | **✔ Complete ⭐ NEW** |
 | Process Model | ☐ Planned |
 | Scheduler | ☐ Planned |
-
----
-
-## Milestones
-
-### v0.4.0-elf-loader (August 2026) ⭐ NEW
-
-**What was accomplished:**
-- ✅ ELF loader fully functional!
-- ✅ Parses ELF64 headers and program headers
-- ✅ Maps LOAD segments with correct permissions
-- ✅ Allocates and maps user stack pages
-- ✅ Transitions to user mode via IRETQ (CS=0x2B, SS=0x33)
-- ✅ Sets IOPL=3 for user I/O access
-- ✅ Page table execute permissions at all levels
-- ✅ `elfload` command for loading and running embedded ELF programs
-- ✅ Tested with "Hello from Userland!" output via serial
-
-**Key learnings:**
-- GDT user segments must be 64-bit (L-bit set)
-- Execute permission must be set at ALL page table levels (PML4 → PDPT → PD → PT)
-- IOPL=3 is required for user mode I/O (serial, VGA)
-- Always allocate a new PT instead of reusing garbage entries
-- The `out` instruction requires IOPL=3 in user mode
-
-**Known limitations:**
-- Only embedded ELF files supported (disk loading coming soon)
-- No dynamic linking support yet
-- No process model yet (SYS_EXIT halts instead of switching)
-
-### v0.3.2-syscalls (August 2026)
-
-**What was accomplished:**
-- ✅ System call interface using `syscall`/`sysret` instructions
-- ✅ MSR configuration (IA32_STAR, IA32_LSTAR, IA32_FMASK)
-- ✅ Assembly syscall handler with full register preservation
-- ✅ SYS_WRITE (syscall #1) — VGA + serial output
-- ✅ SYS_EXIT (syscall #60) — Process termination with status
-- ✅ Syscall dispatcher with proper x86_64 ABI
-- ✅ `syscall` test command for verification
-- ✅ Updated README.md and ROADMAP.md with syscall documentation
-
-**Key learnings:**
-- `syscall` instruction uses MSRs to set up the entry point
-- x86_64 syscall ABI: rax=syscall#, rdi, rsi, rdx, r10, r8, r9
-- r10 is used for 4th argument (must be moved to rcx for C calling convention)
-- SYSRET restores RCX to RIP and R11 to RFLAGS
-- Register preservation is critical across syscalls
-- SYS_EXIT correctly halts the system (proper behavior without scheduler)
-
-**Known limitations:**
-- No process model yet (SYS_EXIT halts instead of switching processes)
-- Limited to SYS_WRITE and SYS_EXIT (more syscalls to come)
-
-### v0.3.1-nx-support (August 2026)
-
-**What was accomplished:**
-- ✅ NX (No Execute) bit support enabled via PT_NX flag
-- ✅ PT_NX definition added to vmm.h (bit 63)
-- ✅ NX flag handling in `vmm_map_page()` on final PTE
-- ✅ `nxtest` command for verifying NX functionality
-- ✅ NX status displayed in `vmmtest` output
-- ✅ WRITE bit fix for heap pages (resolved page faults)
-- ✅ 8KB .bss padding to prevent keyboard buffer corruption
-- ✅ `keyboard_init()` moved after memory management initialization
-- ✅ README.md updated with NX documentation
-- ✅ ROADMAP.md updated with NX completion
-
-**Key learnings:**
-- NX bit (bit 63) must only be set on the final PTE
-- WRITE bit must be explicitly set for heap pages
-- 8KB .bss padding prevents keyboard buffer corruption
-- Keyboard initialization must happen after memory management
-- `nxtest` command validates NX functionality
-
-**Known limitations:**
-- No system calls yet (resolved in v0.3.2-syscalls)
-- No process model yet
-
-### v0.3.0-userland (August 2026)
-
-**What was accomplished:**
-- ✅ GDT management with user segments (DPL=3)
-- ✅ User code (0x2B) and user data (0x33) segments
-- ✅ TSS initialization for stack switching on interrupts
-- ✅ `iretq`-based transition from kernel to user mode
-- ✅ User code executes at CPL=3 with page protection
-- ✅ User memory mapped with PT_USER flag for user/kernel isolation
-- ✅ `create_user_process()` for launching user code
-- ✅ Test commands: `simple`, `user`, `user2` for user mode verification
-
-**Key learnings:**
-- User mode requires proper GDT entries with DPL=3
-- TSS must be configured for stack switching
-- `iretq` is the correct way to transition from kernel to user mode
-- PT_USER flag is essential for user memory access
-
-**Known limitations:**
-- NX bit not yet enabled (resolved in v0.3.1-nx-support)
-- No system calls yet (resolved in v0.3.2-syscalls)
-
-### v0.2.6-heap-stable (August 2026)
-
-**What was accomplished:**
-- ✅ `kfree()` fully implemented with free list
-- ✅ Memory reuse verified (`heaptest` shows p3 == p1)
-- ✅ `heaptest` command for testing allocation and reuse
-- ✅ Heap allocator complete with both allocation and freeing
-- ✅ Stable and tested across multiple runs
-
-**Key learnings:**
-- Free list is a simple but effective way to reuse memory
-- Inline assembly can work around compiler issues
-- Testing with `heaptest` verifies memory reuse
-
-**Known limitations:**
-- Identity mapping used (kernel memory visible)
-- 256MB memory limit (bootloader constraint)
-
-### v0.2.5-heap-working (August 2026)
-
-**What was accomplished:**
-- ✅ Heap allocator (`kmalloc`) working with bump allocator
-- ✅ `heapstat` command for debugging
-- ✅ 64MB initial heap with automatic expansion
-- ✅ 256MB physical memory mapped
-- ✅ Identity mapping for page table access
-- ✅ All shell commands working and stable
-
-**Key learnings:**
-- Identity mapping works for page table access but limits to 256MB
-- Bump allocator is simple but has memory leak (kfree stub)
-- Heap expansion requires VMM mapping
-
-**Known limitations:**
-- Identity mapping used (kernel memory visible)
-- 256MB memory limit (bootloader constraint)
-- `kfree()` was a stub (resolved in v0.2.6)
-
-### v0.2.3-vmm-stable (August 2026)
-
-**What was accomplished:**
-- ✅ Recursive paging implemented in bootloader
-- ✅ VMM can read and write PML4 from higher-half kernel
-- ✅ PML4[510] maps to itself for page table access
-- ✅ HHDM region mapped at PML4[256]
-- ✅ Dynamic page table allocation working
-- ✅ Serial console fully integrated with QEMU
-- ✅ Multiple QEMU run modes (serial, debug, headless, KVM)
-
-**Key learnings:**
-- Recursive paging is essential for accessing page tables from higher-half
-- PMM must be initialized before VMM can allocate page tables
-- Serial output is invaluable for debugging OS development
 
 ---
 

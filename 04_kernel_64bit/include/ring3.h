@@ -10,7 +10,6 @@
 //~ void ring3_enter(uint64_t entry, uint64_t stack, uint64_t arg1, uint64_t arg2);
 uint64_t ring3_enter(uint64_t entry, uint64_t stack, uint64_t arg1, uint64_t arg2);
 void create_user_process(void (*entry)(void*), void* arg);
-void simple_user_test(void);
 void user_test(void* arg);
 void user_test2(void* arg);
 

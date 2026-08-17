@@ -104,7 +104,7 @@ static void handle_command(const char *cmd) {
     const char *valid_commands[] = {
         "help", "clear", "version", "reboot", 
         "pmmtest", "info", "mem", "test", 
-        "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", "simple",
+        "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", 
         "nxtest", "syscall", "elfload", "segtest"
     };
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
@@ -127,18 +127,17 @@ static void handle_command(const char *cmd) {
         vga_print("  heaptest - Test heap free list\n");
         vga_print("  user     - Test user mode (Ring 3)\n");
         vga_print("  user2    - Test user mode (Ring 3) - second test\n");
-        vga_print("  simple   - Test user mode (Ring 3) - simple test\n");
         vga_print("  nxtest   - Test NX (No Execute) bit\n");
-        vga_print("  syscall  - Test system calls\n");
-        vga_print("  elfload  - Load and run ELF program\n");
+        vga_print("  syscall  - Test ring(0) calls\n");
+        vga_print("  elfload  - Load and run ELF program rung(3)\n");
         vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
-        vga_print("DonsDOS v0.4.0\n");
+        vga_print("DonsDOS v0.4.1\n");
         vga_print("Type 'help'\n");
         vga_print("> ");
     } else if (strcmp(cmd, "version") == 0) {
-        vga_print("\nDonsDOS v0.4.0\n");
+        vga_print("\nDonsDOS v0.4.1\n");
         vga_print("Build: 64-bit kernel with VGA console\n");
         vga_print("Features: VMM with recursive paging, HHDM, NX support, Syscalls, ELF loader\n");
         vga_print("Copyright (c) 2026 Don's OS Project\n");
@@ -454,12 +453,6 @@ static void handle_command(const char *cmd) {
         vga_print("Creating user process...\n");
         create_user_process(user_test2, NULL);
         vga_print("> ");
-    } else if (strcmp(cmd, "simple") == 0) {
-        vga_print("\n=== Simple User Mode Test ===\n");
-        vga_print("Running user code...\n");
-        simple_user_test();
-        vga_print("Returned from user mode! (shouldn't happen)\n");
-        vga_print("> ");
     } else if (strcmp(cmd, "nxtest") == 0) {
         vga_print("\n=== NX Test ===\n");
         vga_print("NX bit support is enabled in the VMM.\n");
@@ -476,9 +469,9 @@ static void handle_command(const char *cmd) {
         vga_print_dec_cur(ret);
         vga_print("\n");
         
-        vga_print("Testing SYS_EXIT... (will halt)\n");
+        // vga_print("Testing SYS_EXIT... (will halt)\n");
         vga_print("> ");
-        sys_exit(0);
+        // sys_exit(0);
         // Should not reach here
         
     } else if (strcmp(cmd, "elfload") == 0) {
@@ -533,8 +526,8 @@ static void handle_command(const char *cmd) {
 }
 
 void kmain_shell_loop(void) {
-    vga_print("DonsDOS v0.4.0\n");
-    serial_print("DonsDOS v0.4.0\n");
+    vga_print("DonsDOS v0.4.1\n");
+    serial_print("DonsDOS v0.4.1\n");
     
     vga_print("Type 'help'\n");
     serial_print("Type 'help'\n");
@@ -582,7 +575,7 @@ void kmain(BootInfo *info) {
     
     //serial_print("Serial: Kernel booted\n");
     vga_set_cursor_shape(0x00, 0x0F);
-    vga_print("DonsDOS v0.4.0\n");
+    vga_print("DonsDOS v0.4.1\n");
     vga_print("Initializing...\n");
 
     serial_print("idt_init\n");

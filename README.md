@@ -102,12 +102,12 @@ Once booted, you'll see a prompt > where you can type commands:
 | `maptest` | Test page mapping |
 | `testrec` | Test recursive mapping address |
 | `heaptest` | Test heap allocator with memory reuse |
-| `simple`  | Test user mode (Ring 3) execution |
-| `user`    | Test user mode with process creation |
-| `user2`   | Second user mode test |
-| `nxtest` | Verify NX (No Execute) bit support is available in the VMM |
+| `user`    | Placeholder for future usermode process test |
+| `user2`   | Placeholder for second usermode test |
+| `nxtest` | Verify NX (No Execute) bit support |
 | `syscall` | Test system call interface (SYS_WRITE, SYS_EXIT) |
-| **`elfload`** | **Load and run embedded ELF program from user mode** |
+| **`elfload`** | **Load and run embedded ELF program from user mode Ring(3)** |
+
 
 ``` 
 DonsDOS v0.1
@@ -242,7 +242,8 @@ This project is designed to be:
 - `v0.3.0-userland` — User mode (Ring 3) working, GDT with user segments, TSS stack switching, user code execution at CPL=3 with memory protection
 - `v0.3.1-nx-support` — **NX (No Execute) bit support enabled**, PT_NX flag in VMM, `nxtest` command, heap WRITE bit fix, keyboard buffer corruption resolved
 - `v0.3.2-syscalls` — **System call interface implemented** (SYS_WRITE, SYS_EXIT), SYSCALL/SYSRET support via MSRs, `syscall` test command
-- `v0.4.0-elf-loader` — **ELF loader fully functional!** Parses and loads ELF64 files, maps user code and stack, transitions to user mode, runs user programs with "Hello from Userland!" output. `elfload` command added.
+- `v0.4.0-elf-loader` — Fully functional ELF64 loader. Parses and maps ELF segments with correct user permissions, builds a user stack, transitions cleanly into Ring 3, executes embedded user programs (e.g., “Hello from Userland!”), and returns safely back to the Ring 0 shell via the syscall exit path. elfload command added.
+- `v0.4.1-syscall-stack-stable` — Stabilized SYSRET return path, corrected RCX/R11 handling, removed `simple`, and verified clean returns from ELF Ring 3 programs to the Ring 0 shell.
 
 ---
 
@@ -349,7 +350,7 @@ This project is designed to be:
 -  5. ~~**User mode** — Ring 3 support with GDT, TSS, and privilege switching~~ ✅ COMPLETED
 -  6. ~~**NX bit support** — Enable NX bit in EFER and add PT_NX flag~~ ✅ COMPLETED
 -  7. ~~**System calls** — syscall instruction interface~~ ✅ COMPLETED
--  8. ~~ELF loader~~ ✅ **COMPLETED!** — Load and execute user programs
+-  8. ~~ELF loader~~ ✅ **COMPLETED!** — Load and execute user programs at ring(3), return cleanly to shell at ring(0)
 
 ### Long-term
 -  9. **Process model** — Page table per process, context switching
