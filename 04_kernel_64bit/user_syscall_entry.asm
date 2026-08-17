@@ -23,8 +23,8 @@ syscall_init_asm:
     wrmsr
 
     mov ecx, 0xC0000081          ; IA32_STAR
-    mov eax, 0
-    mov edx, 0x002B0018          ; user CS=0x2B, kernel CS=0x18
+    mov eax, 0x0000002B          ; user CS = 0x2B (bits 15:0)
+    mov edx, 0x00000018          ; kernel CS = 0x18 (bits 47:32), reserved bits (63:48) zero
     wrmsr
 
     mov ecx, 0xC0000082          ; IA32_LSTAR

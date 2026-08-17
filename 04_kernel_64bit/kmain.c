@@ -133,11 +133,11 @@ static void handle_command(const char *cmd) {
         vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
-        vga_print("DonsDOS v0.4.1\n");
+        vga_print("DonsDOS v0.4.2\n");
         vga_print("Type 'help'\n");
         vga_print("> ");
     } else if (strcmp(cmd, "version") == 0) {
-        vga_print("\nDonsDOS v0.4.1\n");
+        vga_print("\nDonsDOS v0.4.2\n");
         vga_print("Build: 64-bit kernel with VGA console\n");
         vga_print("Features: VMM with recursive paging, HHDM, NX support, Syscalls, ELF loader\n");
         vga_print("Copyright (c) 2026 Don's OS Project\n");
@@ -526,8 +526,8 @@ static void handle_command(const char *cmd) {
 }
 
 void kmain_shell_loop(void) {
-    vga_print("DonsDOS v0.4.1\n");
-    serial_print("DonsDOS v0.4.1\n");
+    vga_print("DonsDOS v0.4.2\n");
+    serial_print("DonsDOS v0.4.2\n");
     
     vga_print("Type 'help'\n");
     serial_print("Type 'help'\n");
@@ -575,7 +575,7 @@ void kmain(BootInfo *info) {
     
     //serial_print("Serial: Kernel booted\n");
     vga_set_cursor_shape(0x00, 0x0F);
-    vga_print("DonsDOS v0.4.1\n");
+    vga_print("DonsDOS v0.4.2\n");
     vga_print("Initializing...\n");
 
     serial_print("idt_init\n");
