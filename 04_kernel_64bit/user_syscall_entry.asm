@@ -1,9 +1,9 @@
 [bits 64]
 default rel
 
-section .bss
+section .data
 global user_rsp_storage
-user_rsp_storage:    resq 1
+user_rsp_storage:    dq 0
 
 section .text
 global user_syscall_entry
@@ -17,21 +17,27 @@ extern kernel_stack_top
 ; Syscall init: set up EFER, STAR, LSTAR, FMASK
 ; ---------------------------------------------------------------------------
 syscall_init_asm:
-    mov ecx, 0xC0000080          ; IA32_EFER
+    ; Enable SYSCALL/SYSRET in EFER
+    mov ecx, 0xC0000080
     rdmsr
-    or eax, 0x1                  ; SCE
+    or eax, 0x1
     wrmsr
 
-    mov ecx, 0xC0000081          ; IA32_STAR
-    mov eax, 0x0000002B          ; user CS = 0x2B (bits 15:0)
-    mov edx, 0x00000018          ; kernel CS = 0x18 (bits 47:32), reserved bits (63:48) zero
+    ; Set up STAR
+    mov ecx, 0xC0000081
+    xor edx, edx
+    xor eax, eax
+    mov edx, 0x00000018
+    mov eax, 0x00000020
     wrmsr
 
-    mov ecx, 0xC0000082          ; IA32_LSTAR
-    mov rax, user_syscall_entry  ; syscall entry point
+    ; Set up LSTAR
+    mov ecx, 0xC0000082
+    mov rax, user_syscall_entry
     wrmsr
 
-    mov ecx, 0xC0000084          ; IA32_FMASK
+    ; Set up FMASK
+    mov ecx, 0xC0000084
     xor eax, eax
     xor edx, edx
     wrmsr
@@ -42,47 +48,84 @@ syscall_init_asm:
 ; Syscall entry from usermode
 ; ---------------------------------------------------------------------------
 user_syscall_entry:
+    ; Save user RSP
+    mov [user_rsp_storage], rsp
+    
     push rbp
     mov rbp, rsp
-
+    
     ; Save user RIP (RCX) and user RFLAGS (R11) for SYSRET
     push rcx
     push r11
-
+    
+    ; Save all registers
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    
+    ; Arguments on syscall:
     ; rax = syscall number
-    mov r14, rax        ; save syscall number
-
-    ; Save original args (avoid r11, it's special for sysret)
+    ; rdi = arg0
+    ; rsi = arg1  
+    ; rdx = arg2
+    ; r10 = arg3
+    ; r8  = arg4
+    ; r9  = arg5
+    
+    ; Save syscall number
+    mov r14, rax
+    
+    ; Save arguments
     mov r12, rdi        ; arg0
     mov r13, rsi        ; arg1
     mov r15, rdx        ; arg2
-
-    ; System V ABI: syscall_dispatch(num, arg0, arg1, arg2, arg3, arg4, arg5)
+    mov rbx, r10        ; arg3 (saved in rbx)
+    
+    ; Call syscall_dispatch(num, arg0, arg1, arg2, arg3, arg4, arg5)
     mov rdi, r14        ; num
     mov rsi, r12        ; arg0
     mov rdx, r13        ; arg1
     mov rcx, r15        ; arg2
-    mov r8,  r10        ; arg3
-    ; r9 already holds arg5
-
+    mov r8,  rbx        ; arg3
+    mov r9,  r8         ; arg4
+    ; arg5 is already in r9
+    
     call syscall_dispatch
-
+    
     ; Check for SYS_EXIT (2)
     cmp r14, 2
     je .return_to_kernel
-
-    ; Normal syscall: restore user RIP/RFLAGS and return via SYSRET
+    
+    ; Normal syscall: restore and return via SYSRET
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    
     pop r11             ; restore user RFLAGS
     pop rcx             ; restore user RIP
     pop rbp
-    o64 sysret          ; 64-bit SYSRET using RCX/R11
-
+    
+    ; Restore user RSP before SYSRET
+    mov rsp, [user_rsp_storage]
+    
+    o64 sysret          ; Return to user mode
+    
 .return_to_kernel:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    
     pop r11             ; discard saved user RFLAGS
     pop rcx             ; discard saved user RIP
     pop rbp
     
-    ; switch to kernel stack (same one TSS uses)
+    ; Switch to kernel stack
     mov rsp, [kernel_stack_top]
-     
+    
     jmp kmain_shell_loop

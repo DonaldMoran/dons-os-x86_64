@@ -12,11 +12,13 @@ static tss_t* tss = (tss_t*)TSS_PHYS_ADDR;
 static uint8_t* iomap = (uint8_t*)(TSS_PHYS_ADDR + sizeof(tss_t));
 // ============================================================
 
-// Kernel stack in normal kernel memory
-// static uint64_t kernel_stack[4096] __attribute__((aligned(16)));
-// Kernel stack in normal kernel memory
+// Kernel stack: grows down, top is at the highest address
+// Kernel stack (4096 uint64_t entries = 32768 bytes)
+// Stack grows DOWN: RSP starts at the highest address
 uint64_t kernel_stack[4096] __attribute__((aligned(16)));
 // Export the top-of-stack symbol
+// Top of stack: points to the highest address (one past the last element)
+// First push will go to kernel_stack[4095]
 uint64_t *kernel_stack_top = &kernel_stack[4096];
 
 

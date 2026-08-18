@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, **user**, **user2**, nxtest, syscall, **elfload**
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -98,6 +98,9 @@ Boot chain is complete and stable.
 - User-space page mapping with PT_USER flag
 - **NX (No Execute) bit support** via PT_NX flag
 - `nxtest` command for verifying NX functionality
+- **Dynamic HHDM mapping** via `ensure_hhdm_mapped()`
+- **Page table cloning** via `vmm_clone_page_table()`
+- **`vmmclone` command** for testing process isolation
 
 ### ✔ 3.4 — Kernel Heap Allocator
 - `kmalloc()` bump allocator
@@ -109,7 +112,7 @@ Boot chain is complete and stable.
 
 ### ✔ 3.5 — User Mode (Ring 3)
 - GDT with user segments (DPL=3)
-- User code (0x2B) and user data (0x33) segments
+- User code (0x30) and user data (0x28) segments
 - TSS initialization for stack switching
 - `iretq` transition from kernel to user mode
 - User memory mapped with PT_USER flag
@@ -127,42 +130,83 @@ Boot chain is complete and stable.
 - `syscall` instruction setup via MSRs (IA32_STAR, IA32_LSTAR, IA32_FMASK)
 - System call handler with register preservation
 - SYS_WRITE (syscall #1)
-- SYS_EXIT (syscall #60)
+- SYS_EXIT (syscall #2)
 - Syscall dispatcher with x86_64 ABI
 - `syscall` test command
 - SYSRET returns to user mode
+- **Safe user‑space memory access** via `safe_copy_from_user()` using HHDM
 
-### ✔ 3.8 — ELF Loader ⭐ NEW
+### ✔ 3.8 — ELF Loader ⭐ FINALIZED
 - Parses ELF64 headers and program headers
-- Maps LOAD segments with correct permissions
+- Maps LOAD segments with correct permissions (Read, Write, Execute, User)
 - Allocates and maps user stack pages
-- Transitions to user mode via IRETQ (CS=0x2B, SS=0x33)
+- Transitions to user mode via IRETQ (CS=0x33, SS=0x2B)
 - Sets IOPL=3 for user I/O access
 - Page table execute permissions at all levels
 - **`elfload` command** for running embedded ELF programs
+- **Works reliably on first boot** (handles bootloader identity‑mapping conflict)
+- **Safe HHDM‑based copying** of program segments and stack
 - Tested with "Hello from Userland!" via serial
+
+### ✔ 3.9 — Process Foundation ⭐ NEW
+- Process Control Block (PCB) structure
+- Process creation (`process_create`)
+- Process listing (`proclist`)
+- Page table cloning (`vmm_clone_page_table`)
+- **`vmmclone` command** for testing page table isolation
+- Ready queue infrastructure (foundation for scheduler)
 
 ---
 
-## ⭐ 3.9 — v0.4.1-syscall-stack-stable (August 2026)
+## ⭐ v0.4.2 — STAR MSR Fix (August 2026)
 
 **What was accomplished:**
-- Unified kernel stack model for syscall entry/exit  
-- Stabilized SYSRET path for user → kernel → shell transitions  
-- Verified clean return from ELF user programs  
-- Correct handling of RCX/R11 for SYSRET  
-- **Removed the `simple` command** (redundant; replaced by ELF loader + future usermode tests)  
-- `user` and `user2` retained as placeholders for upcoming process work
+- Fixed IA32_STAR MSR configuration for SYSCALL/SYSRET
+- User CS = 0x30 → STAR[15:0] = 0x20
+- Enabled clean SYSRET return path
 
 **Key learnings:**
-- SYSRET requires valid user RIP and RFLAGS  
-- Kernel stack must be restored before returning to shell  
-- TSS.RSP0 must always point to a stable kernel stack  
-- Redundant usermode tests can be retired once ELF loader is stable
+- STAR MSR requires careful selector calculation (`User CS - 16`)
+- SYSRET uses STAR[15:0] + 16 for CS and STAR[15:0] + 8 for SS
 
-**Known limitations:**
-- No scheduler yet (SYS_EXIT halts instead of switching)  
-- No process teardown beyond returning to shell  
+**Key learnings:**
+- Bootloader and kernel must agree on BootInfo layout
+- HHDM must map pages dynamically, not just at boot
+- Recursive paging is essential for page table manipulation
+
+---
+
+### ⭐ v0.4.3 — ELF Loader Stabilized + Process Foundation (August 2026)
+
+**What was accomplished:**
+- ELF loader now works on **first boot** (no more "run twice" bug)
+- Bootloader identity‑mapping conflict resolved (detect and replace with proper user‑mode PTEs)
+- `PT_EXEC` (PWT bit) handling added to `vmm_map_page()`
+- Safe HHDM‑based user‑space memory access in syscall handler (`safe_copy_from_user`)
+- **Process Foundation:** PCB, `process_create()`, `proclist`, `proccreate`, `vmmclone`
+- **Dynamic HHDM mapping:** `ensure_hhdm_mapped()`
+- **BootInfo validation:** Magic number and version checking
+- Removed redundant `simple` command
+- All existing commands remain fully functional
+
+---
+
+## ⭐ v0.4.3 — ELF Loader Stabilized (August 2026)
+
+**What was accomplished:**
+- ELF loader now works on **first boot** (no more "run twice" bug)
+- Bootloader identity‑mapping conflict resolved (detect and replace with proper user‑mode PTEs)
+- `PT_EXEC` (PWT bit) handling added to `vmm_map_page()`
+- STAR MSR corrected for SYSCALL/SYSRET (User CS = 0x30 → STAR[15:0] = 0x20)
+- Safe HHDM‑based user‑space memory access in syscall handler (`safe_copy_from_user`)
+- Removed redundant `simple` command
+- All existing commands (`proclist`, `proccreate`, `vmmclone`, `syscall`, `heapstat`) remain fully functional
+
+**Key learnings:**
+- Bootloader identity mappings must be replaced, not trusted
+- `vmm_get_phys()` is more reliable than `vmm_is_mapped()` for detecting valid mappings
+- HHDM is essential for safe kernel‑to‑user memory operations
+- STAR MSR requires careful selector calculation (`User CS - 16`)
 
 ---
 
@@ -223,10 +267,19 @@ Boot chain is complete and stable.
 | User Mode (Ring 3) | ✔ Complete |
 | NX Bit Support | ✔ Complete |
 | System Calls | ✔ Complete |
-| **ELF Loader** | **✔ Complete ⭐ NEW** |
-| Syscall Stack Stability | **✔ Complete ⭐ NEW** |
-| Process Model | ☐ Planned |
-| Scheduler | ☐ Planned |
+| **ELF Loader** | **✔ Complete ⭐ FINALIZED** |
+| **STAR MSR Fix** | **✔ Complete ⭐ v0.4.2** |
+| **Process Foundation** | **✔ Complete ⭐ v0.4.3** |
+| **ELF Loader Stabilized** | **✔ Complete ⭐ v0.4.3** |
+| **Syscall Stack Stability** | **✔ Complete ⭐ v0.4.3** |
+| **HHDM Dynamic Mapping** | **✔ Complete ⭐ v0.4.3** |
+| **BootInfo Validation** | **✔ Complete ⭐ v0.4.3** |
+| Cooperative Scheduler | ☐ Planned (Next) |
+| Preemptive Scheduler | ☐ Planned |
+| Cooperative Scheduler | ☐ Planned (Next) |
+| Preemptive Scheduler | ☐ Planned |
+| Framebuffer Graphics | ☐ Planned |
+| File System | ☐ Planned |
 
 ---
 

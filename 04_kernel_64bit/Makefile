@@ -5,7 +5,9 @@ OBJCOPY := objcopy
 XXD     := xxd
 
 # Clean CFLAGS - only what's necessary
-CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone
+# CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone
+# Clean CFLAGS - only what's necessary
+CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx
 LDFLAGS := -nostdlib
 
 .PHONY: all clean
@@ -15,7 +17,7 @@ all: kernel.bin
 OBJS = entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o \
 	idt_load.o isr.o vga.o keyboard.o serial.o tss.o gdt.o ring3.o \
 	syscall.o elf.o test_program_data.o \
-	user_syscall.o user_syscall_entry.o     # ← ADDED
+	user_syscall.o user_syscall_entry.o process.o string.o
 
 kernel.elf: $(OBJS)
 	$(LD) $(LDFLAGS) -T linker.ld -o kernel.elf $(OBJS)
@@ -63,6 +65,12 @@ vga.o: vga.c
 
 syscall.o: syscall.c
 	$(CC) $(CFLAGS) -Iinclude -I. -c syscall.c -o syscall.o
+
+string.o: string.c
+	$(CC) $(CFLAGS) -Iinclude -c string.c -o string.o
+
+process.o: process.c
+	$(CC) $(CFLAGS) -Iinclude -c process.c -o process.o
 
 elf.o: elf.c
 	$(CC) $(CFLAGS) -Iinclude -I. -c elf.c -o elf.o

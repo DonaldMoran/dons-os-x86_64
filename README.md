@@ -16,7 +16,7 @@ Each stage is isolated, minimal, and fully bootable.
 - **03_boot_64bit** — PAE paging, PML4/PDPT/PD/PT, IA32_EFER.LME, long‑mode entry  
 
 ### Kernel Development 
-- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**, **system calls**, **ELF loader**
+- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**, **system calls**, **ELF loader**, **process system foundation**
 - **05_boot_kernel64** — Full boot chain: stage2 loads kernel, enters long mode, jumps to `_start`
 
 The top‑level Makefile builds and runs all components.
@@ -61,7 +61,7 @@ This boots:
  4. stage2 enters long mode  
  5. stage2 jumps to kernel at 0xFFFFFFFF80100000 (higher-half)  
  6. kernel executes `_start` → `kmain`  
- 7. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM, Heap, Syscalls, **ELF loader**
+ 7. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM, Heap, Syscalls, **ELF loader**, **Process System**  
  8. kernel displays command prompt `>`  
  9. User can type commands and receive responses
 
@@ -74,9 +74,10 @@ The ELF loader is fully functional and can execute user programs from memory:
 - ✅ Parses ELF64 headers and program headers
 - ✅ Maps LOAD segments with correct permissions (Read, Write, Execute, User)
 - ✅ Allocates and maps user stack pages
-- ✅ Transitions to user mode via IRETQ with proper selectors (CS=0x2B, SS=0x33)
+- ✅ Transitions to user mode via IRETQ with proper selectors (CS=0x33, SS=0x2B)
 - ✅ Sets IOPL=3 for user I/O access
 - ✅ Page table execute permissions at all levels (PML4 → PDPT → PD → PT)
+- ✅ Uses HHDM for safe user‑space memory access from kernel
 - ✅ Tested with "Hello from Userland!" output via serial
 
 **User programs** can be embedded in the kernel and loaded with the `elfload` command.
@@ -86,6 +87,7 @@ The ELF loader is fully functional and can execute user programs from memory:
 ### Command Shell
 
 Once booted, you'll see a prompt > where you can type commands:
+
 | Command | Description |
 |---------|-------------|
 | `help` | Show available commands |
@@ -102,39 +104,39 @@ Once booted, you'll see a prompt > where you can type commands:
 | `maptest` | Test page mapping |
 | `testrec` | Test recursive mapping address |
 | `heaptest` | Test heap allocator with memory reuse |
-| `user`    | Placeholder for future usermode process test |
-| `user2`   | Placeholder for second usermode test |
 | `nxtest` | Verify NX (No Execute) bit support |
 | `syscall` | Test system call interface (SYS_WRITE, SYS_EXIT) |
-| **`elfload`** | **Load and run embedded ELF program from user mode Ring(3)** |
+| `elfload` | Load and run embedded ELF program from user mode Ring(3) |
+| `proclist` | List all processes (idle + created) |
+| `proccreate` | Create a test process (PCB infrastructure) |
+| `vmmclone` | Clone the current page table (test process isolation) |
 
-
-``` 
-DonsDOS v0.1
+```
+DonsDOS v0.4.3
 Type 'help'
 > help
 
 Available commands:
-  help     - Show this help
-  clear    - Clear the screen
-  version  - Show version info
-  reboot   - Reboot the system
-  pmmtest  - Test Physical Memory Manager (allocate/free pages)
-  info     - Show boot information (PML4, kernel addresses, E820 entries)
-  mem      - Show memory information (usable/reserved RAM)
-  test     - Exception Handling test (#DE, #PF, #GP)
-  vmmtest  - Show VMM status (recursive paging, HHDM, CR3, NX support)
+  help       - Show this help
+  clear      - Clear the screen
+  version    - Show version info
+  reboot     - Reboot the system
+  pmmtest    - Test Physical Memory Manager (allocate/free pages)
+  info       - Show boot information (PML4, kernel addresses, E820 entries)
+  mem        - Show memory information (usable/reserved RAM)
+  test       - Exception Handling test (#DE, #PF, #GP)
+  vmmtest    - Show VMM status (recursive paging, HHDM, CR3, NX support)
   serialtest - Test serial output debugging
-  heapstat - Show heap statistics (used/free/total memory)
-  maptest  - Test page mapping (allocate and write to a physical page)
-  testrec  - Test recursive mapping address (read PML4 entry)
-  heaptest - Test heap allocator with memory reuse
-  user     - Test user mode (Ring 3) with process creation
-  user2    - Test user mode (Ring 3) - second test
-  simple   - Test user mode (Ring 3) - simple test (writes to VGA)
-  syscall  - Test system calls (SYS_WRITE, SYS_EXIT)
-  elfload  - Load and run embedded ELF program in user mode
-  
+  heapstat   - Show heap statistics (used/free/total memory)
+  maptest    - Test page mapping (allocate and write to a physical page)
+  testrec    - Test recursive mapping address (read PML4 entry)
+  heaptest   - Test heap allocator with memory reuse
+  nxtest     - Test NX (No Execute) bit support
+  syscall    - Test system calls (SYS_WRITE, SYS_EXIT)
+  elfload    - Load and run embedded ELF program in user mode
+  proclist   - List all processes (idle + created)
+  proccreate - Create a test process (PCB infrastructure)
+  vmmclone   - Clone the current page table (test process isolation)
 ```
 
 ---
@@ -225,7 +227,7 @@ This project is designed to be:
 
 ---
 
-## 🌱 Tags & Milestones
+## 🏷️ Tags & Milestones
 
 - `v0.0.1-longmode` — First successful long-mode boot and flat binary kernel
 - `v0.0.2-interrupts` — IDT, PIC remap, PIT timer, IRQ0 (tick), IRQ1 (keyboard)
@@ -242,8 +244,19 @@ This project is designed to be:
 - `v0.3.0-userland` — User mode (Ring 3) working, GDT with user segments, TSS stack switching, user code execution at CPL=3 with memory protection
 - `v0.3.1-nx-support` — **NX (No Execute) bit support enabled**, PT_NX flag in VMM, `nxtest` command, heap WRITE bit fix, keyboard buffer corruption resolved
 - `v0.3.2-syscalls` — **System call interface implemented** (SYS_WRITE, SYS_EXIT), SYSCALL/SYSRET support via MSRs, `syscall` test command
-- `v0.4.0-elf-loader` — Fully functional ELF64 loader. Parses and maps ELF segments with correct user permissions, builds a user stack, transitions cleanly into Ring 3, executes embedded user programs (e.g., “Hello from Userland!”), and returns safely back to the Ring 0 shell via the syscall exit path. elfload command added.
+- `v0.4.0-elf-loader` — Fully functional ELF64 loader. Parses and maps ELF segments with correct user permissions, builds a user stack, transitions cleanly into Ring 3, executes embedded user programs (e.g., “Hello from Userland!”), and returns safely back to the Ring 0 shell via the syscall exit path. `elfload` command added.
 - `v0.4.1-syscall-stack-stable` — Stabilized SYSRET return path, corrected RCX/R11 handling, removed `simple`, and verified clean returns from ELF Ring 3 programs to the Ring 0 shell.
+- `v0.4.2-star-msr-fix` — **Fixed IA32_STAR MSR configuration** for SYSCALL/SYSRET. User CS = 0x30 → STAR[15:0] = 0x20. Enabled clean SYSRET return path.
+- **`v0.4.3-elfloader-fixed`** — **ELF loader fully stabilized on first boot + Process Foundation.**  
+  - Fixed bootloader identity‑mapping conflict (now detects and replaces bootloader mappings with proper user‑mode PTEs).  
+  - Added safe HHDM‑based user‑space memory access in syscall handler (`safe_copy_from_user`).  
+  - Corrected STAR MSR for SYSCALL/SYSRET (User CS = 0x30 → STAR[15:0] = 0x20).  
+  - Added `PT_EXEC` (PWT bit) handling in `vmm_map_page()` to ensure user pages are executable.  
+  - Verified `elfload` works reliably on the first boot (no more "run twice" bug).  
+  - **Process Foundation:** Process Control Block (PCB) structure, `process_create()`, `proclist`, `proccreate`, `vmmclone` (page table cloning).  
+  - **Dynamic HHDM mapping:** `ensure_hhdm_mapped()` for on‑demand physical memory access.  
+  - **BootInfo validation:** Magic number and version checking.  
+  - All existing commands remain fully functional.
 
 ---
 
@@ -252,87 +265,88 @@ This project is designed to be:
 ### ✅ Current Capabilities
 
 **Boot & Architecture**
-- Full boot chain: 16‑bit → 32‑bit → 64‑bit long mode
-- Working GDT and TSS
-- Higher-half kernel region (kernel runs at 0xFFFFFFFF80100000)
-- **Recursive paging** at PML4[510] for page table access from higher-half
-- 256MB physical memory mapped (expandable)
+- ✅ Full boot chain: 16‑bit → 32‑bit → 64‑bit long mode
+- ✅ Working GDT and TSS
+- ✅ Higher-half kernel region (kernel runs at 0xFFFFFFFF80100000)
+- ✅ **Recursive paging** at PML4[510] for page table access from higher-half
+     128MB physical memory detected and mapped (expandable via BootInfo)
 - ✅ **User Mode (Ring 3) Support** — Full privilege separation with user code execution at CPL=3
 
 **Interrupts & Exceptions**
-- Fully functional IDT and ISR stubs
-- Stable IRQ0 (PIT timer) and IRQ1 (keyboard)
+- ✅ Fully functional IDT and ISR stubs
+- ✅ Stable IRQ0 (PIT timer) and IRQ1 (keyboard)
 - ✅ #DE (Divide by Zero) handler working
 - ✅ #PF (Page Fault) handler with CR2, ERR, RIP dump
 - ✅ #GP (General Protection Fault) handler with ERR, RIP, CS dump
-- Test command (`test`) for triggering all three exceptions
+- ✅ Test command (`test`) for triggering all three exceptions
 
 **Drivers**
-- VGA text console (80×25) with scrolling and cursor control
-- Keyboard driver with shift/caps/backspace support
-- PIT timer incrementing `g_ticks`
-- Serial (COM1) output for kernel debugging
+- ✅ VGA text console (80×25) with scrolling and cursor control
+- ✅ Keyboard driver with shift/caps/backspace support
+- ✅ PIT timer incrementing `g_ticks`
+- ✅ Serial (COM1) output for kernel debugging
 
 **Shell / Console**
-- Interactive prompt (`>`)
-- Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, simple, user, user2, nxtest, **syscall**
-- Clean command parsing and line editing
-- Unknown command handling with suggestions
-- Serial console output (COM1) for debugging alongside VGA
+- ✅ Interactive prompt (`>`)
+- ✅ Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, **syscall**, **elfload**, **proclist**, **proccreate**, **vmmclone**
+- ✅ Clean command parsing and line editing
+- ✅ Unknown command handling with suggestions
+- ✅ Serial console output (COM1) for debugging alongside VGA
 
 **Memory**
-- Full BIOS E820 memory map parsing
-- Memory map passed to kernel via BootInfo
-- Physical Memory Manager (PMM) with bitmap allocator
-- Page allocation, freeing, and reuse verified
+- ✅ Full BIOS E820 memory map parsing
+- ✅ Memory map passed to kernel via BootInfo
+- ✅ Physical Memory Manager (PMM) with bitmap allocator
+- ✅ Page allocation, freeing, and reuse verified
 - ✅ **Virtual Memory Manager (VMM)** with recursive paging and NX support
-  - HHDM_START: `0xFFFF800000000000`
-  - PML4[256] mapped for HHDM region
-  - Dynamic page table allocation (PDPT, PD, PT)
+  - ✅ HHDM_START: `0xFFFF800000000000`
+  - ✅ PML4[256] mapped for HHDM region
+  - ✅ Dynamic page table allocation (PDPT, PD, PT)
   - ✅ **NX (No Execute) bit support** via PT_NX flag
-  - `vmmtest` command verifies page mapping and shows NX status
-  - `nxtest` command validates NX functionality
-  - No GP faults when accessing page tables
+  - ✅ `vmmtest` command verifies page mapping and shows NX status
+  - ✅ `nxtest` command validates NX functionality
+  - ✅No GP faults when accessing page tables
 - ✅ **Heap Allocator** with `kmalloc()` and `kfree()` support
-  - Bump allocator with free list for memory reuse
-  - `heapstat` command for debugging
-  - `heaptest` command to verify allocation and reuse
-  - 64MB heap size (expandable)
-  - Memory reuse verified (freed memory is returned)
+  - ✅ Bump allocator with free list for memory reuse
+  - ✅ `heapstat` command for debugging
+  - ✅ `heaptest` command to verify allocation and reuse
+  - ✅ 64MB heap size (expandable)
+  - ✅ Memory reuse verified (freed memory is returned)
 - ✅ **User Memory Mapping** — Pages mapped with PT_USER flag for proper user/kernel isolation
 - ✅ **NX (No Execute) Bit** — Fully supported via PT_NX flag in VMM
 - ✅ **NX Support Verified** — `nxtest` command confirms NX functionality
 
 **System Calls**
 - ✅ **SYSCALL/SYSRET support** via MSR (IA32_STAR, IA32_LSTAR, IA32_FMASK)
-- ✅ **SYS_WRITE** (syscall #1) — Writes to VGA console and serial output, returns count
-- ✅ **SYS_EXIT** (syscall #60) — Terminates process, prints status, halts (correct behavior without scheduler)
+- ✅ **SYS_WRITE** (syscall #1) — Writes to serial output, returns count
+- ✅ **SYS_EXIT** (syscall #2) — Terminates process, prints status, returns to shell
 - ✅ **Syscall dispatcher** with argument handling (x86_64 syscall ABI)
 - ✅ **Test command** (`syscall`) to verify both system calls
-- ✅ Proper register preservation across syscalls
+- ✅ **Proper register preservation** across syscalls
+- ✅ **Safe user‑space memory access** via `safe_copy_from_user()` using HHDM
 
-**User Mode**
-- ✅ GDT with user code (0x2B) and user data (0x33) segments (DPL=3)
+**User Mode & Process Foundation**
+- ✅ GDT with user code (0x30) and user data (0x28) segments (DPL=3)
 - ✅ TSS configured for stack switching on interrupts from user mode
 - ✅ `iretq`-based transition from kernel to user mode
 - ✅ User code executes at CPL=3 with page protection
 - ✅ User memory mapped with PT_USER flag for user/kernel isolation
-- ✅ Test commands: `simple`, `user`, `user2` for user mode verification
-- ✅ User Memory Mapping — Pages mapped with PT_USER flag for proper user/kernel isolation
-- ✅ **NX (No Execute) Bit** — Fully supported via PT_NX flag in VMM
-- ✅ Test commands: `simple`, `user`, `user2`, **`nxtest`** for user mode and NX verification
-- ✅ `nxtest` command verifies NX bit support in the VMM
+- ✅ **Process Control Block (PCB)** infrastructure
+- ✅ **Page table cloning** (`vmmclone`) for process isolation
+- ✅ **Process creation** (`proccreate`) and **listing** (`proclist`)
+- ✅ Safe user‑space memory access via HHDM
 
-**ELF Loader** ⭐ NEW ⭐
+**ELF Loader** ⭐ FINALIZED ⭐
 - ✅ Parses ELF64 headers and program headers
 - ✅ Maps LOAD segments with correct permissions (Read, Write, Execute, User)
 - ✅ Allocates and maps user stack pages
-- ✅ Transitions to user mode via IRETQ with proper selectors (CS=0x2B, SS=0x33)
+- ✅ Transitions to user mode via IRETQ with proper selectors (CS=0x33, SS=0x2B)
 - ✅ Sets IOPL=3 for user I/O access
 - ✅ Page table execute permissions at all levels (PML4 → PDPT → PD → PT)
 - ✅ **`elfload` command** to load and run embedded ELF programs
 - ✅ **Tested with "Hello from Userland!" output via serial**
-    
+- ✅ **Works reliably on first boot** (bootloader identity‑mapping handled)
+
 **Build System**
 - Organized source tree with Makefile
 - QEMU bootable disk image
@@ -340,24 +354,21 @@ This project is designed to be:
 - Multiple QEMU run modes (serial, debug, headless, KVM)
 - Debug logging support with serial console
 
+---
+
 ## 🌱 Next Steps (Roadmap)
 
-### Short-term
--  1. ~~**Higher‑half kernel** — Map kernel to `0xFFFFFFFF80000000`~~ ✅ COMPLETED
--  2. ~~**Exception handlers** — Page fault, GPF, double fault with register dumps~~ ✅ COMPLETED
--  3. ~~**Virtual memory manager** — HHDM, dynamic page tables, recursive paging~~ ✅ COMPLETED
--  4. ~~**Heap allocator** — `kmalloc`/`kfree` implementation~~ ✅ COMPLETED
--  5. ~~**User mode** — Ring 3 support with GDT, TSS, and privilege switching~~ ✅ COMPLETED
--  6. ~~**NX bit support** — Enable NX bit in EFER and add PT_NX flag~~ ✅ COMPLETED
--  7. ~~**System calls** — syscall instruction interface~~ ✅ COMPLETED
--  8. ~~ELF loader~~ ✅ **COMPLETED!** — Load and execute user programs at ring(3), return cleanly to shell at ring(0)
+### Short-term (Next)
+- 1. **Cooperative scheduler** — Ready queue, `process_yield()`, round‑robin task switching
+- 2. **Preemptive scheduler** — Timer interrupt integration, preemptive task switching
+
+### Medium-term
+- 3. **Ring0 kernel threads** — Kernel daemons, system services
+- 4. **Framebuffer graphics** — Move from VGA text mode to graphics
 
 ### Long-term
--  9. **Process model** — Page table per process, context switching
-- 10. **Scheduler** — Task switching (cooperative → preemptive)
-- 11. **Framebuffer graphics** — Move from VGA text mode to graphics
-- 12. **File system** — Virtual File System (VFS) layer
-- 13. **User‑space programs** — Build and run actual user applications
+- 5. **File system** — Virtual File System (VFS) layer
+- 6. **User‑space programs** — Build and run actual user applications
 
 ---
 

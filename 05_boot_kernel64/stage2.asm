@@ -2,6 +2,12 @@
 [org 0x10000]
 
 ; ============================================
+; Constants
+; ============================================
+BOOTINFO_MAGIC equ 0x4F534F444E4F53
+BOOTINFO_VERSION equ 1
+
+; ============================================
 ; DAP entries - at the beginning for fixed offsets
 ; ============================================
 
@@ -108,25 +114,36 @@ pm_entry:
 long_mode_entry:
     mov rsp, 0x80000
 
+    ; ============================================
+    ; Fill BootInfo structure
+    ; ============================================
     mov rbx, bootinfo
-    mov qword [rbx + 0], e820_buffer
+    
+    ; Fill memory map info
+    mov qword [rbx + 0x10], e820_buffer    ; memory_map_addr
     movzx rax, word [e820_count]
-    mov qword [rbx + 8], rax
-    mov qword [rbx + 16], 0
-    mov dword [rbx + 24], 0
-    mov dword [rbx + 28], 0
-    mov dword [rbx + 32], 0
-    mov dword [rbx + 36], 0
-    mov qword [rbx + 40], 0x00100000
-    mov qword [rbx + 48], 0x00100000 + (64 * 512)
-    mov rax, pml4
-    mov qword [rbx + 56], rax
+    mov qword [rbx + 0x18], rax            ; memory_map_count
+    
+    ; Note: kernel_phys_start (0x20) and kernel_phys_end (0x28) 
+    ; are already filled in the bootinfo data section
+    
+    ; Note: pml4_addr (0x30) is already filled in the bootinfo data section
+    ; Note: pml4_virt (0x38) is already filled in the bootinfo data section
+    
+    ; Note: boot_drive (0x58) is already filled in the bootinfo data section
+    
+    ; Set flags
+    mov qword [rbx + 0x80], 0x01           ; flags: bit 0 = booted from HDD
 
+    ; ============================================
+    ; Copy kernel from 0x80000 to 0x100000
+    ; ============================================
     mov rsi, 0x00080000
     mov rdi, 0x00100000
     mov rcx, 8192
     rep movsq
 
+    ; Jump to kernel
     mov rdi, bootinfo
     mov rax, 0xFFFFFFFF80100000
     jmp rax
@@ -162,7 +179,7 @@ pml4:
     ; PML4[1] to PML4[255] = 0
     times 255 dq 0
     
-    ; PML4[256] -> HHDM mapping (ADDED for kernel VMM!)
+    ; PML4[256] -> HHDM mapping (for kernel VMM)
     dq pdpt_hhdm + 3
     
     ; PML4[257] to PML4[509] = 0
@@ -213,20 +230,58 @@ pd_hhdm:
     times (512 - 512) dq 0
 
 ; ============================================
+; BootInfo Structure (must match bootinfo.h)
+; ============================================
+; typedef struct BootInfo {
+;     uint64_t magic;              ; 0x00
+;     uint64_t version;            ; 0x08
+;     uint64_t memory_map_addr;    ; 0x10
+;     uint64_t memory_map_count;   ; 0x18
+;     uint64_t kernel_phys_start;  ; 0x20
+;     uint64_t kernel_phys_end;    ; 0x28
+;     uint64_t pml4_addr;          ; 0x30
+;     uint64_t pml4_virt;          ; 0x38
+;     uint64_t framebuffer_addr;   ; 0x40
+;     uint32_t framebuffer_width;  ; 0x48
+;     uint32_t framebuffer_height; ; 0x4C
+;     uint32_t framebuffer_pitch;  ; 0x50
+;     uint32_t framebuffer_bpp;    ; 0x54
+;     uint64_t boot_drive;         ; 0x58
+;     uint64_t acpi_rsdp;          ; 0x60
+;     uint64_t smbios_addr;        ; 0x68
+;     uint64_t cmdline;            ; 0x70
+;     uint64_t cmdline_len;        ; 0x78
+;     uint64_t flags;              ; 0x80
+;     uint64_t reserved[6];        ; 0x88 - 0xBF
+; } BootInfo;
+; Size: 0xC0 (192 bytes)
+
+align 16
+bootinfo:
+    dq BOOTINFO_MAGIC       ; 0x00: magic
+    dq BOOTINFO_VERSION     ; 0x08: version
+    dq e820_buffer          ; 0x10: memory_map_addr
+    dq 0                    ; 0x18: memory_map_count (filled in long_mode_entry)
+    dq 0x00100000           ; 0x20: kernel_phys_start
+    dq 0x00100000 + (128*512) ; 0x28: kernel_phys_end (64 sectors = 128*512 bytes)
+    dq pml4                 ; 0x30: pml4_addr
+    dq 0xFFFFFF7FBFDFE000   ; 0x38: pml4_virt (recursive mapping address)
+    dq 0                    ; 0x40: framebuffer_addr (none yet)
+    dd 0                    ; 0x48: framebuffer_width
+    dd 0                    ; 0x4C: framebuffer_height
+    dd 0                    ; 0x50: framebuffer_pitch
+    dd 0                    ; 0x54: framebuffer_bpp
+    dq 0x80                 ; 0x58: boot_drive (0x80 = first HDD)
+    dq 0                    ; 0x60: acpi_rsdp
+    dq 0                    ; 0x68: smbios_addr
+    dq 0                    ; 0x70: cmdline
+    dq 0                    ; 0x78: cmdline_len
+    dq 0                    ; 0x80: flags (filled in long_mode_entry)
+    times 6 dq 0            ; 0x88 - 0xBF: reserved
+
+; ============================================
 ; Data Structures
 ; ============================================
-
-bootinfo:
-    dq 0  ; memory_map_addr
-    dq 0  ; memory_map_count
-    dq 0  ; kernel_phys_start
-    dd 0  ; kernel_phys_end
-    dd 0  ; (padding)
-    dd 0  ; (padding)
-    dd 0  ; (padding)
-    dq 0  ; pml4_phys
-    dq 0  ; (padding)
-    dq 0  ; (padding)
 
 e820_buffer:
     times 64*24 db 0

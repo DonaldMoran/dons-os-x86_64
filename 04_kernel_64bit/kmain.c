@@ -17,12 +17,60 @@
 #include "include/gdt.h"
 #include "include/debug.h"
 #include "include/user_msr.h"
+#include "include/process.h"
+#include "include/bootinfo.h"
 
 extern void pit_init(uint32_t freq);
 // Embedded ELF test program (from test_program.bin)
 extern unsigned char test_program[];
 extern unsigned int test_program_len;
 static BootInfo *g_bootinfo = NULL;
+
+static int validate_bootinfo(BootInfo* info) {
+    if (!info) {
+        serial_print("ERROR: No BootInfo provided!\n");
+        return 0;
+    }
+    
+    if (info->magic != BOOTINFO_MAGIC) {
+        serial_print("ERROR: Invalid BootInfo magic!\n");
+        serial_print("Expected: 0x");
+        serial_print_hex(BOOTINFO_MAGIC);
+        serial_print(" Got: 0x");
+        serial_print_hex(info->magic);
+        serial_print("\n");
+        return 0;
+    }
+    
+    if (info->version != BOOTINFO_VERSION) {
+        serial_print("WARNING: BootInfo version mismatch\n");
+        serial_print("Expected: ");
+        serial_print_dec(BOOTINFO_VERSION);
+        serial_print(" Got: ");
+        serial_print_dec(info->version);
+        serial_print("\n");
+    }
+    
+    if (info->memory_map_count == 0) {
+        serial_print("ERROR: No memory map entries!\n");
+        return 0;
+    }
+    
+    serial_print("BootInfo validated successfully\n");
+    serial_print("Memory map entries: ");
+    serial_print_dec(info->memory_map_count);
+    serial_print("\n");
+    serial_print("Kernel physical: 0x");
+    serial_print_hex(info->kernel_phys_start);
+    serial_print(" - 0x");
+    serial_print_hex(info->kernel_phys_end);
+    serial_print("\n");
+    serial_print("PML4 physical: 0x");
+    serial_print_hex(info->pml4_addr);
+    serial_print("\n");
+    
+    return 1;
+}
 
 void dump_iretq_frame_serial(void) {
     uint64_t* rsp;
@@ -105,7 +153,7 @@ static void handle_command(const char *cmd) {
         "help", "clear", "version", "reboot", 
         "pmmtest", "info", "mem", "test", 
         "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", 
-        "nxtest", "syscall", "elfload", "segtest"
+        "nxtest", "syscall", "elfload", "proclist" , "proccreate" , "vmmclone"
     };
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
     
@@ -130,14 +178,17 @@ static void handle_command(const char *cmd) {
         vga_print("  nxtest   - Test NX (No Execute) bit\n");
         vga_print("  syscall  - Test ring(0) calls\n");
         vga_print("  elfload  - Load and run ELF program rung(3)\n");
+        vga_print("  proclist - List all processes\n");
+        vga_print("  proccreate - Create a test process\n");
+        vga_print("  vmmclone - Test page table cloning\n");
         vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
-        vga_print("DonsDOS v0.4.2\n");
+        vga_print("DonsDOS v0.4.3\n");
         vga_print("Type 'help'\n");
         vga_print("> ");
     } else if (strcmp(cmd, "version") == 0) {
-        vga_print("\nDonsDOS v0.4.2\n");
+        vga_print("\nDonsDOS v0.4.3\n");
         vga_print("Build: 64-bit kernel with VGA console\n");
         vga_print("Features: VMM with recursive paging, HHDM, NX support, Syscalls, ELF loader\n");
         vga_print("Copyright (c) 2026 Don's OS Project\n");
@@ -502,7 +553,21 @@ static void handle_command(const char *cmd) {
         elf_load(test_program);
         debug_rsp("kmain after elf_load");
         vga_print("> ");
-    }  else {
+    } else if (strcmp(cmd, "proclist") == 0) {
+        process_dump_all();
+        vga_print("> ");
+    } else if (strcmp(cmd, "vmmclone") == 0) {
+        process_test_clone();
+    } else if (strcmp(cmd, "proccreate") == 0) {
+        // Create a test process
+        pcb_t* test = process_create("testproc", 0xDEADBEEF, 0);
+        if (test) {
+            vga_print("Created process: ");
+            vga_print_dec_cur(test->pid);
+            vga_print("\n");
+        }
+        vga_print("> ");
+    } else {
         vga_print("\nUnknown command: '");
         vga_print(cmd);
         vga_print("'\n");
@@ -526,8 +591,8 @@ static void handle_command(const char *cmd) {
 }
 
 void kmain_shell_loop(void) {
-    vga_print("DonsDOS v0.4.2\n");
-    serial_print("DonsDOS v0.4.2\n");
+    vga_print("DonsDOS v0.4.3\n");
+    serial_print("DonsDOS v0.4.3\n");
     
     vga_print("Type 'help'\n");
     serial_print("Type 'help'\n");
@@ -572,10 +637,17 @@ void kmain(BootInfo *info) {
     
     serial_print("serial_init\n");
     serial_init();
+  
+    // Validate boot info early
+    if (!validate_bootinfo(info)) {
+        serial_print("BootInfo validation failed! Halting.\n");
+        vga_print("BootInfo validation failed! Halting.\n");
+        while(1) asm volatile("hlt");
+    }
     
     //serial_print("Serial: Kernel booted\n");
     vga_set_cursor_shape(0x00, 0x0F);
-    vga_print("DonsDOS v0.4.2\n");
+    vga_print("DonsDOS v0.4.3\n");
     vga_print("Initializing...\n");
 
     serial_print("idt_init\n");
@@ -590,7 +662,11 @@ void kmain(BootInfo *info) {
     pmm_init(g_bootinfo);
     
     serial_print("vmm_init\n");
-    vmm_init();
+    //vmm_init();
+    vmm_init(info);  // Pass the BootInfo pointer
+
+    serial_print("process_init\n");
+    process_init();
     
     serial_print("heap_init\n");
     heap_init();
