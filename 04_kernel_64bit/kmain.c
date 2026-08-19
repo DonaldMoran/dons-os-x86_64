@@ -72,6 +72,13 @@ static int validate_bootinfo(BootInfo* info) {
     return 1;
 }
 
+// Test process entry point (runs in user mode)
+void test_process_entry(void) {
+    const char* msg = "Hello from process!\n";
+    sys_write(1, msg, 22);
+    //sys_exit(0);
+}
+
 void dump_iretq_frame_serial(void) {
     uint64_t* rsp;
     uint64_t frame_rsp;
@@ -153,7 +160,7 @@ static void handle_command(const char *cmd) {
         "help", "clear", "version", "reboot", 
         "pmmtest", "info", "mem", "test", 
         "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", 
-        "nxtest", "syscall", "elfload", "proclist" , "proccreate" , "vmmclone"
+        "nxtest", "syscall", "elfload", "proclist" , "proccreate" , "vmmclone", "runproc"
     };
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
     
@@ -181,14 +188,15 @@ static void handle_command(const char *cmd) {
         vga_print("  proclist - List all processes\n");
         vga_print("  proccreate - Create a test process\n");
         vga_print("  vmmclone - Test page table cloning\n");
+        vga_print("  runproc   - Create and run a test process\n");
         vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
-        vga_print("DonsDOS v0.4.3\n");
+        vga_print("DonsDOS v0.4.4\n");
         vga_print("Type 'help'\n");
         vga_print("> ");
     } else if (strcmp(cmd, "version") == 0) {
-        vga_print("\nDonsDOS v0.4.3\n");
+        vga_print("\nDonsDOS v0.4.4\n");
         vga_print("Build: 64-bit kernel with VGA console\n");
         vga_print("Features: VMM with recursive paging, HHDM, NX support, Syscalls, ELF loader\n");
         vga_print("Copyright (c) 2026 Don's OS Project\n");
@@ -567,6 +575,21 @@ static void handle_command(const char *cmd) {
             vga_print("\n");
         }
         vga_print("> ");
+    } else if (strcmp(cmd, "runproc") == 0) {
+        vga_print("\n=== Running Test Process ===\n");
+        
+        pcb_t* proc = process_create("testproc", (uint64_t)test_process_entry, 0);
+        if (proc) {
+            vga_print("Process created: PID ");
+            vga_print_dec_cur(proc->pid);
+            vga_print("\n");
+            vga_print("Starting process...\n");
+            process_start(proc);
+            vga_print("Process finished\n");
+        } else {
+            vga_print("Failed to create process!\n");
+        }
+        vga_print("> ");
     } else {
         vga_print("\nUnknown command: '");
         vga_print(cmd);
@@ -591,8 +614,8 @@ static void handle_command(const char *cmd) {
 }
 
 void kmain_shell_loop(void) {
-    vga_print("DonsDOS v0.4.3\n");
-    serial_print("DonsDOS v0.4.3\n");
+    vga_print("DonsDOS v0.4.4\n");
+    serial_print("DonsDOS v0.4.4\n");
     
     vga_print("Type 'help'\n");
     serial_print("Type 'help'\n");
@@ -647,7 +670,7 @@ void kmain(BootInfo *info) {
     
     //serial_print("Serial: Kernel booted\n");
     vga_set_cursor_shape(0x00, 0x0F);
-    vga_print("DonsDOS v0.4.3\n");
+    vga_print("DonsDOS v0.4.4\n");
     vga_print("Initializing...\n");
 
     serial_print("idt_init\n");

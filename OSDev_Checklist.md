@@ -22,7 +22,7 @@
 
 ---
 
-## 2. Core Kernel Features (17/17 Complete)
+## 2. Core Kernel Features (18/18 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
@@ -31,7 +31,7 @@
 | 8 | **PIT Timer** | ✅ Complete | IRQ0 tick counter, scheduling foundation |
 | 9 | **Keyboard Driver** | ✅ Complete | IRQ1, scancode set 1, shift/caps, input buffer |
 | 10 | **VGA Console Upgrade** | ✅ Complete | Scrolling, cursor control, shell‑ready console |
-| 11 | **Shell** | ✅ Complete | Command interpreter: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, **user**, **user2**, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone** |
+| 11 | **Shell** | ✅ Complete | Command interpreter: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, **user**, **user2**, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc** |
 | 12 | **E820 Memory Map** | ✅ Complete | Memory detection, BootInfo struct passed to kernel |
 | 13 | **Physical Memory Manager** | ✅ Complete | Bitmap allocator, page alloc/free, reserved region marking |
 | 14 | **Virtual Memory Manager** | ✅ Complete | Recursive paging implemented at PML4[510]. VMM can read/write PML4 from higher-half kernel. HHDM mapping at PML4[256]. Dynamic page table allocation (PDPT, PD, PT) working. No GP faults when accessing page tables. `vmmtest` command verifies functionality. User-space page mapping with PT_USER flag working. **NX (No Execute) bit support via PT_NX flag.** **Dynamic HHDM mapping via `ensure_hhdm_mapped()`.** **Page table cloning via `vmm_clone_page_table()`.** |
@@ -41,8 +41,9 @@
 | 18 | **NX (No Execute) Bit Support** | ✅ Complete | PT_NX flag added to vmm.h (bit 63). NX flag handling in `vmm_map_page()` on final PTE. `nxtest` command for verifying NX functionality. NX status displayed in `vmmtest` output. **8KB .bss padding** to prevent keyboard buffer corruption. **`keyboard_init()` moved after memory management initialization.** |
 | 19 | **System Calls** | ✅ Complete | SYSCALL/SYSRET instruction interface via MSRs (IA32_STAR, IA32_LSTAR, IA32_FMASK). SYS_WRITE (syscall #1) and SYS_EXIT (syscall #2) implemented. Syscall dispatcher with proper x86_64 ABI. `syscall` test command for verification. Proper register preservation across syscalls. **Safe user‑space memory access via `safe_copy_from_user()` using HHDM.** |
 | 20 | **ELF Loader** | ✅ Complete ⭐ FINALIZED | Parses ELF64 headers and program headers. Maps LOAD segments with correct permissions (Read, Write, Execute, User). Allocates and maps user stack pages. Transitions to user mode via IRETQ with proper selectors (CS=0x33, SS=0x2B). Sets IOPL=3 for user I/O access. Page table execute permissions at all levels (PML4 → PDPT → PD → PT). **`elfload` command** to load and run embedded ELF programs. **Works reliably on first boot** (handles bootloader identity‑mapping conflict). **Safe HHDM‑based copying** of program segments and stack. Tested with "Hello from Userland!" via serial. |
-| 21 | **Process Foundation** | ✅ Complete ⭐ NEW | Process Control Block (PCB) structure. Process creation (`process_create`). Process listing (`proclist`). Page table cloning (`vmm_clone_page_table`). **`vmmclone` command** for testing page table isolation. Ready queue infrastructure (foundation for scheduler). |
-| 22 | **BootInfo Fix** | ✅ Complete ⭐ NEW | Fixed BootInfo structure alignment between bootloader and kernel. Added magic number and version validation. Proper memory map detection from BIOS E820. |
+| 21 | **Process Foundation** | ✅ Complete | Process Control Block (PCB) structure. Process creation (`process_create`). Process listing (`proclist`). Page table cloning (`vmm_clone_page_table`). **`vmmclone` command** for testing page table isolation. Ready queue infrastructure (foundation for scheduler). |
+| 22 | **BootInfo Fix** | ✅ Complete | Fixed BootInfo structure alignment between bootloader and kernel. Added magic number and version validation. Proper memory map detection from BIOS E820. |
+| 23 | **Process Stack Setup** | ✅ Complete ⭐ NEW | Static kernel stack pool for processes. Process creation with dedicated user and kernel stacks. Process execution via direct function call (kernel mode). Process cleanup with `process_destroy()` (frees user stack, marks PCB unused). **`runproc` command** to create and execute a test process. Shell returns properly after process execution. |
 
 ---
 
@@ -50,24 +51,27 @@
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 23 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
-| 24 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510], HHDM mapping at PML4[256], dynamic page table allocation, `vmmtest` working, **NX bit support**, **dynamic HHDM mapping**, **page table cloning** |
-| 25 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging, integrated with QEMU |
-| 26 | **Kernel Heap** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. Memory reuse verified via `heaptest`. **WRITE bit fix for heap pages.** |
-| 27 | **User Memory Mapping** | ✅ Complete | Pages mapped with PT_USER flag for user/kernel isolation |
-| 28 | **NX (No Execute) Bit** | ✅ Complete | PT_NX flag in VMM, `nxtest` command, NX status in `vmmtest`, **8KB .bss padding**, **keyboard_init() moved after memory management** |
-| 29 | **HHDM Dynamic Mapping** | ✅ Complete | `ensure_hhdm_mapped()` for on‑demand physical memory access. All physical memory mapped into HHDM region. Used by ELF loader and page table cloning. |
+| 24 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
+| 25 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510], HHDM mapping at PML4[256], dynamic page table allocation, `vmmtest` working, **NX bit support**, **dynamic HHDM mapping**, **page table cloning** |
+| 26 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging, integrated with QEMU |
+| 27 | **Kernel Heap** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. Memory reuse verified via `heaptest`. **WRITE bit fix for heap pages.** |
+| 28 | **User Memory Mapping** | ✅ Complete | Pages mapped with PT_USER flag for user/kernel isolation |
+| 29 | **NX (No Execute) Bit** | ✅ Complete | PT_NX flag in VMM, `nxtest` command, NX status in `vmmtest`, **8KB .bss padding**, **keyboard_init() moved after memory management** |
+| 30 | **HHDM Dynamic Mapping** | ✅ Complete | `ensure_hhdm_mapped()` for on‑demand physical memory access. All physical memory mapped into HHDM region. Used by ELF loader and page table cloning. |
 
 ---
 
-## 4. User Space & Advanced Features (3/6 Complete)
+## 4. User Space & Advanced Features (4/7 Complete)
 
-| 30 | **System Calls** | ✅ Complete | SYSCALL/SYSRET with SYS_WRITE and SYS_EXIT, MSR configuration, `syscall` test command, **safe user‑space memory access** |
-| 31 | **ELF Loader** | ✅ Complete ⭐ FINALIZED | Parse and load ELF64 files, map user code and stack, transition to user mode, `elfload` command, "Hello from Userland!" tested, **works on first boot** |
-| 32 | **Process Foundation** | ✅ Complete ⭐ NEW | PCB, process creation, process listing, page table cloning, `vmmclone` command |
-| 33 | **Process Model** | ☐ Not Started | Page table per process, context switching |
-| 34 | **Scheduler** | ☐ Not Started | Cooperative → preemptive, PIT‑driven task switching |
-| 35 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
+| # | Milestone | Status | Notes |
+|---|-----------|--------|-------|
+| 31 | **System Calls** | ✅ Complete | SYSCALL/SYSRET with SYS_WRITE and SYS_EXIT, MSR configuration, `syscall` test command, **safe user‑space memory access** |
+| 32 | **ELF Loader** | ✅ Complete ⭐ FINALIZED | Parse and load ELF64 files, map user code and stack, transition to user mode, `elfload` command, "Hello from Userland!" tested, **works on first boot** |
+| 33 | **Process Foundation** | ✅ Complete | PCB, process creation, process listing, page table cloning, `vmmclone` command |
+| 34 | **Process Stack Setup** | ✅ Complete ⭐ NEW | Static kernel stack pool, user/kernel stack allocation, process execution, `runproc` command, process cleanup |
+| 35 | **Process Model** | ☐ Not Started | Page table per process, context switching |
+| 36 | **Scheduler** | ☐ Not Started | Cooperative → preemptive, PIT‑driven task switching |
+| 37 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
 
 ---
 
@@ -76,16 +80,25 @@
 | Phase | Completed | Total | Progress |
 |-------|-----------|-------|----------|
 | Boot & System Init | 5 | 5 | **100%** ✅ |
-| Core Kernel | 17 | 17 | **100%** ✅ |
+| Core Kernel | 18 | 18 | **100%** ✅ |
 | Memory Management | 7 | 7 | **100%** ✅ |
-| User Space | 3 | 6 | **50%** 🚧 |
-| **Overall** | **32** | **35** | **91%** |
+| User Space | 4 | 7 | **57%** 🚧 |
+| **Overall** | **34** | **37** | **92%** |
 
 ---
 
 ## Recent Milestone Achievements (Chronological Order - Newest First)
 
-### v0.4.3 — ELF Loader Stabilized + Process Foundation ⭐ NEW
+### v0.4.4 — Process Stack Setup ⭐ NEW
+- Static kernel stack pool for processes (eliminates PMM corruption)
+- Process creation with dedicated user and kernel stacks
+- Process execution via direct function call (kernel mode)
+- Process cleanup with `process_destroy()` (frees user stack, marks PCB unused)
+- **`runproc` command** to create and execute a test process
+- Shell returns properly after process execution
+- All previous features (`proclist`, `proccreate`, `vmmclone`, `elfload`) remain fully functional
+
+### v0.4.3 — ELF Loader Stabilized + Process Foundation
 - ELF loader works on **first boot** (no more "run twice" bug)
 - Bootloader identity‑mapping conflict resolved (detect and replace with proper user‑mode PTEs)
 - `PT_EXEC` (PWT bit) handling added to `vmm_map_page()`
@@ -96,14 +109,10 @@
 - Removed redundant `simple` command
 - All existing commands remain fully functional
 
-### v0.4.2 — BootInfo & Process Foundation ⭐ NEW
-- Fixed BootInfo structure alignment between bootloader and kernel
-- Added magic number and version validation
-- Proper memory map detection from BIOS E820
-- Dynamic HHDM mapping (`ensure_hhdm_mapped`)
-- Page table cloning (`vmm_clone_page_table`)
-- Process Control Block (PCB) infrastructure
-- `proclist`, `proccreate`, `vmmclone` commands
+### v0.4.2 — STAR MSR Fix
+- Fixed IA32_STAR MSR configuration for SYSCALL/SYSRET
+- User CS = 0x30 → STAR[15:0] = 0x20
+- Enabled clean SYSRET return path
 
 ### v0.4.1 — Syscall Stack Stability
 - Unified kernel stack model  
@@ -119,7 +128,7 @@
 - User stack allocation  
 - IRETQ transition  
 - `elfload` command  
-- “Hello from Userland!” verified  
+- "Hello from Userland!" verified  
 - Page table execute permissions at all levels  
 - Serial output verified  
 

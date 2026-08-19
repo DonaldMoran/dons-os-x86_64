@@ -351,11 +351,6 @@ void vmm_dump_page_table(uint64_t virt) {
     serial_print("=== END DUMP ===\n\n");
 }
 
-// Helper: Get PML4 from a CR3 value using HHDM
-static uint64_t* get_pml4_from_cr3(uint64_t cr3) {
-    return (uint64_t*)(HHDM_START + cr3);
-}
-
 uint64_t vmm_clone_page_table(uint64_t src_cr3) {
     if (src_cr3 == 0) {
         serial_print("VMM: Cannot clone NULL page table!\n");
@@ -436,4 +431,20 @@ uint64_t vmm_get_phys_from_cr3(uint64_t cr3, uint64_t virt) {
     
     if (!(pt[pt_idx] & 0x01)) return 0;
     return (pt[pt_idx] & ~0xFFF) | (virt & 0xFFF);
+}
+
+// Map a page in a specific CR3 (page table)
+void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags) {
+    // Save current CR3
+    uint64_t old_cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(old_cr3));
+    
+    // Switch to the target CR3
+    asm volatile("mov %0, %%cr3" : : "r"(cr3));
+    
+    // Map the page
+    vmm_map_page(virt, phys, flags);
+    
+    // Switch back
+    asm volatile("mov %0, %%cr3" : : "r"(old_cr3));
 }

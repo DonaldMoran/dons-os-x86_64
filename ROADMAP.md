@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -148,13 +148,22 @@ Boot chain is complete and stable.
 - **Safe HHDM‑based copying** of program segments and stack
 - Tested with "Hello from Userland!" via serial
 
-### ✔ 3.9 — Process Foundation ⭐ NEW
+### ✔ 3.9 — Process Foundation ⭐ COMPLETE
 - Process Control Block (PCB) structure
 - Process creation (`process_create`)
 - Process listing (`proclist`)
 - Page table cloning (`vmm_clone_page_table`)
 - **`vmmclone` command** for testing page table isolation
 - Ready queue infrastructure (foundation for scheduler)
+
+### ✔ 3.10 — Process Stack Setup ⭐ NEW
+- Static kernel stack pool for processes
+- Process creation with dedicated user and kernel stacks
+- Process execution via direct function call (kernel mode)
+- Process cleanup with `process_destroy()` (frees user stack, marks PCB unused)
+- **`runproc` command** to create and execute a test process
+- Shell returns properly after process execution
+- All previous features remain fully functional
 
 ---
 
@@ -169,14 +178,9 @@ Boot chain is complete and stable.
 - STAR MSR requires careful selector calculation (`User CS - 16`)
 - SYSRET uses STAR[15:0] + 16 for CS and STAR[15:0] + 8 for SS
 
-**Key learnings:**
-- Bootloader and kernel must agree on BootInfo layout
-- HHDM must map pages dynamically, not just at boot
-- Recursive paging is essential for page table manipulation
-
 ---
 
-### ⭐ v0.4.3 — ELF Loader Stabilized + Process Foundation (August 2026)
+## ⭐ v0.4.3 — ELF Loader Stabilized + Process Foundation (August 2026)
 
 **What was accomplished:**
 - ELF loader now works on **first boot** (no more "run twice" bug)
@@ -189,24 +193,29 @@ Boot chain is complete and stable.
 - Removed redundant `simple` command
 - All existing commands remain fully functional
 
----
-
-## ⭐ v0.4.3 — ELF Loader Stabilized (August 2026)
-
-**What was accomplished:**
-- ELF loader now works on **first boot** (no more "run twice" bug)
-- Bootloader identity‑mapping conflict resolved (detect and replace with proper user‑mode PTEs)
-- `PT_EXEC` (PWT bit) handling added to `vmm_map_page()`
-- STAR MSR corrected for SYSCALL/SYSRET (User CS = 0x30 → STAR[15:0] = 0x20)
-- Safe HHDM‑based user‑space memory access in syscall handler (`safe_copy_from_user`)
-- Removed redundant `simple` command
-- All existing commands (`proclist`, `proccreate`, `vmmclone`, `syscall`, `heapstat`) remain fully functional
-
 **Key learnings:**
 - Bootloader identity mappings must be replaced, not trusted
 - `vmm_get_phys()` is more reliable than `vmm_is_mapped()` for detecting valid mappings
 - HHDM is essential for safe kernel‑to‑user memory operations
 - STAR MSR requires careful selector calculation (`User CS - 16`)
+
+---
+
+## ⭐ v0.4.4 — Process Stack Setup (August 2026)
+
+**What was accomplished:**
+- Added static kernel stack pool for processes (eliminates PMM corruption)
+- Process creation with dedicated user and kernel stacks
+- Process execution via direct function call (kernel mode)
+- Process cleanup with `process_destroy()` (frees user stack, marks PCB unused)
+- **`runproc` command** to create and execute a test process
+- Shell returns properly after process execution
+- All previous features (`proclist`, `proccreate`, `vmmclone`, `elfload`) remain fully functional
+
+**Key learnings:**
+- Static kernel stacks avoid dynamic allocation and PMM corruption
+- Direct function call is simpler for testing than `iretq` user-mode transitions
+- Process cleanup is essential to prevent memory leaks
 
 ---
 
@@ -274,8 +283,9 @@ Boot chain is complete and stable.
 | **Syscall Stack Stability** | **✔ Complete ⭐ v0.4.3** |
 | **HHDM Dynamic Mapping** | **✔ Complete ⭐ v0.4.3** |
 | **BootInfo Validation** | **✔ Complete ⭐ v0.4.3** |
-| Cooperative Scheduler | ☐ Planned (Next) |
-| Preemptive Scheduler | ☐ Planned |
+| **Process Stack Setup** | **✔ Complete ⭐ v0.4.4** |
+| **Process Execution** | **✔ Complete ⭐ v0.4.4** |
+| **Process Cleanup** | **✔ Complete ⭐ v0.4.4** |
 | Cooperative Scheduler | ☐ Planned (Next) |
 | Preemptive Scheduler | ☐ Planned |
 | Framebuffer Graphics | ☐ Planned |

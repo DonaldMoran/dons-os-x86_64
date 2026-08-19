@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "include/vga.h"
+#include "serial.h"
 
 #define VGA_WIDTH  80
 #define VGA_HEIGHT 25
@@ -172,20 +173,81 @@ void vga_print_at(int row, int col, const char *s) {
 }
 
 void vga_print_hex_cur(uint64_t val) {
-    char buf[17];
     const char *hex = "0123456789ABCDEF";
-
-    __asm__ volatile("cli");
+    char buf[17];
+    buf[16] = '\0';
+    
+    // Build the string from right to left
     for (int i = 0; i < 16; i++) {
         buf[15 - i] = hex[(val >> (i * 4)) & 0xF];
     }
-    buf[16] = 0;
-
+    
+    // Write directly to VGA memory
+    volatile uint16_t *vga = (volatile uint16_t *)0xB8000;
+    int pos = cursor_row * 80 + cursor_col;
+    uint16_t attr = (uint16_t)cursor_attr << 8;
+    
     for (int i = 0; i < 16; i++) {
-        vga_putc(buf[i]);
+        if (pos + i < 80 * 25) {
+            vga[pos + i] = attr | (uint8_t)buf[i];
+        }
     }
-    __asm__ volatile("sti");
+    cursor_col += 16;
+    if (cursor_col >= 80) {
+        cursor_col = 0;
+        cursor_row++;
+        if (cursor_row >= 25) {
+            // Need to scroll
+            vga_scroll();
+            cursor_row = 24;
+        }
+    }
+    vga_update_hardware_cursor();
 }
+
+//~ void vga_print_hex_cur(uint64_t val) {
+    //~ const char *hex = "0123456789ABCDEF";
+    //~ char buf[17];
+    //~ buf[16] = 0;
+    
+    //~ // Debug: print to serial first
+    //~ serial_print("DEBUG vga_print_hex_cur: val=0x");
+    //~ serial_print_hex(val);
+    //~ serial_print("\n");
+    
+    //~ // Build the string
+    //~ for (int i = 0; i < 16; i++) {
+        //~ buf[15 - i] = hex[(val >> (i * 4)) & 0xF];
+    //~ }
+    
+    //~ // Debug: print the buffer to serial
+    //~ serial_print("DEBUG buffer: ");
+    //~ for (int i = 0; i < 16; i++) {
+        //~ serial_putc(buf[i]);
+    //~ }
+    //~ serial_print("\n");
+    
+    //~ // Print to VGA
+    //~ for (int i = 0; i < 16; i++) {
+        //~ vga_putc(buf[i]);
+    //~ }
+//~ }
+
+//~ void vga_print_hex_cur(uint64_t val) {
+    //~ char buf[17];
+    //~ const char *hex = "0123456789ABCDEF";
+
+    //~ __asm__ volatile("cli");
+    //~ for (int i = 0; i < 16; i++) {
+        //~ buf[15 - i] = hex[(val >> (i * 4)) & 0xF];
+    //~ }
+    //~ buf[16] = 0;
+
+    //~ for (int i = 0; i < 16; i++) {
+        //~ vga_putc(buf[i]);
+    //~ }
+    //~ __asm__ volatile("sti");
+//~ }
 
 void vga_print_dec_cur(uint64_t val) {
     char buf[32];

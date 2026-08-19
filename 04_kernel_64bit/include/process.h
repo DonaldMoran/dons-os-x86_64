@@ -6,7 +6,10 @@
 
 #define MAX_PROCESSES 32
 #define PROC_NAME_LEN 32
-#define PROC_STACK_SIZE 4096
+#define PROC_STACK_SIZE  8192   // 8KB
+
+// Kernel stack region for processes
+#define PROC_KERNEL_STACK_BASE  0xFFFF900000100000ULL
 
 // Process states
 typedef enum {
@@ -26,12 +29,16 @@ typedef struct pcb {
     // Page table
     uint64_t cr3;
     
-    // Stacks
-    uint64_t kernel_stack;     // Virtual address of kernel stack
-    uint64_t user_stack;       // Virtual address of user stack
-    
     // Entry point
     uint64_t entry_point;
+    
+    // Stack fields
+    uint64_t kernel_stack_phys;
+    uint64_t kernel_stack_virt;
+    uint64_t kernel_stack_top;
+    uint64_t user_stack_phys;
+    uint64_t user_stack_virt;
+    uint64_t user_stack_top;
     
     // For round-robin scheduling
     struct pcb* next;
@@ -50,8 +57,8 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags);
 pcb_t* process_get_current(void);
 pcb_t* process_find_by_pid(uint64_t pid);
 void process_dump_all(void);
-
-// Debug function for Phase 2
 void process_test_clone(void);
+void process_start(pcb_t* process);
+void process_destroy(pcb_t* process);
 
 #endif

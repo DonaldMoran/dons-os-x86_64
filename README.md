@@ -16,7 +16,7 @@ Each stage is isolated, minimal, and fully bootable.
 - **03_boot_64bit** — PAE paging, PML4/PDPT/PD/PT, IA32_EFER.LME, long‑mode entry  
 
 ### Kernel Development 
-- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**, **system calls**, **ELF loader**, **process system foundation**
+- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**, **system calls**, **ELF loader**, **process system foundation**, **process execution**
 - **05_boot_kernel64** — Full boot chain: stage2 loads kernel, enters long mode, jumps to `_start`
 
 The top‑level Makefile builds and runs all components.
@@ -110,9 +110,11 @@ Once booted, you'll see a prompt > where you can type commands:
 | `proclist` | List all processes (idle + created) |
 | `proccreate` | Create a test process (PCB infrastructure) |
 | `vmmclone` | Clone the current page table (test process isolation) |
+| `runproc` | Create and execute a test process |
 
-```
-DonsDOS v0.4.3
+---
+
+DonsDOS v0.4.4
 Type 'help'
 > help
 
@@ -137,7 +139,7 @@ Available commands:
   proclist   - List all processes (idle + created)
   proccreate - Create a test process (PCB infrastructure)
   vmmclone   - Clone the current page table (test process isolation)
-```
+  runproc    - Create and execute a test process
 
 ---
 
@@ -247,7 +249,7 @@ This project is designed to be:
 - `v0.4.0-elf-loader` — Fully functional ELF64 loader. Parses and maps ELF segments with correct user permissions, builds a user stack, transitions cleanly into Ring 3, executes embedded user programs (e.g., “Hello from Userland!”), and returns safely back to the Ring 0 shell via the syscall exit path. `elfload` command added.
 - `v0.4.1-syscall-stack-stable` — Stabilized SYSRET return path, corrected RCX/R11 handling, removed `simple`, and verified clean returns from ELF Ring 3 programs to the Ring 0 shell.
 - `v0.4.2-star-msr-fix` — **Fixed IA32_STAR MSR configuration** for SYSCALL/SYSRET. User CS = 0x30 → STAR[15:0] = 0x20. Enabled clean SYSRET return path.
-- **`v0.4.3-elfloader-fixed`** — **ELF loader fully stabilized on first boot + Process Foundation.**  
+- `v0.4.3-elfloader-fixed` — **ELF loader fully stabilized on first boot + Process Foundation.**  
   - Fixed bootloader identity‑mapping conflict (now detects and replaces bootloader mappings with proper user‑mode PTEs).  
   - Added safe HHDM‑based user‑space memory access in syscall handler (`safe_copy_from_user`).  
   - Corrected STAR MSR for SYSCALL/SYSRET (User CS = 0x30 → STAR[15:0] = 0x20).  
@@ -257,6 +259,14 @@ This project is designed to be:
   - **Dynamic HHDM mapping:** `ensure_hhdm_mapped()` for on‑demand physical memory access.  
   - **BootInfo validation:** Magic number and version checking.  
   - All existing commands remain fully functional.
+- **`v0.4.4-process-stacks`** — **Process Stack Setup complete.**  
+  - Added static kernel stack pool for processes.  
+  - Process creation with dedicated user and kernel stacks.  
+  - Process execution via direct function call (kernel mode).  
+  - Process cleanup with `process_destroy()` (frees user stack, marks PCB unused).  
+  - **`runproc` command** to create and execute a test process.  
+  - Shell returns properly after process execution.  
+  - All previous features (`proclist`, `proccreate`, `vmmclone`, `elfload`) remain fully functional.
 
 ---
 
@@ -288,7 +298,7 @@ This project is designed to be:
 
 **Shell / Console**
 - ✅ Interactive prompt (`>`)
-- ✅ Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, **syscall**, **elfload**, **proclist**, **proccreate**, **vmmclone**
+- ✅ - ✅ Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, **syscall**, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**
 - ✅ Clean command parsing and line editing
 - ✅ Unknown command handling with suggestions
 - ✅ Serial console output (COM1) for debugging alongside VGA
@@ -325,7 +335,7 @@ This project is designed to be:
 - ✅ **Proper register preservation** across syscalls
 - ✅ **Safe user‑space memory access** via `safe_copy_from_user()` using HHDM
 
-**User Mode & Process Foundation**
+**User Mode & Process System** ⭐ UPDATED ⭐
 - ✅ GDT with user code (0x30) and user data (0x28) segments (DPL=3)
 - ✅ TSS configured for stack switching on interrupts from user mode
 - ✅ `iretq`-based transition from kernel to user mode
@@ -334,6 +344,8 @@ This project is designed to be:
 - ✅ **Process Control Block (PCB)** infrastructure
 - ✅ **Page table cloning** (`vmmclone`) for process isolation
 - ✅ **Process creation** (`proccreate`) and **listing** (`proclist`)
+- ✅ **Process execution** (`runproc`) with dedicated stacks
+- ✅ **Process cleanup** (`process_destroy`) with resource freeing
 - ✅ Safe user‑space memory access via HHDM
 
 **ELF Loader** ⭐ FINALIZED ⭐
@@ -346,6 +358,19 @@ This project is designed to be:
 - ✅ **`elfload` command** to load and run embedded ELF programs
 - ✅ **Tested with "Hello from Userland!" output via serial**
 - ✅ **Works reliably on first boot** (bootloader identity‑mapping handled)
+
+---
+
+### Process System
+
+The process system provides a foundation for multitasking:
+
+- ✅ **Process Control Block (PCB)** with PID, state, and stack tracking
+- ✅ **Process creation** with dedicated user and kernel stacks
+- ✅ **Static kernel stack pool** for process execution
+- ✅ **Process cleanup** with resource deallocation
+- ✅ **`runproc` command** to create and execute test processes
+- ✅ **Process listing** via `proclist`
 
 **Build System**
 - Organized source tree with Makefile
