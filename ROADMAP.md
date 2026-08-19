@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield**
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -165,6 +165,16 @@ Boot chain is complete and stable.
 - Shell returns properly after process execution
 - All previous features remain fully functional
 
+### ✔ 3.11 — Cooperative Scheduler ⭐ NEW
+- Ready queue with round‑robin scheduling
+- `process_yield()` for voluntary context switching
+- `process_exit()` for clean process termination
+- Assembly‑level context switching (`context_switch.asm`)
+- **`testyield` command** for testing cooperative scheduling
+- **`schstat` command** for scheduler statistics
+- `runproc` now uses the scheduler
+- All previous features remain fully functional
+
 ---
 
 ## ⭐ v0.4.2 — STAR MSR Fix (August 2026)
@@ -216,6 +226,24 @@ Boot chain is complete and stable.
 - Static kernel stacks avoid dynamic allocation and PMM corruption
 - Direct function call is simpler for testing than `iretq` user-mode transitions
 - Process cleanup is essential to prevent memory leaks
+
+## ⭐ v0.4.5 — Cooperative Scheduler (August 2026)
+
+**What was accomplished:**
+- Ready queue with round‑robin scheduling
+- `process_yield()` for voluntary context switching
+- `process_exit()` for clean process termination
+- Assembly‑level context switching (`context_switch.asm`)
+- **`testyield` command** to test cooperative scheduling
+- **`schstat` command** to show scheduler statistics
+- `runproc` now uses the scheduler
+- All previous features (`proclist`, `proccreate`, `vmmclone`, `elfload`) remain fully functional
+
+**Key learnings:**
+- Context switching requires saving/restoring all registers
+- The idle process needs special handling (no entry point)
+- Processes must explicitly call `process_exit()` to terminate cleanly
+- Round‑robin scheduling requires moving processes to the end of the ready queue
 
 ---
 
@@ -286,8 +314,10 @@ Boot chain is complete and stable.
 | **Process Stack Setup** | **✔ Complete ⭐ v0.4.4** |
 | **Process Execution** | **✔ Complete ⭐ v0.4.4** |
 | **Process Cleanup** | **✔ Complete ⭐ v0.4.4** |
-| Cooperative Scheduler | ☐ Planned (Next) |
-| Preemptive Scheduler | ☐ Planned |
+| **Cooperative Scheduler** | **✔ Complete ⭐ v0.4.5** |
+| **Context Switching** | **✔ Complete ⭐ v0.4.5** |
+| **Process Yield/Exit** | **✔ Complete ⭐ v0.4.5** |
+| Preemptive Scheduler | ☐ Planned (Next) |
 | Framebuffer Graphics | ☐ Planned |
 | File System | ☐ Planned |
 

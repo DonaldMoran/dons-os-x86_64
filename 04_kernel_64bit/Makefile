@@ -17,7 +17,7 @@ all: kernel.bin
 OBJS = entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o \
 	idt_load.o isr.o vga.o keyboard.o serial.o tss.o gdt.o ring3.o \
 	syscall.o elf.o test_program_data.o \
-	user_syscall.o user_syscall_entry.o process.o string.o
+	user_syscall.o user_syscall_entry.o process.o string.o scheduler.o context_switch.o
 
 kernel.elf: $(OBJS)
 	$(LD) $(LDFLAGS) -T linker.ld -o kernel.elf $(OBJS)
@@ -34,6 +34,9 @@ test_program_data.c: test_program
 
 test_program: test_program.o user_linker.ld
 	$(LD) -T user_linker.ld -o test_program test_program.o
+
+context_switch.o: context_switch.asm
+	$(AS) -f elf64 context_switch.asm -o context_switch.o
 
 test_program.o: test_program.asm
 	$(AS) -f elf64 test_program.asm -o test_program.o
@@ -65,6 +68,9 @@ vga.o: vga.c
 
 syscall.o: syscall.c
 	$(CC) $(CFLAGS) -Iinclude -I. -c syscall.c -o syscall.o
+
+scheduler.o: scheduler.c
+	$(CC) $(CFLAGS) -Iinclude -c scheduler.c -o scheduler.o
 
 string.o: string.c
 	$(CC) $(CFLAGS) -Iinclude -c string.c -o string.o

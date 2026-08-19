@@ -16,7 +16,7 @@ Each stage is isolated, minimal, and fully bootable.
 - **03_boot_64bit** — PAE paging, PML4/PDPT/PD/PT, IA32_EFER.LME, long‑mode entry  
 
 ### Kernel Development 
-- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**, **system calls**, **ELF loader**, **process system foundation**, **process execution**
+- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**, **system calls**, **ELF loader**, **process system foundation**, **process execution**, **cooperative scheduler**
 - **05_boot_kernel64** — Full boot chain: stage2 loads kernel, enters long mode, jumps to `_start`
 
 The top‑level Makefile builds and runs all components.
@@ -25,30 +25,30 @@ The top‑level Makefile builds and runs all components.
 
 ## 🚀 Building & Running
 
-#### Build everything
+**Build everything**
 ```bash
 make all
 ```
 
-#### Run individual boot demos
+**Run individual boot demos**
 ```bash
 make run16
 make run32
 make run64
 ```
 
-#### Build the 64‑bit kernel
+**Build the 64‑bit kernel**
 ```bash
 make kernel64
 ```
 
-#### Build + run the full long‑mode OS
+**Build + run the full long‑mode OS**
 ```bash
 make bootkernel64
 make runkernel64
 ```
 
-#### Run with QEMU debug logging
+**Run with QEMU debug logging**
 ```bash
 make logkernel64
 ```
@@ -111,10 +111,12 @@ Once booted, you'll see a prompt > where you can type commands:
 | `proccreate` | Create a test process (PCB infrastructure) |
 | `vmmclone` | Clone the current page table (test process isolation) |
 | `runproc` | Create and execute a test process |
+| `schstat` | Show scheduler statistics |
+| `testyield` | Test cooperative scheduling with yield |
 
 ---
-
-DonsDOS v0.4.4
+```text
+DonsDOS v0.4.5
 Type 'help'
 > help
 
@@ -140,6 +142,9 @@ Available commands:
   proccreate - Create a test process (PCB infrastructure)
   vmmclone   - Clone the current page table (test process isolation)
   runproc    - Create and execute a test process
+  schstat    - Show scheduler statistics
+  testyield  - Test cooperative scheduling with yield
+```
 
 ---
 
@@ -191,27 +196,27 @@ This debug mode was instrumental in getting the 64‑bit kernel working.
 
 ### Additional run modes
 
-#### Run with serial output to terminal (default)
+***Run with serial output to terminal (default)***
 ```bash
 make runkernel64
 ```
-#### with serial output saved to file
+***With serial output saved to file***
 ```bash
 make runkernel64-log
 ```
-#### Run with GDB debug server
+***Run with GDB debug server***
 ```bash
 make runkernel64-debug
 ```
-#### Run with verbose debug logging
+***Run with verbose debug logging***
 ```bash
 make runkernel64-verbose
 ```
-#### Run headless (no VGA window)
+***Run headless (no VGA window)***
 ```bash
 make runkernel64-headless
 ```
-#### Run with KVM acceleration (faster)
+***Run with KVM acceleration (faster)***
 ```bash
 make runkernel64-kvm
 ```
@@ -259,13 +264,22 @@ This project is designed to be:
   - **Dynamic HHDM mapping:** `ensure_hhdm_mapped()` for on‑demand physical memory access.  
   - **BootInfo validation:** Magic number and version checking.  
   - All existing commands remain fully functional.
-- **`v0.4.4-process-stacks`** — **Process Stack Setup complete.**  
+- `v0.4.4-process-stacks` — **Process Stack Setup complete.**  
   - Added static kernel stack pool for processes.  
   - Process creation with dedicated user and kernel stacks.  
   - Process execution via direct function call (kernel mode).  
   - Process cleanup with `process_destroy()` (frees user stack, marks PCB unused).  
   - **`runproc` command** to create and execute a test process.  
   - Shell returns properly after process execution.  
+  - All previous features (`proclist`, `proccreate`, `vmmclone`, `elfload`) remain fully functional.
+- **`v0.4.5-cooperative-scheduler`** — **Cooperative Scheduler complete.**  
+  - Ready queue with round‑robin scheduling.  
+  - `process_yield()` for voluntary context switching.  
+  - `process_exit()` for clean process termination.  
+  - Assembly‑level context switching (`context_switch.asm`).  
+  - **`testyield` command** to test cooperative scheduling.  
+  - **`schstat` command** to show scheduler statistics.  
+  - `runproc` now uses the scheduler.  
   - All previous features (`proclist`, `proccreate`, `vmmclone`, `elfload`) remain fully functional.
 
 ---
@@ -298,7 +312,7 @@ This project is designed to be:
 
 **Shell / Console**
 - ✅ Interactive prompt (`>`)
-- ✅ - ✅ Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, **syscall**, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**
+- ✅ Commands: help, clear, version, info, mem, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, **syscall**, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield**
 - ✅ Clean command parsing and line editing
 - ✅ Unknown command handling with suggestions
 - ✅ Serial console output (COM1) for debugging alongside VGA
@@ -371,6 +385,14 @@ The process system provides a foundation for multitasking:
 - ✅ **Process cleanup** with resource deallocation
 - ✅ **`runproc` command** to create and execute test processes
 - ✅ **Process listing** via `proclist`
+
+### Scheduler
+- ✅ **Cooperative scheduler** with ready queue and round‑robin scheduling
+- ✅ **`process_yield()`** for voluntary context switching
+- ✅ **`process_exit()`** for clean process termination
+- ✅ **Assembly‑level context switching** (`context_switch.asm`)
+- ✅ **`testyield` command** for testing cooperative scheduling
+- ✅ **`schstat` command** for scheduler statistics
 
 **Build System**
 - Organized source tree with Makefile

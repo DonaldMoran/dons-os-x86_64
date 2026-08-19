@@ -40,6 +40,12 @@ typedef struct pcb {
     uint64_t user_stack_virt;
     uint64_t user_stack_top;
     
+    // ===== Context switching registers (for scheduler) =====
+    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
+    uint64_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
+    uint64_t rsp, rip;
+    // =======================================================
+    
     // For round-robin scheduling
     struct pcb* next;
     struct pcb* prev;
