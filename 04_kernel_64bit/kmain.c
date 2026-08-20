@@ -77,8 +77,6 @@ static int validate_bootinfo(BootInfo* info) {
 void test_process_entry(void) {
     const char* msg = "Hello from process!\n";
     sys_write(1, msg, 22);
-    // sys_exit(0);  // Keep this commented out
-    // Instead, tell the scheduler we're done
     process_exit();
 }
 
@@ -185,7 +183,7 @@ static void handle_command(const char *cmd) {
         "pmmtest", "info", "mem", "test", 
         "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", 
         "nxtest", "syscall", "elfload", "proclist" , "proccreate" , "vmmclone", 
-        "runproc", "schstat", "testyield"
+        "runproc", "schstat", "testyield", "user", "user2"
     };
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
     
@@ -205,7 +203,7 @@ static void handle_command(const char *cmd) {
         vga_print("  maptest  - Test page mapping\n");
         vga_print("  testrec  - Test recursive mapping address\n");
         vga_print("  heaptest - Test heap free list\n");
-        vga_print("  user     - Test user mode (Ring 3)\n");
+        vga_print("  user     - Test user mode (Ring 3) - loads ELF\n");
         vga_print("  user2    - Test user mode (Ring 3) - second test\n");
         vga_print("  nxtest   - Test NX (No Execute) bit\n");
         vga_print("  syscall  - Test ring(0) calls\n");
@@ -508,16 +506,6 @@ static void handle_command(const char *cmd) {
         if (p3) kfree(p3);
         heap_stats();
         serial_print("=== HEAPTEST END ===\n");
-    } else if (strcmp(cmd, "user") == 0) {
-        vga_print("\n=== User Mode Test ===\n");
-        vga_print("Creating user process...\n");
-        create_user_process(user_test, NULL);
-        vga_print("> ");
-    } else if (strcmp(cmd, "user2") == 0) {
-        vga_print("\n=== User Mode Test 2 ===\n");
-        vga_print("Creating user process...\n");
-        create_user_process(user_test2, NULL);
-        vga_print("> ");
     } else if (strcmp(cmd, "nxtest") == 0) {
         vga_print("\n=== NX Test ===\n");
         vga_print("NX bit support is enabled in the VMM.\n");
@@ -624,6 +612,24 @@ static void handle_command(const char *cmd) {
             vga_print("Failed to create processes\n");
         }
         vga_print("> ");
+    } else if (strcmp(cmd, "user") == 0) {
+        vga_print("\n=== Loading User Process ===\n");
+        vga_print("Loading user program...\n");
+        vga_print("---\n");
+        
+        extern unsigned char test_preempt1[];
+        elf_load(test_preempt1);
+        
+        vga_print("> ");
+    } else if (strcmp(cmd, "user2") == 0) {
+        vga_print("\n=== Loading User Process 2 ===\n");
+        vga_print("Loading user2 program...\n");
+        vga_print("---\n");
+        
+        extern unsigned char test_preempt2[];
+        elf_load(test_preempt2);
+        
+        vga_print("> ");
     } else {
         vga_print("\nUnknown command: '");
         vga_print(cmd);
@@ -661,6 +667,7 @@ void kmain_shell_loop(void) {
     int cmd_pos = 0;
 
     for (;;) {
+        __asm__ volatile("sti");
         asm volatile("hlt");
 
         char c;
@@ -785,5 +792,9 @@ void kmain(BootInfo *info) {
     serial_print("Done.\n");
     vga_clear();
     
-    kmain_shell_loop();
+    // ============================================================
+    // Start the shell process
+    // ============================================================
+    scheduler_start_shell();
+    // ============================================================
 }

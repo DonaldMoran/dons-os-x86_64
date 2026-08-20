@@ -27,6 +27,7 @@ void process_init(void) {
     pcb_t* idle = process_create("idle", 0, 0);
     if (idle) {
         idle->state = PROC_STATE_READY;
+        idle->timeslice_limit = 0;  // Idle process never preempted
         current_process = idle;
     }
     
@@ -139,6 +140,11 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
     pcb->prev = NULL;
     pcb->timeslice_ticks = 0;
     pcb->total_ticks = 0;
+    // ============================================================
+    // CRITICAL: Set default timeslice limit for preemption
+    // ============================================================
+    pcb->timeslice_limit = 5;  // Preempt after 5 timer ticks
+    // ============================================================
     
     serial_print("PROCESS: Created process ");
     serial_print_dec(pcb->pid);
@@ -150,6 +156,8 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
     serial_print_hex(pcb->cr3);
     serial_print(" kernel_stack=0x");
     serial_print_hex(pcb->kernel_stack_top);
+    serial_print(" timeslice_limit=");
+    serial_print_dec(pcb->timeslice_limit);
     serial_print("\n");
     
     // Add to ready queue

@@ -5,8 +5,6 @@ OBJCOPY := objcopy
 XXD     := xxd
 
 # Clean CFLAGS - only what's necessary
-# CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone
-# Clean CFLAGS - only what's necessary
 CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx
 LDFLAGS := -nostdlib
 
@@ -16,7 +14,7 @@ all: kernel.bin
 
 OBJS = entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o \
 	idt_load.o isr.o vga.o keyboard.o serial.o tss.o gdt.o ring3.o \
-	syscall.o elf.o test_program_data.o \
+	syscall.o elf.o test_program_data.o test_preempt1_data.o test_preempt2_data.o \
 	user_syscall.o user_syscall_entry.o process.o string.o scheduler.o context_switch.o
 
 kernel.elf: $(OBJS)
@@ -35,11 +33,38 @@ test_program_data.c: test_program
 test_program: test_program.o user_linker.ld
 	$(LD) -T user_linker.ld -o test_program test_program.o
 
+# Build test_preempt1 and embed it
+test_preempt1_data.o: test_preempt1_data.c
+	$(CC) $(CFLAGS) -Iinclude -c test_preempt1_data.c -o test_preempt1_data.o
+
+test_preempt1_data.c: test_preempt1
+	$(XXD) -i test_preempt1 > test_preempt1_data.c
+
+test_preempt1: test_preempt1.o user_linker.ld
+	$(LD) -T user_linker.ld -o test_preempt1 test_preempt1.o
+
+# Build test_preempt2 and embed it
+test_preempt2_data.o: test_preempt2_data.c
+	$(CC) $(CFLAGS) -Iinclude -c test_preempt2_data.c -o test_preempt2_data.o
+
+test_preempt2_data.c: test_preempt2
+	$(XXD) -i test_preempt2 > test_preempt2_data.c
+
+test_preempt2: test_preempt2.o user_linker.ld
+	$(LD) -T user_linker.ld -o test_preempt2 test_preempt2.o
+
 context_switch.o: context_switch.asm
 	$(AS) -f elf64 context_switch.asm -o context_switch.o
 
 test_program.o: test_program.asm
 	$(AS) -f elf64 test_program.asm -o test_program.o
+
+# Assembly rules for test_preempt programs
+test_preempt1.o: test_preempt1.asm
+	$(AS) -f elf64 test_preempt1.asm -o test_preempt1.o
+
+test_preempt2.o: test_preempt2.asm
+	$(AS) -f elf64 test_preempt2.asm -o test_preempt2.o
 
 # Assembly rules
 entry.o: entry.asm
@@ -88,3 +113,5 @@ user_syscall.o: user_syscall.c
 # Clean
 clean:
 	rm -f *.o *.bin *.elf test_program test_program.bin test_program_data.c
+	rm -f test_preempt1 test_preempt1.bin test_preempt1_data.c test_preempt1.o
+	rm -f test_preempt2 test_preempt2.bin test_preempt2_data.c test_preempt2.o

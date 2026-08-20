@@ -51,6 +51,7 @@ typedef struct pcb {
     struct pcb* prev;
     uint64_t timeslice_ticks;
     uint64_t total_ticks;
+    uint64_t timeslice_limit;    // Number of ticks before preemption
     
     // For debugging
     uint64_t creation_time;

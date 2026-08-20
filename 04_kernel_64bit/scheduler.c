@@ -69,6 +69,10 @@ pcb_t* scheduler_ready_queue_next(void) {
     return next;
 }
 
+pcb_t* scheduler_ready_queue_peek(void) {
+    return ready_queue_head;
+}
+
 int scheduler_ready_queue_empty(void) {
     return ready_queue_head == NULL;
 }
@@ -186,6 +190,17 @@ void scheduler_init(void) {
     schedule_count = 0;
     yield_count = 0;
     
+    // Create shell process - this will be the first process
+    pcb_t* shell = process_create("shell", (uint64_t)kmain_shell_loop, 0);
+    if (shell) {
+        shell->state = PROC_STATE_READY;
+        shell->timeslice_limit = 10;
+        scheduler_ready_queue_add(shell);
+        serial_print("SCHEDULER: Shell process created (PID ");
+        serial_print_dec(shell->pid);
+        serial_print(")\n");
+    }
+    
     serial_print("SCHEDULER: Initialization complete\n");
     vga_print("SCHEDULER: Initialization complete\n");
 }
@@ -270,4 +285,82 @@ void scheduler_stats(void) {
     }
     serial_print("\n");
     serial_print("=== END SCHEDULER STATS ===\n\n");
+}
+
+// ============================================================
+// Timer Tick - Called from timer interrupt (IRQ0)
+// ============================================================
+void scheduler_tick(uint64_t saved_rip) {
+    if (!current_process) {
+        return;
+    }
+    
+    if (current_process->pid == 1) {
+        return;
+    }
+    
+    if (current_process->state != PROC_STATE_RUNNING) {
+        return;
+    }
+    
+    current_process->timeslice_ticks++;
+    current_process->total_ticks++;
+    
+    if (current_process->timeslice_ticks >= current_process->timeslice_limit) {
+        current_process->timeslice_ticks = 0;
+        
+        serial_print("SCHEDULER: Preempting PID ");
+        serial_print_dec(current_process->pid);
+        serial_print("\n");
+        
+        process_yield();
+    }
+}
+
+// ============================================================
+// Set current process without context switch
+// ============================================================
+void scheduler_set_current_process(pcb_t* proc) {
+    if (!proc) {
+        serial_print("SCHEDULER: set_current_process called with NULL\n");
+        return;
+    }
+    
+    // Remove from ready queue
+    scheduler_ready_queue_remove(proc);
+    
+    // Set as current process
+    current_process = proc;
+    proc->state = PROC_STATE_RUNNING;
+    
+    serial_print("SCHEDULER: Set current process to PID ");
+    serial_print_dec(proc->pid);
+    serial_print(" state=");
+    serial_print_dec(proc->state);
+    serial_print(" limit=");
+    serial_print_dec(proc->timeslice_limit);
+    serial_print("\n");
+}
+
+// ============================================================
+// Start the shell process - called from kmain
+// ============================================================
+void scheduler_start_shell(void) {
+    pcb_t* shell = scheduler_ready_queue_peek();
+    if (!shell) {
+        serial_print("SCHEDULER: No shell process found!\n");
+        kmain_shell_loop();
+        return;
+    }
+    
+    serial_print("SCHEDULER: Starting shell process (PID ");
+    serial_print_dec(shell->pid);
+    serial_print(")\n");
+    
+    // Set shell as current
+    current_process = shell;
+    shell->state = PROC_STATE_RUNNING;
+    
+    // Run the shell directly (it will never return)
+    kmain_shell_loop();
 }

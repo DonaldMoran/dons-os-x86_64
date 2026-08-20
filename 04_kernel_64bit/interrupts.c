@@ -1,8 +1,9 @@
 #include <stdint.h>
 #include "include/vga.h"
 #include "include/keyboard.h"
-#include "include/interrupts.h"  // Add this include
+#include "include/interrupts.h"
 #include "include/serial.h"
+#include "include/scheduler.h"  // <-- ADD THIS
 
 #define PIC1_CMD  0x20
 #define PIC1_DATA 0x21
@@ -48,14 +49,24 @@ void pic_remap(void) {
     outb(PIC2_DATA, a2);
 }
 
-// Remove 'static' so kmain can access it
 volatile uint64_t g_ticks = 0;
 static int g_shift = 0;
 static int g_caps  = 0;
 
+// ============================================================
+// UPDATED: irq0_handler now calls scheduler_tick()
+// ============================================================
 void irq0_handler(void) {
+	serial_putc('#');  // Print every single timer interrupt
+    static uint64_t count = 0;
+    count++;
+    if (count % 10 == 0) {
+        serial_print("irq0: tick\n");
+    }
+    
     g_ticks++;
     outb(PIC1_CMD, PIC_EOI);
+    scheduler_tick(0);
 }
 
 void irq1_handler(void) {
@@ -122,55 +133,6 @@ void isr8_handler(void) {
     while (1) __asm__ volatile("hlt");
 }
 
-//~ // GP Fault handler with color
-//~ void isr13_handler(exception_frame_t *frame) {
-    //~ uint64_t *raw = (uint64_t *)frame;
-
-    //~ vga_print("\n");
-    //~ vga_print_color("=== GENERAL PROTECTION FAULT (#GP) ===\n", 0x0C);
-
-    //~ vga_print("Error Code : 0x");
-    //~ vga_print_hex_cur(raw[0]);
-    //~ vga_print("\n");
-
-    //~ vga_print("RIP        : 0x");
-    //~ vga_print_hex_cur(raw[1]);
-    //~ vga_print("\n");
-
-    //~ vga_print("CS         : 0x");
-    //~ vga_print_hex_cur(raw[2]);
-    //~ vga_print("\n");
-
-    //~ vga_print("RFLAGS     : 0x");
-    //~ vga_print_hex_cur(raw[3]);
-    //~ vga_print("\n");
-
-    //~ vga_print("\nRaw Frame Dump:\n");
-    //~ vga_print("  RAW[0] (error) : 0x"); vga_print_hex_cur(raw[0]); vga_print("\n");
-    //~ vga_print("  RAW[1] (rip)   : 0x"); vga_print_hex_cur(raw[1]); vga_print("\n");
-    //~ vga_print("  RAW[2] (cs)    : 0x"); vga_print_hex_cur(raw[2]); vga_print("\n");
-    //~ vga_print("  RAW[3] (rflags): 0x"); vga_print_hex_cur(raw[3]); vga_print("\n");
-    
-    //~ uint64_t fault_rip = raw[1] & 0xFFFFFFFFFFFFULL;
-
-    //~ serial_print("GP: fault RIP = 0x");
-    //~ serial_print_hex(fault_rip);
-    //~ serial_print("\n");
-
-    
-    //~ serial_print("\n=== GP FAULT FRAME (raw) ===\n");
-    //~ for (int i = 0; i < 8; i++) {
-        //~ serial_print("  raw[");
-        //~ serial_print_hex(i);
-        //~ serial_print("] = 0x");
-        //~ serial_print_hex(raw[i]);
-        //~ serial_print("\n");
-    //~ }
-    //~ serial_print("=== END GP FRAME ===\n");
-
-    //~ while (1) __asm__ volatile("hlt");
-//~ }
-
 void isr13_handler(exception_frame_t *frame) {
     uint64_t *raw = (uint64_t *)frame;
     uint64_t cr3;
@@ -197,7 +159,6 @@ void isr13_handler(exception_frame_t *frame) {
     
     while (1) __asm__ volatile("hlt");
 }
-
 
 void isr14_handler(exception_frame_t *frame) {
     uint64_t cr2;
@@ -318,4 +279,3 @@ void isr14_handler(exception_frame_t *frame) {
 
     while (1) __asm__ volatile("hlt");
 }
-

@@ -105,7 +105,12 @@ user_syscall_entry:
     pop r12
     pop rbx
     
+    ; ============================================================
+    ; FIX: Set IF flag in saved RFLAGS before sysret
+    ; ============================================================
     pop r11             ; restore user RFLAGS
+    or r11, 0x200       ; Set IF flag (bit 9) - enable interrupts
+    ; ============================================================
     pop rcx             ; restore user RIP
     pop rbp
     

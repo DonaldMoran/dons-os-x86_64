@@ -4,6 +4,8 @@
 #include "include/pmm.h"
 #include "include/vmm.h"
 #include "include/ring3.h"
+#include "include/process.h"
+#include "include/scheduler.h"
 #include <stddef.h>
 #include <stdint.h>
 #include "include/debug.h"
@@ -107,13 +109,9 @@ void elf_load(const void* elf_data) {
             for (uint64_t j = 0; j < num_pages; j++) {
                 uint64_t virt = start_page + (j * 4096);
                 
-                // Check if the page already has a physical address
                 uint64_t existing_phys = vmm_get_phys(virt);
                 
-                // If this page is identity-mapped by the bootloader (phys == virt for low memory)
-                // or if it's not fully mapped, allocate a new page
                 if (existing_phys == virt || existing_phys == 0) {
-                    // Need to allocate a new page
                     uint64_t phys = pmm_alloc_page();
                     if (!phys) {
                         serial_print("ELF: Failed to allocate physical page!\n");
@@ -129,8 +127,6 @@ void elf_load(const void* elf_data) {
                     ensure_hhdm_mapped(phys);
                     __asm__ volatile ("invlpg (%0)" : : "r" (virt) : "memory");
                 } else {
-                    // Page is already mapped with a valid physical address
-                    // Ensure it has the correct user-mode flags and HHDM mapping
                     serial_print("ELF: Page already mapped at 0x");
                     serial_print_hex(virt);
                     serial_print(" phys=0x");
@@ -184,7 +180,6 @@ void elf_load(const void* elf_data) {
             
             fast_memcpy(hhdm_dest, src, filesz);
             
-            // Debug: Verify copied data (fix warning: cast filesz to int for comparison)
             serial_print("ELF: Verified data at 0x");
             serial_print_hex(dest_virt);
             serial_print(": ");
@@ -290,9 +285,49 @@ void elf_load(const void* elf_data) {
     extern uint64_t ring3_enter(uint64_t entry, uint64_t stack,
                             uint64_t arg1, uint64_t arg2);
     
-    serial_print("ELF: Calling ring3_enter\n");
-    debug_rsp("ELF before ring3_enter");
-    serial_print("ELF: Calling ring3_enter\n");
-    ring3_enter(entry_point, user_stack_top, 0, 0); 
+    // ============================================================
+    // STEP 5: CREATE A PROCESS for this ELF program!
+    // ============================================================
+    serial_print("ELF: Creating process for user program\n");
+    
+    pcb_t* proc = process_create("user_prog", entry_point, 0);
+    if (proc) {
+        proc->rip = entry_point;
+        proc->rsp = user_stack_top;
+        proc->timeslice_limit = 5;
+        
+        serial_print("ELF: Process created with PID ");
+        serial_print_dec(proc->pid);
+        serial_print(" entry=0x");
+        serial_print_hex(proc->rip);
+        serial_print(" stack=0x");
+        serial_print_hex(proc->rsp);
+        serial_print("\n");
+        
+        // ============================================================
+        // Switch to the user process (this never returns until preempted)
+        // ============================================================
+        serial_print("ELF: Switching to user process\n");
+        // Debug: Print ready queue before switching
+        //~ serial_print("READY QUEUE before switch: ");
+        //~ pcb_t* q = ready_queue_head;
+        //~ while (q) {
+            //~ serial_print_dec(q->pid);
+            //~ serial_print(" ");
+            //~ q = q->next;
+        //~ }
+        //~ serial_print("\n");
+        scheduler_switch_to(proc);
+        // NOTE: This never returns! The user process is now running.
+        // ============================================================
+    } else {
+        serial_print("ELF: Failed to create process!\n");
+        vga_print("Failed to create process\n");
+        return;
+    }
+    
+    // The code below is never reached because scheduler_switch_to never returns!
+    // serial_print("ELF: Calling ring3_enter\n");
+    // debug_rsp("ELF before ring3_enter");
+    // ring3_enter(entry_point, user_stack_top, 0, 0);
 }
-
