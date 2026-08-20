@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "include/serial.h"
 #include "include/vmm.h"
+#include "include/scheduler.h"
 
 // Safe copy from user space to kernel buffer using HHDM
 static int safe_copy_from_user(void* kernel_dest, const void* user_src, size_t count) {
@@ -113,6 +114,7 @@ uint64_t syscall_dispatch(uint64_t num,
         serial_print("sys_exit: status=");
         serial_print_hex(arg0);
         serial_print("\n");
+        process_exit();
         return arg0;
     }
     
