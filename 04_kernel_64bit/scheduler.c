@@ -147,9 +147,25 @@ void scheduler_switch_to(pcb_t* next) {
     pcb_t* prev = current_process;
     current_process = next;
     
-    if (prev && prev->state != PROC_STATE_TERMINATED) {
-        prev->state = PROC_STATE_READY;
+    //~ if (prev && prev->state != PROC_STATE_TERMINATED) {
+        //~ prev->state = PROC_STATE_READY;
+    //~ // ============================================================
+    //~ // CRITICAL: Add prev back to ready queue so it can be scheduled again
+    //~ // ============================================================
+       //~ scheduler_ready_queue_add(prev);
+    //~ // ============================================================
+    //~ }
+
+
+if (prev && prev->state != PROC_STATE_TERMINATED) {
+    prev->state = PROC_STATE_READY;
+    // Only add back if this is the shell and we're switching to a user process
+    if (prev->pid == 2) {
+        scheduler_ready_queue_add(prev);
     }
+}
+
+
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
     
