@@ -5,6 +5,7 @@
 #include "include/vga.h"
 #include "include/scheduler.h"
 #include <string.h>
+#include "include/ring3.h"
 
 // Static kernel stack pool (already mapped in kernel's page table)
 static uint8_t kernel_stack_pool[MAX_PROCESSES][PROC_STACK_SIZE] __attribute__((aligned(16)));

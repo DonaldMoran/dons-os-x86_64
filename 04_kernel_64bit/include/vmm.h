@@ -14,8 +14,9 @@
 
 #define RECURSIVE_PML4_INDEX 510   // ← ADD THIS IF MISSING
 
-#define USER_CODE_BASE  0x400000ULL
-#define USER_STACK_BASE 0x7FFFFFE00000ULL
+//~ # These exist properly in ring3 now and are obsolete
+//~ #define USER_CODE_BASE  0x400000ULL
+//~ #define USER_STACK_BASE 0x7FFFFFE00000ULL
 
 void vmm_init(BootInfo* info);
 void* ensure_hhdm_mapped(uint64_t phys);

@@ -44,7 +44,7 @@ void elf_load(const void* elf_data) {
     const Elf64_Phdr* phdr = (const Elf64_Phdr*)((uintptr_t)elf_data + ehdr->e_phoff);
     
     uint64_t entry_point = ehdr->e_entry;
-    uint64_t user_stack = USER_STACK_BASE;
+    uint64_t user_stack  = USER_STACK_BASE;
     
     #define STACK_PAGES 1
     uint64_t user_stack_top = user_stack + (STACK_PAGES * 4096ULL) - 16ULL;
@@ -55,9 +55,7 @@ void elf_load(const void* elf_data) {
     
     serial_print("ELF: Scanning program headers\n");
     
-    // ============================================================
     // STEP 1: Map all pages for all loadable segments
-    // ============================================================
     for (int i = 0; i < total_phdrs; i++) {
         serial_print("ELF: Header ");
         serial_print_dec(i);
@@ -81,11 +79,6 @@ void elf_load(const void* elf_data) {
             serial_print_hex(offset);
             serial_print("\n");
             
-            if (vaddr == 0x200000) {
-                serial_print("ELF: Skipping segment at 0x200000 (ELF headers)\n");
-                continue;
-            }
-            
             uint64_t start_page = vaddr & ~0xFFFULL;
             uint64_t end_page   = (vaddr + memsz + 0xFFF) & ~0xFFFULL;
             uint64_t num_pages  = (end_page - start_page) / 4096;
@@ -98,7 +91,7 @@ void elf_load(const void* elf_data) {
             serial_print_dec(num_pages);
             serial_print("\n");
             
-            uint64_t page_flags = PT_PRESENT | PT_WRITE | PT_USER | PT_EXEC;
+            uint64_t page_flags = PT_PRESENT | PT_WRITE | PT_USER;
             
             serial_print("ELF: Page flags=0x");
             serial_print_hex(page_flags);
@@ -107,46 +100,38 @@ void elf_load(const void* elf_data) {
             for (uint64_t j = 0; j < num_pages; j++) {
                 uint64_t virt = start_page + (j * 4096);
                 
-                // Check if the page already has a physical address
                 uint64_t existing_phys = vmm_get_phys(virt);
-                
-                // If this page is identity-mapped by the bootloader (phys == virt for low memory)
-                // or if it's not fully mapped, allocate a new page
-                if (existing_phys == virt || existing_phys == 0) {
-                    // Need to allocate a new page
-                    uint64_t phys = pmm_alloc_page();
-                    if (!phys) {
-                        serial_print("ELF: Failed to allocate physical page!\n");
-                        vga_print("Failed alloc\n");
-                        return;
-                    }
-                    serial_print("ELF: Mapping new page virt=0x");
-                    serial_print_hex(virt);
-                    serial_print(" phys=0x");
-                    serial_print_hex(phys);
-                    serial_print("\n");
-                    vmm_map_page(virt, phys, page_flags);
-                    ensure_hhdm_mapped(phys);
-                    __asm__ volatile ("invlpg (%0)" : : "r" (virt) : "memory");
-                } else {
-                    // Page is already mapped with a valid physical address
-                    // Ensure it has the correct user-mode flags and HHDM mapping
+                if (existing_phys != 0) {
                     serial_print("ELF: Page already mapped at 0x");
                     serial_print_hex(virt);
                     serial_print(" phys=0x");
                     serial_print_hex(existing_phys);
-                    serial_print(" - remapping with proper flags\n");
+                    serial_print(" - remapping with user flags\n");
                     vmm_map_page(virt, existing_phys, page_flags);
                     ensure_hhdm_mapped(existing_phys);
                     __asm__ volatile ("invlpg (%0)" : : "r" (virt) : "memory");
+                    continue;
                 }
+                
+                uint64_t phys = pmm_alloc_page();
+                if (!phys) {
+                    serial_print("ELF: Failed to allocate physical page!\n");
+                    vga_print("Failed alloc\n");
+                    return;
+                }
+                serial_print("ELF: Mapping new page virt=0x");
+                serial_print_hex(virt);
+                serial_print(" phys=0x");
+                serial_print_hex(phys);
+                serial_print("\n");
+                vmm_map_page(virt, phys, page_flags);
+                ensure_hhdm_mapped(phys);
+                __asm__ volatile ("invlpg (%0)" : : "r" (virt) : "memory");
             }
         }
     }
     
-    // ============================================================
-    // STEP 2: Copy data to mapped pages using HHDM
-    // ============================================================
+    // STEP 2: Copy data to mapped pages using HHDM (page-aware)
     for (int i = 0; i < total_phdrs; i++) {
         if (phdr[i].p_type == PT_LOAD) {
             uint64_t vaddr  = phdr[i].p_vaddr;
@@ -154,56 +139,75 @@ void elf_load(const void* elf_data) {
             uint64_t filesz = phdr[i].p_filesz;
             uint64_t offset = phdr[i].p_offset;
             
-            if (vaddr == 0x200000) {
-                continue;
-            }
-            
             const uint8_t* src = (const uint8_t*)elf_data + offset;
-            uint64_t dest_virt = vaddr;
             
             serial_print("ELF: Copying filesz=0x");
             serial_print_hex(filesz);
             serial_print(" to 0x");
-            serial_print_hex(dest_virt);
-            serial_print(" via HHDM\n");
+            serial_print_hex(vaddr);
+            serial_print(" via HHDM (paged)\n");
             
-            uint64_t dest_phys = vmm_get_phys(dest_virt);
-            if (!dest_phys) {
-                serial_print("ELF: Failed to get physical address for 0x");
-                serial_print_hex(dest_virt);
-                serial_print("\n");
-                return;
+            uint64_t copied = 0;
+            while (copied < filesz) {
+                uint64_t cur_virt = vaddr + copied;
+                uint64_t phys = vmm_get_phys(cur_virt);
+                if (!phys) {
+                    serial_print("ELF: Failed to get physical address for 0x");
+                    serial_print_hex(cur_virt);
+                    serial_print("\n");
+                    return;
+                }
+                
+                uint64_t page_off = cur_virt & 0xFFF;
+                size_t   chunk    = filesz - copied;
+                size_t   page_rem = 4096 - page_off;
+                if (chunk > page_rem) chunk = page_rem;
+                
+                void* hhdm_dest = (void*)(HHDM_START + phys + page_off);
+                
+                fast_memcpy(hhdm_dest, src + copied, chunk);
+                copied += chunk;
             }
             
-            uint64_t page_offset = dest_virt & 0xFFF;
-            void* hhdm_dest = (void*)(HHDM_START + dest_phys + page_offset);
-            
-            serial_print("ELF: HHDM dest=0x");
-            serial_print_hex((uint64_t)hhdm_dest);
-            serial_print("\n");
-            
-            fast_memcpy(hhdm_dest, src, filesz);
-            
-            // Debug: Verify copied data (fix warning: cast filesz to int for comparison)
+            // Debug: verify first bytes
             serial_print("ELF: Verified data at 0x");
-            serial_print_hex(dest_virt);
+            serial_print_hex(vaddr);
             serial_print(": ");
             uint64_t verify_count = (filesz < 16) ? filesz : 16;
             for (uint64_t j = 0; j < verify_count; j++) {
-                serial_print_hex(((uint8_t*)hhdm_dest)[j]);
+                uint64_t cur_virt = vaddr + j;
+                uint64_t phys = vmm_get_phys(cur_virt);
+                if (!phys) break;
+                uint64_t page_off = cur_virt & 0xFFF;
+                uint8_t* hhdm_ptr = (uint8_t*)(HHDM_START + phys + page_off);
+                serial_print_hex(hhdm_ptr[0]);
                 serial_print(" ");
             }
             serial_print("\n");
             
             if (memsz > filesz) {
-                uint8_t* bss_start = (uint8_t*)hhdm_dest + filesz;
-                size_t   bss_size  = memsz - filesz;
-                serial_print("ELF: Zeroing BSS of size 0x");
-                serial_print_hex(bss_size);
-                serial_print(" at HHDM 0x");
-                serial_print_hex((uint64_t)bss_start);
-                serial_print("\n");
-                __asm__ volatile ("rep stosb" : "+D"(bss_start), "+c"(bss_size) : "a"(0) : "memory");
+                serial_print("ELF: Zeroing BSS\n");
+                uint64_t bss_start_virt = vaddr + filesz;
+                uint64_t bss_bytes      = memsz - filesz;
+                
+                uint64_t zeroed = 0;
+                while (zeroed < bss_bytes) {
+                    uint64_t cur_virt = bss_start_virt + zeroed;
+                    uint64_t phys = vmm_get_phys(cur_virt);
+                    if (!phys) break;
+                    
+                    uint64_t page_off = cur_virt & 0xFFF;
+                    size_t   chunk    = bss_bytes - zeroed;
+                    size_t   page_rem = 4096 - page_off;
+                    if (chunk > page_rem) chunk = page_rem;
+                    
+                    uint8_t* hhdm_ptr = (uint8_t*)(HHDM_START + phys + page_off);
+                    __asm__ volatile ("rep stosb"
+                                      : "+D"(hhdm_ptr), "+c"(chunk)
+                                      : "a"(0)
+                                      : "memory");
+                    zeroed += chunk;
+                }
             }
             
             segments_loaded++;
@@ -215,9 +219,7 @@ void elf_load(const void* elf_data) {
         return;
     }
     
-    // ============================================================
     // STEP 3: Allocate and initialize stack
-    // ============================================================
     serial_print("ELF: Allocating stack pages\n");
     
     for (int i = 0; i < STACK_PAGES; i++) {
@@ -250,15 +252,15 @@ void elf_load(const void* elf_data) {
     }
     serial_print("ELF: Stack clear complete\n");
     
-    // ============================================================
-    // STEP 4: Verify msg string
-    // ============================================================
-    serial_print("ELF: Checking msg at 0x40002C\n");
-    uint64_t msg_phys = vmm_get_phys(0x40002C);
+    // STEP 4: Optional msg check
+    serial_print("ELF: Checking msg at 0x");
+    serial_print_hex(phdr[1].p_vaddr);
+    serial_print("\n");
+    uint64_t msg_phys = vmm_get_phys(phdr[1].p_vaddr);
     if (msg_phys) {
-        void* msg_hhdm = (void*)(HHDM_START + msg_phys + (0x40002C & 0xFFF));
-        serial_print("ELF: msg at 0x40002C = '");
-        for (int i = 0; i < 25; i++) {
+        void* msg_hhdm = (void*)(HHDM_START + msg_phys + (phdr[1].p_vaddr & 0xFFF));
+        serial_print("ELF: msg = '");
+        for (int i = 0; i < 64; i++) {
             char c = ((char*)msg_hhdm)[i];
             if (c == '\n') {
                 serial_print("\\n");
@@ -281,18 +283,15 @@ void elf_load(const void* elf_data) {
     serial_print_hex(user_stack_top);
     serial_print("\n");
     
-    serial_print("ELF: Skipping verification, jumping to user mode\n");
     vga_print("ELF loaded\n");
     
-    vmm_dump_page_table(0x400000);
-    vmm_dump_page_table(0x7FFFFFE00FF0);
+    vmm_dump_page_table(entry_point);
+    vmm_dump_page_table(user_stack_top);
 
     extern uint64_t ring3_enter(uint64_t entry, uint64_t stack,
-                            uint64_t arg1, uint64_t arg2);
+                                uint64_t arg1, uint64_t arg2);
     
     serial_print("ELF: Calling ring3_enter\n");
     debug_rsp("ELF before ring3_enter");
-    serial_print("ELF: Calling ring3_enter\n");
     ring3_enter(entry_point, user_stack_top, 0, 0); 
 }
-

@@ -353,7 +353,7 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "serialtest") == 0) {
         vga_print("\nSerial test...\n");
         vga_print("Check your terminal for serial output!\n");
-        serial_print("SERIAL: Test message from shell!\n");
+        serial_print("SERIAL: Hello from the shell!\n");
         serial_print("SERIAL: Command entered: ");
         serial_print(cmd);
         serial_print("\n");

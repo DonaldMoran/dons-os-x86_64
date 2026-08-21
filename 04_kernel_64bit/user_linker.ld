@@ -2,10 +2,9 @@ ENTRY(_start)
 
 SECTIONS
 {
-    /* User program base address */
-    . = 0x400000;
+    /* User program base address: must match USER_CODE_BASE */
+    . = 0x0000008000000000;
 
-    /* Single contiguous PT_LOAD segment */
     .text : {
         *(.text*)
     }

@@ -78,6 +78,7 @@ The ELF loader is fully functional and can execute user programs from memory:
 - ✅ Sets IOPL=3 for user I/O access
 - ✅ Page table execute permissions at all levels (PML4 → PDPT → PD → PT)
 - ✅ Uses HHDM for safe user‑space memory access from kernel
+- ✅ **User programs loaded into dedicated user address space** (`USER_CODE_BASE = 0x0000008000000000`)
 - ✅ Tested with "Hello from Userland!" output via serial
 
 **User programs** can be embedded in the kernel and loaded with the `elfload` command.
@@ -293,8 +294,9 @@ This project is designed to be:
 - ✅ Working GDT and TSS
 - ✅ Higher-half kernel region (kernel runs at 0xFFFFFFFF80100000)
 - ✅ **Recursive paging** at PML4[510] for page table access from higher-half
-     128MB physical memory detected and mapped (expandable via BootInfo)
+- ✅ 128MB physical memory detected and mapped (expandable via BootInfo)
 - ✅ **User Mode (Ring 3) Support** — Full privilege separation with user code execution at CPL=3
+- ✅ **Real user address space** — User programs loaded at `USER_CODE_BASE = 0x0000008000000000`
 
 **Interrupts & Exceptions**
 - ✅ Fully functional IDT and ISR stubs
@@ -317,28 +319,29 @@ This project is designed to be:
 - ✅ Unknown command handling with suggestions
 - ✅ Serial console output (COM1) for debugging alongside VGA
 
-**Memory**
-- ✅ Full BIOS E820 memory map parsing
-- ✅ Memory map passed to kernel via BootInfo
-- ✅ Physical Memory Manager (PMM) with bitmap allocator
-- ✅ Page allocation, freeing, and reuse verified
-- ✅ **Virtual Memory Manager (VMM)** with recursive paging and NX support
-  - ✅ HHDM_START: `0xFFFF800000000000`
-  - ✅ PML4[256] mapped for HHDM region
-  - ✅ Dynamic page table allocation (PDPT, PD, PT)
-  - ✅ **NX (No Execute) bit support** via PT_NX flag
-  - ✅ `vmmtest` command verifies page mapping and shows NX status
-  - ✅ `nxtest` command validates NX functionality
-  - ✅No GP faults when accessing page tables
-- ✅ **Heap Allocator** with `kmalloc()` and `kfree()` support
-  - ✅ Bump allocator with free list for memory reuse
-  - ✅ `heapstat` command for debugging
-  - ✅ `heaptest` command to verify allocation and reuse
-  - ✅ 64MB heap size (expandable)
-  - ✅ Memory reuse verified (freed memory is returned)
-- ✅ **User Memory Mapping** — Pages mapped with PT_USER flag for proper user/kernel isolation
-- ✅ **NX (No Execute) Bit** — Fully supported via PT_NX flag in VMM
-- ✅ **NX Support Verified** — `nxtest` command confirms NX functionality
+### Memory Management
+
+#### Physical Memory Manager (PMM)
+- ✅ Parses BIOS E820 memory map
+- ✅ Bitmap-based page allocator
+- ✅ Tracks allocated and free pages
+- ✅ Supports up to 128 MiB (expandable)
+
+#### Virtual Memory Manager (VMM)
+- ✅ **Recursive paging** at PML4[510]
+- ✅ **HHDM** (`0xFFFF800000000000`) for physical memory access
+- ✅ Dynamic page table allocation (PDPT → PD → PT)
+- ✅ User page mapping with `PT_USER` flag
+- ✅ **NX (No Execute) bit** support via `PT_NX`
+- ✅ Page table entries correctly zeroed on allocation
+- ✅ Proper present-bit checking in `vmm_is_mapped()`
+- ✅ **User address space isolated from kernel identity map**
+
+#### Heap Allocator
+- ✅ `kmalloc()` and `kfree()` with free list
+- ✅ Block headers for memory tracking
+- ✅ Automatic heap expansion
+- ✅ `heapstat` and `heaptest` debugging commands
 
 **System Calls**
 - ✅ **SYSCALL/SYSRET support** via MSR (IA32_STAR, IA32_LSTAR, IA32_FMASK)
@@ -349,12 +352,12 @@ This project is designed to be:
 - ✅ **Proper register preservation** across syscalls
 - ✅ **Safe user‑space memory access** via `safe_copy_from_user()` using HHDM
 
-**User Mode & Process System** ⭐ UPDATED ⭐
-- ✅ GDT with user code (0x30) and user data (0x28) segments (DPL=3)
+**User Mode & Process System**
+- ✅ GDT with user code (0x33) and user data (0x2B) segments (DPL=3)
 - ✅ TSS configured for stack switching on interrupts from user mode
 - ✅ `iretq`-based transition from kernel to user mode
 - ✅ User code executes at CPL=3 with page protection
-- ✅ User memory mapped with PT_USER flag for user/kernel isolation
+- ✅ **User programs in isolated address space** (separate from kernel identity map)
 - ✅ **Process Control Block (PCB)** infrastructure
 - ✅ **Page table cloning** (`vmmclone`) for process isolation
 - ✅ **Process creation** (`proccreate`) and **listing** (`proclist`)
@@ -362,7 +365,7 @@ This project is designed to be:
 - ✅ **Process cleanup** (`process_destroy`) with resource freeing
 - ✅ Safe user‑space memory access via HHDM
 
-**ELF Loader** ⭐ FINALIZED ⭐
+**ELF Loader**
 - ✅ Parses ELF64 headers and program headers
 - ✅ Maps LOAD segments with correct permissions (Read, Write, Execute, User)
 - ✅ Allocates and maps user stack pages
@@ -372,6 +375,7 @@ This project is designed to be:
 - ✅ **`elfload` command** to load and run embedded ELF programs
 - ✅ **Tested with "Hello from Userland!" output via serial**
 - ✅ **Works reliably on first boot** (bootloader identity‑mapping handled)
+- ✅ **User programs loaded at `USER_CODE_BASE = 0x0000008000000000`**
 
 ---
 
@@ -406,8 +410,9 @@ The process system provides a foundation for multitasking:
 ## 🌱 Next Steps (Roadmap)
 
 ### Short-term (Next)
-- 1. **Cooperative scheduler** — Ready queue, `process_yield()`, round‑robin task switching
+- 1. ~~**Cooperative scheduler** — Ready queue, `process_yield()`, round‑robin task switching~~ ✅
 - 2. **Preemptive scheduler** — Timer interrupt integration, preemptive task switching
+- 3. **User‑mode shell** — Move shell from Ring 0 to Ring 3 (Linux-style architecture)
 
 ### Medium-term
 - 3. **Ring0 kernel threads** — Kernel daemons, system services
