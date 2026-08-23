@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stddef.h>   // For size_t
 
 #ifndef VGA_H
 #define VGA_H
@@ -17,7 +18,8 @@ void vga_hide_cursor(void);
 void vga_print_hex_cur(uint64_t val);
 void vga_print_dec_cur(uint64_t val);
 
-// In vga.h - add this line
 void vga_print_color(const char *s, uint8_t color);
+
+void vga_write(const char* data, size_t count);
 
 #endif

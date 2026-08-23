@@ -6,6 +6,7 @@
 #include "include/scheduler.h"
 #include "include/heap.h"
 #include "include/user_space.h"
+#include "include/elf.h"  // Add this for elf_add_page_to_pcb
 #include <string.h>
 
 // Static kernel stack pool (already mapped in kernel's page table)
@@ -111,29 +112,70 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
     pcb->cr3 = current_cr3;
     
     // Determine if this is a user process or kernel process
-    // User process: entry_point != 0 AND entry_point is in user space (< KERNEL_BASE)
     if (entry_point != 0 && entry_point < KERNEL_BASE) {
-        // User process - allocate user stack
-        pcb->user_stack_phys = pmm_alloc_page();
-        if (!pcb->user_stack_phys) {
-            serial_print("PROCESS: Failed to allocate user stack!\n");
-            return NULL;
-        }
+        // User process - allocate user stack (8KB = 2 pages)
+        #define USER_STACK_PAGES 2
+        #define USER_STACK_SIZE (USER_STACK_PAGES * 4096)
         
         pcb->user_stack_virt = USER_STACK_BASE;
-        vmm_map_page(pcb->user_stack_virt, pcb->user_stack_phys, 
-                     PT_PRESENT | PT_WRITE | PT_USER);
         
-        // Zero the user stack via HHDM
-        void* stack_hhdm = (void*)(HHDM_START + pcb->user_stack_phys);
-        uint64_t* clear_ptr = (uint64_t*)stack_hhdm;
-        for (uint64_t j = 0; j < 4096 / 8; j++) {
-            clear_ptr[j] = 0;
+        serial_print("PROCESS: Allocating user stack (");
+        serial_print_dec(USER_STACK_PAGES);
+        serial_print(" pages) at virt=0x");
+        serial_print_hex(pcb->user_stack_virt);
+        serial_print("\n");
+        
+        // Allocate and map each stack page
+        for (int i = 0; i < USER_STACK_PAGES; i++) {
+            uint64_t phys = pmm_alloc_page();
+            if (!phys) {
+                serial_print("PROCESS: Failed to allocate user stack page ");
+                serial_print_dec(i);
+                serial_print("\n");
+                // Clean up previously allocated pages
+                for (int j = 0; j < i; j++) {
+                    uint64_t virt = pcb->user_stack_virt + (j * 4096);
+                    uint64_t p = vmm_get_phys(virt);
+                    if (p) {
+                        vmm_unmap_page(virt);
+                        pmm_free_page(p);
+                    }
+                }
+                return NULL;
+            }
+            
+            uint64_t virt = pcb->user_stack_virt + (i * 4096);
+            uint64_t map_flags = PT_PRESENT | PT_WRITE | PT_USER;
+            // Clear reserved bits
+            map_flags &= ~(0x80ULL | 0x40ULL | 0x200ULL | 0x800ULL);
+            
+            serial_print("PROCESS: Mapping stack page ");
+            serial_print_dec(i);
+            serial_print(": virt=0x");
+            serial_print_hex(virt);
+            serial_print(" phys=0x");
+            serial_print_hex(phys);
+            serial_print("\n");
+            
+            vmm_map_page(virt, phys, map_flags);
+            __asm__ volatile ("invlpg (%0)" : : "r" (virt) : "memory");
+            
+            // Zero the page via HHDM
+            void* hhdm = (void*)(HHDM_START + phys);
+            for (uint64_t j = 0; j < 4096 / 8; j++) {
+                ((uint64_t*)hhdm)[j] = 0;
+            }
+            
+            // Track the page for cleanup (using elf_page_list)
+            elf_add_page_to_pcb(pcb, phys);
         }
         
-        #define USER_STACK_PAGE_SIZE 4096
-        pcb->user_stack_top = pcb->user_stack_virt + USER_STACK_PAGE_SIZE - 16;
+        pcb->user_stack_top = pcb->user_stack_virt + USER_STACK_SIZE - 16;
         pcb->user_stack_top &= ~0xFULL;
+        
+        serial_print("PROCESS: User stack top=0x");
+        serial_print_hex(pcb->user_stack_top);
+        serial_print("\n");
     } else {
         // Kernel process - no user stack needed
         pcb->user_stack_phys = 0;

@@ -212,20 +212,52 @@ uint64_t vmm_get_phys(uint64_t virt) {
     uint32_t pd_idx   = (virt >> 21) & 0x1FF;
     uint32_t pt_idx   = (virt >> 12) & 0x1FF;
 
-    if (!(pml4[pml4_idx] & PT_PRESENT)) return 0;
+    serial_print("vmm_get_phys: virt=0x");
+    serial_print_hex(virt);
+    serial_print(" indices: PML4=");
+    serial_print_dec(pml4_idx);
+    serial_print(" PDPT=");
+    serial_print_dec(pdpt_idx);
+    serial_print(" PD=");
+    serial_print_dec(pd_idx);
+    serial_print(" PT=");
+    serial_print_dec(pt_idx);
+    serial_print("\n");
+
+    if (!(pml4[pml4_idx] & PT_PRESENT)) {
+        serial_print("vmm_get_phys: PML4 NOT PRESENT!\n");
+        return 0;
+    }
     uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFFULL;
     uint64_t* pdpt = phys_to_virt(pdpt_phys);
 
-    if (!(pdpt[pdpt_idx] & PT_PRESENT)) return 0;
+    if (!(pdpt[pdpt_idx] & PT_PRESENT)) {
+        serial_print("vmm_get_phys: PDPT NOT PRESENT!\n");
+        return 0;
+    }
     uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFFULL;
     uint64_t* pd = phys_to_virt(pd_phys);
 
-    if (!(pd[pd_idx] & PT_PRESENT)) return 0;
+    if (!(pd[pd_idx] & PT_PRESENT)) {
+        serial_print("vmm_get_phys: PD NOT PRESENT!\n");
+        return 0;
+    }
     uint64_t pt_phys = pd[pd_idx] & ~0xFFFULL;
     uint64_t* pt = phys_to_virt(pt_phys);
 
-    if (!(pt[pt_idx] & PT_PRESENT)) return 0;
-    return (pt[pt_idx] & ~0xFFFULL) | (virt & 0xFFFULL);
+    if (!(pt[pt_idx] & PT_PRESENT)) {
+        serial_print("vmm_get_phys: PT NOT PRESENT!\n");
+        return 0;
+    }
+
+    uint64_t phys = (pt[pt_idx] & ~0xFFFULL) | (virt & 0xFFFULL);
+    serial_print("vmm_get_phys: phys=0x");
+    serial_print_hex(phys);
+    serial_print(" PTE=0x");
+    serial_print_hex(pt[pt_idx]);
+    serial_print("\n");
+
+    return phys;
 }
 
 int vmm_is_mapped(uint64_t virt) {

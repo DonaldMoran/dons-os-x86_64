@@ -19,6 +19,12 @@ static int cursor_row = 0;
 static int cursor_col = 0;
 static uint8_t cursor_attr = 0x07;
 
+void vga_write(const char* data, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        vga_putc(data[i]);  // Use vga_putc, not vga_putchar
+    }
+}
+
 static int clamp(int value, int min, int max) {
     if (value < min) return min;
     if (value > max) return max;

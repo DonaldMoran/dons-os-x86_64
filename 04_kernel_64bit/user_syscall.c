@@ -4,6 +4,7 @@
 #include "include/vmm.h"
 #include "include/keyboard.h"
 #include "include/syscall.h"
+#include "include/vga.h"
 
 // Safe copy from user space to kernel buffer using HHDM
 static int safe_copy_from_user(void* kernel_dest, const void* user_src, size_t count) {
@@ -11,7 +12,7 @@ static int safe_copy_from_user(void* kernel_dest, const void* user_src, size_t c
     
     uint64_t user_addr = (uint64_t)user_src;
     
-    serial_print("safe_copy: user_addr=0x");
+    serial_print("safe_copy_from_user: user_addr=0x");
     serial_print_hex(user_addr);
     serial_print(" count=");
     serial_print_dec(count);
@@ -25,6 +26,10 @@ static int safe_copy_from_user(void* kernel_dest, const void* user_src, size_t c
     }
     
     uint64_t phys = vmm_get_phys(user_addr);
+    serial_print("safe_copy_from_user: phys=0x");
+    serial_print_hex(phys);
+    serial_print("\n");
+    
     if (!phys) {
         serial_print("ERROR: User address 0x");
         serial_print_hex(user_addr);
@@ -32,20 +37,25 @@ static int safe_copy_from_user(void* kernel_dest, const void* user_src, size_t c
         return -1;
     }
     
-    serial_print("safe_copy: phys=0x");
-    serial_print_hex(phys);
-    serial_print("\n");
-    
     uint64_t offset = user_addr & 0xFFF;
     void* kernel_mapped = (void*)(HHDM_START + phys + offset);
     
-    serial_print("safe_copy: HHDM addr=0x");
+    serial_print("safe_copy_from_user: kernel_mapped=0x");
     serial_print_hex((uint64_t)kernel_mapped);
     serial_print("\n");
     
+    // Copy data
     for (size_t i = 0; i < count; i++) {
         ((char*)kernel_dest)[i] = ((char*)kernel_mapped)[i];
     }
+    
+    serial_print("safe_copy_from_user: copied ");
+    serial_print_dec(count);
+    serial_print(" bytes, first bytes: ");
+    for (size_t i = 0; i < (count < 16 ? count : 16); i++) {
+        serial_putc(((char*)kernel_dest)[i]);
+    }
+    serial_print("\n");
     
     return 0;
 }
@@ -92,6 +102,10 @@ uint64_t syscall_dispatch(uint64_t num,
     (void)arg4;
     (void)arg5;
     
+    serial_print("syscall_dispatch: num=");
+    serial_print_dec(num);
+    serial_print("\n");
+    
     switch (num) {
     case SYS_WRITE: {
         uint64_t fd = arg0;
@@ -107,7 +121,7 @@ uint64_t syscall_dispatch(uint64_t num,
         serial_print("\n");
         
         if (fd == 1) {
-            #define MAX_SYS_WRITE 256
+            #define MAX_SYS_WRITE 4096
             char kernel_buf[MAX_SYS_WRITE + 1];
             
             size_t to_copy = count;
@@ -115,10 +129,7 @@ uint64_t syscall_dispatch(uint64_t num,
                 to_copy = MAX_SYS_WRITE;
             }
             
-            serial_print("sys_write: copying ");
-            serial_print_dec(to_copy);
-            serial_print(" bytes from user\n");
-            
+            serial_print("sys_write: calling safe_copy_from_user\n");
             if (safe_copy_from_user(kernel_buf, (const void*)user_buf, to_copy) == 0) {
                 kernel_buf[to_copy] = '\0';
                 serial_print("sys_write: data='");
@@ -126,6 +137,9 @@ uint64_t syscall_dispatch(uint64_t num,
                     serial_putc(kernel_buf[i]);
                 }
                 serial_print("'\n");
+                serial_print("sys_write: writing to VGA\n");
+                vga_write(kernel_buf, to_copy);
+                serial_print("sys_write: VGA write done\n");
             } else {
                 serial_print("sys_write: FAILED to copy from user space!\n");
                 return (uint64_t)-1;
@@ -139,6 +153,13 @@ uint64_t syscall_dispatch(uint64_t num,
         serial_print("sys_exit: status=");
         serial_print_hex(arg0);
         serial_print("\n");
+        // Flush serial output before jumping to shell
+        for (int i = 0; i < 100; i++) {
+            serial_putc(0);
+        }
+        // Jump back to the kernel shell
+        extern void kmain_shell_loop(void);
+        kmain_shell_loop();
         return arg0;
     }
     
@@ -166,16 +187,26 @@ uint64_t syscall_dispatch(uint64_t num,
                     __asm__ volatile ("pause");
                 }
                 
-                // Echo character back to console (handled in userlib)
-                // But we need to echo here so the user sees what they type
+                // Echo character back to console
                 if (c == '\n') {
-                    // sys_write(1, "\n", 1); // Already handled by read_line
+                    // Echo newline
+                    char newline = '\n';
+                    vga_write(&newline, 1);
+                    serial_putc(newline);
                 } else if (c == '\b' || c == 127) {
-                    // Backspace handled by read_line
+                    // Echo backspace (erase char)
+                    char backspace_seq[] = {'\b', ' ', '\b'};
+                    vga_write(backspace_seq, 3);
+                    for (int i = 0; i < 3; i++) {
+                        serial_putc(backspace_seq[i]);
+                    }
                 } else if (c >= 32 && c <= 126) {
-                    // Printable characters are echoed by read_line
+                    // Echo printable character
+                    vga_write(&c, 1);
+                    serial_putc(c);
                 }
                 
+                // Copy to user buffer
                 if (safe_copy_to_user((void*)(user_buf + bytes_read), &c, 1) == 0) {
                     bytes_read++;
                 } else {

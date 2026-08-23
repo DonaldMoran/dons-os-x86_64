@@ -78,6 +78,10 @@ context_switch:
     pop rbx
     pop rax
     
+    ; Flush TLB to ensure user stack mapping is visible
+    mov rax, cr3
+    mov cr3, rax
+    
     mov rax, [r12 + 0x70]
     mov rbx, [r12 + 0x78]
     mov rcx, [r12 + 0x80]

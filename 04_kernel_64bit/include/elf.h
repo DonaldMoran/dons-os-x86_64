@@ -2,6 +2,7 @@
 #define ELF_H
 
 #include <stdint.h>
+#include "process.h"
 
 // ELF64 header
 typedef struct {
@@ -49,5 +50,6 @@ typedef struct {
 
 // Function prototypes
 void elf_load(const void* elf_data);
+void elf_add_page_to_pcb(pcb_t* pcb, uint64_t phys);
 
 #endif

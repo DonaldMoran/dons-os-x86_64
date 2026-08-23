@@ -42,6 +42,8 @@ void sys_exit(int status) {
 
 int strlen(const char* s) {
     int len = 0;
+    // If the pointer is NULL or points to invalid memory, return 0
+    if (!s) return 0;
     while (s[len]) len++;
     return len;
 }
@@ -168,7 +170,6 @@ int read_line(char* buf, int max_len) {
         
         if (c == '\n') {
             buf[pos] = '\0';
-            // sys_read already echoes newline, so we don't need print_newline()
             return pos;
         } else if (c == '\b' || c == 127) {
             if (pos > 0) {
@@ -178,7 +179,6 @@ int read_line(char* buf, int max_len) {
         } else if (c >= 32 && c <= 126) {
             buf[pos] = c;
             pos++;
-            // sys_read already echoes printable characters
         }
     }
     
