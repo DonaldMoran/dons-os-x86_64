@@ -8,9 +8,6 @@
 #define PROC_NAME_LEN 32
 #define PROC_STACK_SIZE  8192   // 8KB
 
-// Kernel stack region for processes
-#define PROC_KERNEL_STACK_BASE  0xFFFF900000100000ULL
-
 // Process states
 typedef enum {
     PROC_STATE_UNUSED = 0,
@@ -40,6 +37,12 @@ typedef struct pcb {
     uint64_t user_stack_virt;
     uint64_t user_stack_top;
     
+    // ELF loading tracking - for cleanup
+    uint64_t elf_base_virt;
+    uint64_t elf_base_phys;
+    uint64_t elf_num_pages;
+    uint64_t* elf_page_list;  // Array of physical addresses allocated for ELF
+    
     // ===== Context switching registers (for scheduler) =====
     uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
     uint64_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
@@ -61,10 +64,12 @@ typedef struct pcb {
 void process_init(void);
 pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags);
 pcb_t* process_get_current(void);
+void process_set_current(pcb_t* proc);
 pcb_t* process_find_by_pid(uint64_t pid);
 void process_dump_all(void);
 void process_test_clone(void);
 void process_start(pcb_t* process);
 void process_destroy(pcb_t* process);
+void process_cleanup_elf_pages(pcb_t* pcb);
 
 #endif

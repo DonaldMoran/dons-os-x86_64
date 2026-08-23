@@ -1,19 +1,16 @@
 #ifndef SYSCALL_H
 #define SYSCALL_H
 
-#include <stdint.h>
 #include <stddef.h>
 
-// System call numbers
+// Syscall numbers
 #define SYS_WRITE 1
-#define SYS_EXIT  60
+#define SYS_EXIT  2
+#define SYS_READ  3
 
 // Function prototypes
-//~ void syscall_init(void);
-void syscall_handler(void);
-
-// System call functions (for kernel use)
-long sys_write(uint32_t fd, const char* buf, size_t count);
+long sys_write(int fd, const char* buf, size_t count);
 void sys_exit(int status);
+long sys_read(int fd, void* buf, size_t count);
 
 #endif

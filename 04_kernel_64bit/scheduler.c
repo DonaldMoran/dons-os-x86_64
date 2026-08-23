@@ -74,57 +74,86 @@ int scheduler_ready_queue_empty(void) {
 }
 
 // ============================================================
-// Process Exit - Called when a process finishes
+// Scheduler Reset - Clean up scheduler state
 // ============================================================
-void process_exit(void) {
+void scheduler_reset(void) {
+    ready_queue_head = NULL;
+    ready_queue_tail = NULL;
+    current_process = NULL;
+    // Sync with process subsystem
+    process_set_current(NULL);
+}
+
+// ============================================================
+// Scheduler Set Current - Sync with process subsystem
+// ============================================================
+void scheduler_set_current(pcb_t* proc) {
+    current_process = proc;
+    process_set_current(proc);
+}
+
+// ============================================================
+// Process Exit - Called when a process finishes (noreturn)
+// ============================================================
+void __attribute__((noreturn)) process_exit(void) {
     if (!current_process) {
         serial_print("PROCESS: exit called with no current process\n");
-        return;
+        while(1) asm volatile("hlt");
     }
     
+    // Save the exiting process pointer
+    pcb_t* exiting = current_process;
+    
     serial_print("PROCESS: Process ");
-    serial_print_dec(current_process->pid);
+    serial_print_dec(exiting->pid);
     serial_print(" (");
-    serial_print(current_process->name);
+    serial_print(exiting->name);
     serial_print(") exiting\n");
     
     // Remove from ready queue
-    scheduler_ready_queue_remove(current_process);
-    current_process->state = PROC_STATE_TERMINATED;
+    scheduler_ready_queue_remove(exiting);
+    exiting->state = PROC_STATE_TERMINATED;
+    
+    // Clear process subsystem's current process if it matches exiting
+    if (process_get_current() == exiting) {
+        process_set_current(NULL);
+    }
     
     // Get next process from ready queue
     pcb_t* next = scheduler_ready_queue_next();
     if (!next) {
         serial_print("PROCESS: No processes left, returning to shell\n");
-        current_process = NULL;
-        // Jump back to the shell - this function should NOT return!
-        kmain_shell_loop();
-        // Never reached
+        // Reset scheduler state
+        scheduler_reset();
+        // Reset stack and jump to shell
+        __asm__ volatile (
+            "mov $0xFFFFFFFF8008FF00, %%rsp\n"
+            "jmp *%0\n"
+            : : "r"(kmain_shell_loop)
+            : "memory"
+        );
         while(1) asm volatile("hlt");
     }
     
-    // Switch to next process
-    pcb_t* old = current_process;
+    // Set current process to next
     current_process = next;
+    process_set_current(next);
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
     
     serial_print("SCHEDULER: Switching from PID ");
-    if (old) {
-        serial_print_dec(old->pid);
-        serial_print(" (");
-        serial_print(old->name);
-        serial_print(")");
-    } else {
-        serial_print("NULL");
-    }
-    serial_print(" to PID ");
+    serial_print_dec(exiting->pid);
+    serial_print(" (");
+    serial_print(exiting->name);
+    serial_print(") to PID ");
     serial_print_dec(next->pid);
     serial_print(" (");
     serial_print(next->name);
     serial_print(")\n");
     
-    context_switch(old, next);
+    context_switch(exiting, next);
+    // Should never reach here
+    while(1) asm volatile("hlt");
 }
 
 // ============================================================
@@ -142,9 +171,15 @@ void scheduler_switch_to(pcb_t* next) {
     
     pcb_t* prev = current_process;
     current_process = next;
+    process_set_current(next);
+    
+    scheduler_ready_queue_remove(next);
     
     if (prev && prev->state != PROC_STATE_TERMINATED) {
         prev->state = PROC_STATE_READY;
+        if (prev->state == PROC_STATE_READY) {
+            scheduler_ready_queue_add(prev);
+        }
     }
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
@@ -165,11 +200,6 @@ void scheduler_switch_to(pcb_t* next) {
     serial_print(")\n");
     
     context_switch(prev, next);
-    
-    // NOTE: context_switch() never returns here!
-    // The only way we get here is if context_switch() returned,
-    // which means the process finished.
-    // We handle this in process_yield() by calling process_exit().
 }
 
 // ============================================================
@@ -183,6 +213,7 @@ void scheduler_init(void) {
     ready_queue_head = NULL;
     ready_queue_tail = NULL;
     current_process = NULL;
+    process_set_current(NULL);
     schedule_count = 0;
     yield_count = 0;
     
@@ -234,7 +265,6 @@ void process_yield(void) {
     if (!next) {
         // No processes in ready queue - run current process again
         serial_print("SCHEDULER: No processes in ready queue, continuing current\n");
-        // Re-add current process
         if (current_process->state == PROC_STATE_READY) {
             scheduler_ready_queue_add(current_process);
             next = current_process;

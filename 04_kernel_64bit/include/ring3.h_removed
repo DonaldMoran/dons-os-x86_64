@@ -1,0 +1,11 @@
+#ifndef RING3_H
+#define RING3_H
+
+#include <stdint.h>
+
+#define USER_CODE_BASE   0x0000008000000000ULL
+#define USER_STACK_BASE  0x000000007FFFFFE00000ULL
+
+void ring3_enter(uint64_t entry, uint64_t stack);
+
+#endif

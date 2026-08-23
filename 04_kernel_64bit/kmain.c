@@ -9,7 +9,6 @@
 #include "include/vmm.h"
 #include "include/serial.h"
 #include "include/heap.h"
-#include "include/ring3.h"
 #include "include/tss.h"
 #include "include/syscall.h"
 #include "include/user_syscall.h"
@@ -22,9 +21,15 @@
 #include "include/bootinfo.h"
 
 extern void pit_init(uint32_t freq);
+
 // Embedded ELF test program (from test_program.bin)
 extern unsigned char test_program[];
 extern unsigned int test_program_len;
+
+// Embedded user shell binary
+extern unsigned char user_shell_elf[];
+extern unsigned int user_shell_elf_len;
+
 static BootInfo *g_bootinfo = NULL;
 
 static int validate_bootinfo(BootInfo* info) {
@@ -185,7 +190,7 @@ static void handle_command(const char *cmd) {
         "pmmtest", "info", "mem", "test", 
         "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", 
         "nxtest", "syscall", "elfload", "proclist" , "proccreate" , "vmmclone", 
-        "runproc", "schstat", "testyield"
+        "runproc", "schstat", "testyield", "usershell"
     };
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
     
@@ -205,8 +210,6 @@ static void handle_command(const char *cmd) {
         vga_print("  maptest  - Test page mapping\n");
         vga_print("  testrec  - Test recursive mapping address\n");
         vga_print("  heaptest - Test heap free list\n");
-        vga_print("  user     - Test user mode (Ring 3)\n");
-        vga_print("  user2    - Test user mode (Ring 3) - second test\n");
         vga_print("  nxtest   - Test NX (No Execute) bit\n");
         vga_print("  syscall  - Test ring(0) calls\n");
         vga_print("  elfload  - Load and run ELF program ring(3)\n");
@@ -216,14 +219,15 @@ static void handle_command(const char *cmd) {
         vga_print("  runproc   - Create and run a test process\n");
         vga_print("  schstat   - Show scheduler statistics\n");
         vga_print("  testyield - Test cooperative scheduling with yield\n");
+        vga_print("  usershell - Test ring3 shell\n");
         vga_print("> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear();
-        vga_print("DonsDOS v0.4.5\n");
+        vga_print("DonsDOS v0.4.6\n");
         vga_print("Type 'help'\n");
         vga_print("> ");
     } else if (strcmp(cmd, "version") == 0) {
-        vga_print("\nDonsDOS v0.4.5\n");
+        vga_print("\nDonsDOS v0.4.6\n");
         vga_print("Build: 64-bit kernel with VGA console\n");
         vga_print("Features: VMM with recursive paging, HHDM, NX support, Syscalls, ELF loader\n");
         vga_print("Copyright (c) 2026 Don's OS Project\n");
@@ -508,16 +512,6 @@ static void handle_command(const char *cmd) {
         if (p3) kfree(p3);
         heap_stats();
         serial_print("=== HEAPTEST END ===\n");
-    } else if (strcmp(cmd, "user") == 0) {
-        vga_print("\n=== User Mode Test ===\n");
-        vga_print("Creating user process...\n");
-        create_user_process(user_test, NULL);
-        vga_print("> ");
-    } else if (strcmp(cmd, "user2") == 0) {
-        vga_print("\n=== User Mode Test 2 ===\n");
-        vga_print("Creating user process...\n");
-        create_user_process(user_test2, NULL);
-        vga_print("> ");
     } else if (strcmp(cmd, "nxtest") == 0) {
         vga_print("\n=== NX Test ===\n");
         vga_print("NX bit support is enabled in the VMM.\n");
@@ -624,6 +618,37 @@ static void handle_command(const char *cmd) {
             vga_print("Failed to create processes\n");
         }
         vga_print("> ");
+        
+    } else if (strcmp(cmd, "usershell") == 0) {
+        vga_print("\n=== User Shell ===\n");
+        vga_print("Starting user shell...\n");
+        serial_print("USER_SHELL: Starting user shell\n");
+        
+        extern unsigned char user_shell_elf[];
+        extern unsigned int user_shell_elf_len;
+        
+        if (user_shell_elf_len == 0) {
+            vga_print("No user shell embedded!\n");
+            serial_print("USER_SHELL: No ELF embedded!\n");
+            vga_print("> ");
+            return;
+        }
+        
+        vga_print("User shell size: ");
+        vga_print_dec_cur(user_shell_elf_len);
+        vga_print(" bytes\n");
+        serial_print("USER_SHELL: Size = ");
+        serial_print_dec(user_shell_elf_len);
+        serial_print(" bytes\n");
+        
+        vga_print("Loading and running user shell...\n");
+        serial_print("USER_SHELL: Calling elf_load()\n");
+        
+        extern void elf_load(const void* elf_data);
+        elf_load(user_shell_elf);
+        
+        serial_print("USER_SHELL: Returned from elf_load()\n");
+        vga_print("> ");
     } else {
         vga_print("\nUnknown command: '");
         vga_print(cmd);
@@ -647,9 +672,9 @@ static void handle_command(const char *cmd) {
     }
 }
 
-void kmain_shell_loop(void) {
-    vga_print("DonsDOS v0.4.5\n");
-    serial_print("DonsDOS v0.4.5\n");
+__attribute__((noreturn)) void kmain_shell_loop(void) {
+    vga_print("DonsDOS v0.4.6\n");
+    serial_print("DonsDOS v0.4.6\n");
     
     vga_print("Type 'help'\n");
     serial_print("Type 'help'\n");
@@ -701,7 +726,7 @@ void kmain(BootInfo *info) {
     }
     
     vga_set_cursor_shape(0x00, 0x0F);
-    vga_print("DonsDOS v0.4.5\n");
+    vga_print("DonsDOS v0.4.6\n");
     vga_print("Initializing...\n");
 
     serial_print("idt_init\n");
@@ -721,11 +746,11 @@ void kmain(BootInfo *info) {
     serial_print("heap_init\n");
     heap_init();
 
-    serial_print("process_init\n");
-    process_init();
-    
     serial_print("scheduler_init\n");
     scheduler_init();
+
+    serial_print("process_init\n");
+    process_init();
 
     gdt_fix_user_segments(); 
     gdt_debug_print();
@@ -741,10 +766,10 @@ void kmain(BootInfo *info) {
     serial_print("Kernel data (0x10): 0x");
     serial_print_hex(((uint64_t*)gdt_ptr.base)[2]);
     serial_print("\n");
-    serial_print("User code   (0x28): 0x");
+    serial_print("User data   (0x28): 0x");
     serial_print_hex(((uint64_t*)gdt_ptr.base)[5]);
     serial_print("\n");
-    serial_print("User data   (0x30): 0x");
+    serial_print("User code   (0x30): 0x");
     serial_print_hex(((uint64_t*)gdt_ptr.base)[6]);
     serial_print("\n========================\n");
     serial_print("\n");

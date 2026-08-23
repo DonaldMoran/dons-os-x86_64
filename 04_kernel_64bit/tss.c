@@ -174,5 +174,11 @@ void tss_init(void) {
 }
 
 void tss_set_kernel_stack(uint64_t stack) {
+    serial_print("TSS: Setting rsp0 to 0x");
+    serial_print_hex(stack);
+    serial_print("\n");
     tss->rsp0 = stack;
+    serial_print("TSS: rsp0 set successfully to 0x");
+    serial_print_hex(tss->rsp0);
+    serial_print("\n");
 }

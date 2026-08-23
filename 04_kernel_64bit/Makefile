@@ -5,8 +5,6 @@ OBJCOPY := objcopy
 XXD     := xxd
 
 # Clean CFLAGS - only what's necessary
-# CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone
-# Clean CFLAGS - only what's necessary
 CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx
 LDFLAGS := -nostdlib
 
@@ -14,10 +12,14 @@ LDFLAGS := -nostdlib
 
 all: kernel.bin
 
+# ============================================================
+# KERNEL OBJECTS - Add user_shell_data.o here
+# ============================================================
 OBJS = entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o \
-	idt_load.o isr.o vga.o keyboard.o serial.o tss.o gdt.o ring3.o \
+	idt_load.o isr.o vga.o keyboard.o serial.o tss.o gdt.o \
 	syscall.o elf.o test_program_data.o \
-	user_syscall.o user_syscall_entry.o process.o string.o scheduler.o context_switch.o
+	user_syscall.o user_syscall_entry.o process.o string.o scheduler.o \
+	context_switch.o user_shell_data.o
 
 kernel.elf: $(OBJS)
 	$(LD) $(LDFLAGS) -T linker.ld -o kernel.elf $(OBJS)
@@ -25,7 +27,9 @@ kernel.elf: $(OBJS)
 kernel.bin: kernel.elf
 	$(OBJCOPY) -O binary kernel.elf kernel.bin
 
-# Build test program and embed it
+# ============================================================
+# TEST PROGRAM (existing)
+# ============================================================
 test_program_data.o: test_program_data.c
 	$(CC) $(CFLAGS) -Iinclude -c test_program_data.c -o test_program_data.o
 
@@ -35,13 +39,67 @@ test_program_data.c: test_program
 test_program: test_program.o user_linker.ld
 	$(LD) -T user_linker.ld -o test_program test_program.o
 
-context_switch.o: context_switch.asm
-	$(AS) -f elf64 context_switch.asm -o context_switch.o
-
 test_program.o: test_program.asm
 	$(AS) -f elf64 test_program.asm -o test_program.o
 
-# Assembly rules
+# ============================================================
+# USER SHELL (C)
+# ============================================================
+
+#~ # User library
+#~ userlib.o: userlib.c include/userlib.h
+#~ 	$(CC) $(CFLAGS) -mcmodel=large -fPIC -Iinclude -c userlib.c -o userlib.o
+
+#~ # User shell object
+#~ user_shell.o: user_shell.c include/userlib.h
+#~ 	$(CC) $(CFLAGS) -mcmodel=large -fPIC -Iinclude -c user_shell.c -o user_shell.o
+
+# User library
+userlib.o: userlib.c include/userlib.h
+	$(CC) $(CFLAGS) -mcmodel=large -Iinclude -c userlib.c -o userlib.o
+
+# User shell object
+user_shell.o: user_shell.c include/userlib.h
+	$(CC) $(CFLAGS) -mcmodel=large -Iinclude -c user_shell.c -o user_shell.o
+
+# User shell ELF (embed the ELF file directly, NOT the binary)
+user_shell.elf: user_shell.o userlib.o
+	$(LD) -T user_linker.ld -o user_shell.elf user_shell.o userlib.o
+
+# Generate the embedded data file from the user shell ELF
+user_shell_data.c: user_shell.elf
+	$(XXD) -i user_shell.elf > user_shell_data.c
+
+# Compile the embedded data
+user_shell_data.o: user_shell_data.c
+	$(CC) $(CFLAGS) -Iinclude -c user_shell_data.c -o user_shell_data.o
+
+# ============================================================
+# USER SHELL (Assembly - no compiler/linker issues)
+# ============================================================
+
+#~ # User shell object (assembly)
+#~ user_shell.o: user_shell.asm
+#~ 	$(AS) -f elf64 user_shell.asm -o user_shell.o
+
+#~ # User shell ELF
+#~ user_shell.elf: user_shell.o
+#~ 	$(LD) -T user_linker.ld -o user_shell.elf user_shell.o
+
+#~ # Generate the embedded data file from the user shell ELF
+#~ user_shell_data.c: user_shell.elf
+#~ 	$(XXD) -i user_shell.elf > user_shell_data.c
+
+#~ # Compile the embedded data
+#~ user_shell_data.o: user_shell_data.c
+#~ 	$(CC) $(CFLAGS) -Iinclude -c user_shell_data.c -o user_shell_data.o
+
+# ============================================================
+# ASSEMBLY RULES (existing)
+# ============================================================
+context_switch.o: context_switch.asm
+	$(AS) -f elf64 context_switch.asm -o context_switch.o
+
 entry.o: entry.asm
 	$(AS) -f elf64 entry.asm -o entry.o
 
@@ -54,11 +112,12 @@ idt_load.o: idt_load.asm
 isr.o: isr.asm
 	$(AS) -f elf64 isr.asm -o isr.o
 
-# ADDED: usermode syscall entry
 user_syscall_entry.o: user_syscall_entry.asm
 	$(AS) -f elf64 user_syscall_entry.asm -o user_syscall_entry.o
 
-# C compilation rules
+# ============================================================
+# C COMPILATION RULES (existing)
+# ============================================================
 %.o: %.c
 	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
 
@@ -69,22 +128,16 @@ vga.o: vga.c
 syscall.o: syscall.c
 	$(CC) $(CFLAGS) -Iinclude -I. -c syscall.c -o syscall.o
 
-scheduler.o: scheduler.c
-	$(CC) $(CFLAGS) -Iinclude -c scheduler.c -o scheduler.o
-
-string.o: string.c
-	$(CC) $(CFLAGS) -Iinclude -c string.c -o string.o
-
-process.o: process.c
-	$(CC) $(CFLAGS) -Iinclude -c process.c -o process.o
-
 elf.o: elf.c
 	$(CC) $(CFLAGS) -Iinclude -I. -c elf.c -o elf.o
 
-# ADDED: usermode syscall dispatcher
 user_syscall.o: user_syscall.c
 	$(CC) $(CFLAGS) -Iinclude -I. -c user_syscall.c -o user_syscall.o
 
-# Clean
+# ============================================================
+# CLEAN (updated)
+# ============================================================
 clean:
 	rm -f *.o *.bin *.elf test_program test_program.bin test_program_data.c
+	rm -f user_shell.elf user_shell_data.c
+	rm -f user_shell.bin
