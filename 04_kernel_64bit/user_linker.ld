@@ -3,36 +3,40 @@ ENTRY(_start)
 
 SECTIONS
 {
-    /* User program base address: must match USER_CODE_BASE */
-    . = 0x0000008000000000;
+    /* User virtual base address */
+    . = 0x8000000000;
 
-    /* All sections combined into one LOAD segment */
-    .text : {
-        *(.text)
-        *(.text.*)
+    /* Code */
+    .text : ALIGN(16)
+    {
+        *(.text*)
     }
 
-    /* Align .rodata to 16 bytes for better string handling */
-    . = ALIGN(16);
-    .rodata : {
-        *(.rodata)
-        *(.rodata.*)
-        *(.rodata.str1.1)
-        *(.rodata.str1.16)
-        *(.rodata.str1.32)
+    /* Read-only data (strings, consts, etc.) */
+    .rodata : ALIGN(16)
+    {
+        *(.rodata*)
+        *(.rodata.str1.1*)
+        *(.rodata.str1.8*)
     }
 
-    .data : {
-        *(.data)
-        *(.data.*)
+    /* Exception frames (needed for clang) */
+    .eh_frame : ALIGN(16)
+    {
+        *(.eh_frame*)
     }
 
-    .bss : {
-        *(.bss)
-        *(.bss.*)
+    /* Writable data */
+    .data : ALIGN(16)
+    {
+        *(.data*)
+    }
+
+    /* Zero‑fill section */
+    .bss : ALIGN(16)
+    {
+        *(.bss*)
         *(COMMON)
+        _end = .;  /* IMPORTANT: For sbrk to know where heap starts */
     }
-
-    /* Align end to page boundary for proper mapping */
-    . = ALIGN(0x1000);
 }

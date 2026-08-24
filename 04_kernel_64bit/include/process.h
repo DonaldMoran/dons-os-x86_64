@@ -71,5 +71,6 @@ void process_test_clone(void);
 void process_start(pcb_t* process);
 void process_destroy(pcb_t* process);
 void process_cleanup_elf_pages(pcb_t* pcb);
+void process_exit(void) __attribute__((noreturn));
 
 #endif

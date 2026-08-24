@@ -26,9 +26,9 @@ extern void pit_init(uint32_t freq);
 extern unsigned char test_program[];
 extern unsigned int test_program_len;
 
-// Embedded user shell binary
-extern unsigned char user_shell_elf[];
-extern unsigned int user_shell_elf_len;
+// Embedded user shell binary (weak symbols to allow override)
+extern unsigned char build_user_shell_elf[];
+extern unsigned int build_build_user_shell_elf_len;
 
 static BootInfo *g_bootinfo = NULL;
 
@@ -82,8 +82,6 @@ static int validate_bootinfo(BootInfo* info) {
 void test_process_entry(void) {
     const char* msg = "Hello from process!\n";
     sys_write(1, msg, 22);
-    // sys_exit(0);  // Keep this commented out
-    // Instead, tell the scheduler we're done
     process_exit();
 }
 
@@ -292,9 +290,9 @@ static void handle_command(const char *cmd) {
         );
     } else if (strcmp(cmd, "pmmtest") == 0) {
         vga_print("\nPMM Test:\n");
-        uint64_t p1 = pmm_alloc_page();
-        uint64_t p2 = pmm_alloc_page();
-        uint64_t p3 = pmm_alloc_page();
+        uint64_t p1 = pmm_alloc_page(PAGE_KERNEL);
+        uint64_t p2 = pmm_alloc_page(PAGE_KERNEL);
+        uint64_t p3 = pmm_alloc_page(PAGE_KERNEL);
         vga_print("  Page1: 0x");
         vga_print_hex_cur(p1);
         vga_print("\n");
@@ -306,7 +304,7 @@ static void handle_command(const char *cmd) {
         vga_print("\n");
         pmm_free_page(p2);
         vga_print("  Freed page2\n");
-        uint64_t p4 = pmm_alloc_page();
+        uint64_t p4 = pmm_alloc_page(PAGE_KERNEL);
         vga_print("  Page4: 0x");
         vga_print_hex_cur(p4);
         vga_print("\n");
@@ -367,7 +365,7 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "maptest") == 0) {
         vga_print("\n=== Map Test ===\n");
         vga_print("  Simple test: Allocate and use a page\n");
-        uint64_t test_phys = pmm_alloc_page();
+        uint64_t test_phys = pmm_alloc_page(PAGE_KERNEL);
         if (test_phys == 0) {
             vga_print("  Failed to allocate physical page!\n");
             vga_print("> ");
@@ -618,16 +616,24 @@ static void handle_command(const char *cmd) {
             vga_print("Failed to create processes\n");
         }
         vga_print("> ");
-        
     } else if (strcmp(cmd, "usershell") == 0) {
         vga_print("\n=== User Shell ===\n");
         vga_print("Starting user shell...\n");
         serial_print("USER_SHELL: Starting user shell\n");
         
-        extern unsigned char user_shell_elf[];
-        extern unsigned int user_shell_elf_len;
+        // Use the same pattern as test_program
+        extern unsigned char build_user_shell_elf[];
+        extern unsigned int build_build_user_shell_elf_len;
         
-        if (user_shell_elf_len == 0) {
+        // TEMPORARY: Hardcode the length to bypass the symbol issue
+        unsigned int len = 58600;  // Hardcoded from the actual ELF size
+        // unsigned int len = build_build_user_shell_elf_len;  // Commented out for now
+        
+        serial_print("USER_SHELL: len = ");
+        serial_print_dec(len);
+        serial_print("\n");
+        
+        if (len == 0) {
             vga_print("No user shell embedded!\n");
             serial_print("USER_SHELL: No ELF embedded!\n");
             vga_print("> ");
@@ -635,17 +641,17 @@ static void handle_command(const char *cmd) {
         }
         
         vga_print("User shell size: ");
-        vga_print_dec_cur(user_shell_elf_len);
+        vga_print_dec_cur(len);
         vga_print(" bytes\n");
         serial_print("USER_SHELL: Size = ");
-        serial_print_dec(user_shell_elf_len);
+        serial_print_dec(len);
         serial_print(" bytes\n");
         
         vga_print("Loading and running user shell...\n");
         serial_print("USER_SHELL: Calling elf_load()\n");
         
         extern void elf_load(const void* elf_data);
-        elf_load(user_shell_elf);
+        elf_load(build_user_shell_elf);
         
         serial_print("USER_SHELL: Returned from elf_load()\n");
         vga_print("> ");

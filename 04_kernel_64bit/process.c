@@ -109,7 +109,7 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
     // Use kernel page table (temporary - no isolation)
     uint64_t current_cr3;
     asm volatile("mov %%cr3, %0" : "=r"(current_cr3));
-    pcb->cr3 = current_cr3;
+    pcb->cr3 = current_cr3; // Use kernel page table for now (temporary fix)
     
     // Determine if this is a user process or kernel process
     if (entry_point != 0 && entry_point < KERNEL_BASE) {
@@ -127,7 +127,8 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
         
         // Allocate and map each stack page
         for (int i = 0; i < USER_STACK_PAGES; i++) {
-            uint64_t phys = pmm_alloc_page();
+            // Use typed allocation - USER_DATA for user stack (HIGH zone)
+            uint64_t phys = pmm_alloc_page_for_elf();
             if (!phys) {
                 serial_print("PROCESS: Failed to allocate user stack page ");
                 serial_print_dec(i);
@@ -168,6 +169,11 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
             
             // Track the page for cleanup (using elf_page_list)
             elf_add_page_to_pcb(pcb, phys);
+
+            // Track base user stack phys for debugging/cleanup
+            if (i == 0) {
+                pcb->user_stack_phys = phys;
+            }
         }
         
         pcb->user_stack_top = pcb->user_stack_virt + USER_STACK_SIZE - 16;

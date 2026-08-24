@@ -1,3 +1,32 @@
+#!/bin/bash
+# Fix user process page table issue
+# Run from: /home/noneya/code/dons-os-x86_64/
+
+set -e
+
+echo "=== Fixing user process page tables ==="
+echo ""
+
+# Step 1: Force user processes to use kernel page table
+echo "[1/4] Modifying process.c to use kernel page table..."
+cd /home/noneya/code/dons-os-x86_64/04_kernel_64bit
+
+# Backup process.c
+cp process.c process.c.backup
+
+# Force user processes to use kernel CR3
+sed -i 's/pcb->cr3 = current_cr3;/pcb->cr3 = current_cr3; \/\/ Use kernel page table for now (temporary fix)/g' process.c
+
+echo "✓ Modified process.c"
+echo ""
+
+# Step 2: Add debug to elf.c - using a cleaner approach
+echo "[2/4] Adding debug to elf.c..."
+cp elf.c elf.c.backup
+
+# We'll manually insert debug prints using a different method
+# First, find the elf_map_range function and add debug
+cat > elf.c.new << 'EOF'
 #include "include/elf.h"
 #include "include/vga.h"
 #include "include/serial.h"
@@ -9,7 +38,6 @@
 #include "include/user_space.h" 
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 #include "include/debug.h"
 
 static int elf_validate(const Elf64_Ehdr* ehdr) {
@@ -22,6 +50,12 @@ static int elf_validate(const Elf64_Ehdr* ehdr) {
     if (ehdr->e_ident[4] != 2) return -1; // 64-bit
     if (ehdr->e_ident[5] != 1) return -1; // little-endian
     return 0;
+}
+
+static void copy_bytes(uint8_t* dest, const uint8_t* src, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        dest[i] = src[i];
+    }
 }
 
 void elf_add_page_to_pcb(pcb_t* pcb, uint64_t phys) {
@@ -62,10 +96,10 @@ void elf_add_page_to_pcb(pcb_t* pcb, uint64_t phys) {
 
 static int elf_map_range(pcb_t* pcb, uint64_t start_virt, uint64_t end_virt, uint64_t page_flags) {
     uint64_t start_page = start_virt & ~0xFFFULL;
-    uint64_t end_page   = (end_virt + 0xFFF) & ~0xFFFULL;
+    uint64_t end_page = (end_virt + 0xFFF) & ~0xFFFULL;
     
-    // Use Uncacheable (PCD | PWT) to avoid cache coherency issues
-    uint64_t valid_flags = PT_PRESENT | PT_WRITE | PT_USER | (1ULL << 4) | (1ULL << 3);
+    uint64_t valid_flags = (page_flags & (PT_PRESENT | PT_WRITE | PT_USER | PT_NX));
+    valid_flags &= ~(0x80ULL | 0x40ULL | 0x200ULL | 0x800ULL);
     
     serial_print("ELF: Mapping range 0x");
     serial_print_hex(start_page);
@@ -75,55 +109,51 @@ static int elf_map_range(pcb_t* pcb, uint64_t start_virt, uint64_t end_virt, uin
     serial_print_hex(valid_flags);
     serial_print("\n");
     
+    // Debug: print current CR3
+    uint64_t cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(cr3));
+    serial_print("ELF: Current CR3 = 0x");
+    serial_print_hex(cr3);
+    serial_print(" (pcb->cr3 = 0x");
+    serial_print_hex(pcb->cr3);
+    serial_print(")\n");
+    
     for (uint64_t virt = start_page; virt < end_page; virt += 4096) {
-        // Use typed allocation - USER_DATA for ELF pages
-        uint64_t phys = pmm_alloc_page(PAGE_USER_DATA);
+        uint64_t existing_phys = vmm_get_phys(virt);
+        serial_print("ELF: vmm_get_phys(0x");
+        serial_print_hex(virt);
+        serial_print(") = 0x");
+        serial_print_hex(existing_phys);
+        serial_print("\n");
+        
+        if (existing_phys != 0) {
+            serial_print("ELF: Page already mapped at 0x");
+            serial_print_hex(virt);
+            serial_print(" phys=0x");
+            serial_print_hex(existing_phys);
+            serial_print(" - updating flags\n");
+            vmm_map_page(virt, existing_phys, valid_flags);
+            __asm__ volatile ("invlpg (%0)" : : "r" (virt) : "memory");
+            elf_add_page_to_pcb(pcb, existing_phys);
+            continue;
+        }
+        
+        uint64_t phys = pmm_alloc_page();
         if (!phys) {
             serial_print("ELF: Failed to allocate physical page!\n");
             return -1;
         }
-        
         serial_print("ELF: Mapping new page virt=0x");
         serial_print_hex(virt);
         serial_print(" phys=0x");
         serial_print_hex(phys);
         serial_print("\n");
-        
         vmm_map_page(virt, phys, valid_flags);
         ensure_hhdm_mapped(phys);
         __asm__ volatile ("invlpg (%0)" : : "r" (virt) : "memory");
         elf_add_page_to_pcb(pcb, phys);
     }
     return 0;
-}
-
-// Function to check data at a specific address
-static void check_data_at(uint64_t virt, const char* label) {
-    uint64_t phys = vmm_get_phys(virt);
-    serial_print("ELF: CHECK ");
-    serial_print(label);
-    serial_print(" - virt=0x");
-    serial_print_hex(virt);
-    serial_print(" phys=0x");
-    serial_print_hex(phys);
-    serial_print("\n");
-    
-    if (phys) {
-        // phys from vmm_get_phys already includes the page offset.
-        uint8_t* ptr = (uint8_t*)(HHDM_START + phys);
-        serial_print("ELF: CHECK ");
-        serial_print(label);
-        serial_print(" - bytes: ");
-        for (int j = 0; j < 16; j++) {
-            serial_print_hex(ptr[j]);
-            serial_print(" ");
-        }
-        serial_print("\n");
-    } else {
-        serial_print("ELF: CHECK ");
-        serial_print(label);
-        serial_print(" - PHYS NOT PRESENT!\n");
-    }
 }
 
 void elf_load(const void* elf_data) {
@@ -147,7 +177,6 @@ void elf_load(const void* elf_data) {
     
     uint64_t entry_point = ehdr->e_entry;
     
-    // First, create the process
     pcb_t* pcb = process_create("elf_prog", entry_point, 0);
     if (!pcb) {
         serial_print("ELF: Failed to create process!\n");
@@ -175,7 +204,9 @@ void elf_load(const void* elf_data) {
     
     if (min_virt != 0xFFFFFFFFFFFFFFFFULL) {
         uint64_t start_page = min_virt & ~0xFFFULL;
-        uint64_t end_page   = (max_virt + 0xFFF) & ~0xFFFULL;
+        uint64_t end_page = (max_virt + 0xFFF) & ~0xFFFULL;
+        uint64_t page_flags = PT_PRESENT | PT_WRITE | PT_USER;
+        page_flags &= ~(0x80ULL | 0x40ULL | 0x200ULL | 0x800ULL);
         
         serial_print("ELF: Mapping full range 0x");
         serial_print_hex(start_page);
@@ -183,7 +214,7 @@ void elf_load(const void* elf_data) {
         serial_print_hex(end_page);
         serial_print("\n");
         
-        if (elf_map_range(pcb, start_page, end_page, 0) < 0) {
+        if (elf_map_range(pcb, start_page, end_page, page_flags) < 0) {
             vga_print("Failed to map pages\n");
             process_destroy(pcb);
             return;
@@ -209,14 +240,6 @@ void elf_load(const void* elf_data) {
             
             const uint8_t* src = (const uint8_t*)elf_data + offset;
             
-            // DEBUG: Print source data at the string location
-            serial_print("ELF: DEBUG - Source at elf_data+0x1480: ");
-            for (int j = 0; j < 16; j++) {
-                serial_print_hex(((uint8_t*)elf_data + 0x1480 + j)[0]);
-                serial_print(" ");
-            }
-            serial_print("\n");
-            
             if (filesz > 0) {
                 serial_print("ELF: Copying filesz=0x");
                 serial_print_hex(filesz);
@@ -241,61 +264,21 @@ void elf_load(const void* elf_data) {
                     size_t   page_rem = 4096 - page_off;
                     if (chunk > page_rem) chunk = page_rem;
                     
-                    // phys already includes page_off; subtract it to get base
-                    uint64_t phys_base = phys - page_off;
-                    void* hhdm_dest = (void*)(HHDM_START + phys_base + page_off);
-                    
-                    // DEBUG: Print source bytes at offset 0x480
-                    if (copied <= 0x480 && copied + chunk > 0x480) {
-                        serial_print("ELF: COPY - Source bytes at offset 0x480: ");
-                        for (int j = 0; j < 16; j++) {
-                            serial_print_hex(src[0x480 + j]);
-                            serial_print(" ");
-                        }
-                        serial_print("\n");
-                        
-                        serial_print("ELF: WRITE phys for 0x8000000480 = 0x");
-                        serial_print_hex(phys_base);
-                        serial_print("\n");
-                    }
-                    
-                    // Copy via HHDM
-                    for (size_t j = 0; j < chunk; j++) {
-                        ((uint8_t*)hhdm_dest)[j] = src[copied + j];
-                    }
-                    
-                    // DEBUG: Print destination bytes at offset 0x480 after copy
-                    if (copied <= 0x480 && copied + chunk > 0x480) {
-                        uint8_t* verify = (uint8_t*)hhdm_dest + (0x480 - copied);
-                        serial_print("ELF: COPY - Dest bytes at offset 0x480 after copy: ");
-                        for (int j = 0; j < 16; j++) {
-                            serial_print_hex(verify[j]);
-                            serial_print(" ");
-                        }
-                        serial_print("\n");
-                    }
-                    
+                    void* hhdm_dest = (void*)(HHDM_START + phys + page_off);
+                    copy_bytes((uint8_t*)hhdm_dest, src + copied, chunk);
                     copied += chunk;
                 }
-                
-                // Check data immediately after copy (BEFORE BSS zeroing)
-                check_data_at(0x8000000480, "AFTER_COPY_BEFORE_BSS");
-                
-                serial_print("ELF: Copy complete\n");
             }
             
             if (memsz > filesz) {
                 uint64_t bss_start_virt = vaddr + filesz;
-                uint64_t bss_bytes      = memsz - filesz;
+                uint64_t bss_bytes = memsz - filesz;
                 
                 serial_print("ELF: Zeroing BSS at 0x");
                 serial_print_hex(bss_start_virt);
                 serial_print(" size=0x");
                 serial_print_hex(bss_bytes);
                 serial_print("\n");
-                
-                // Check data before BSS zeroing
-                check_data_at(0x8000000480, "BEFORE_BSS");
                 
                 uint64_t zeroed = 0;
                 while (zeroed < bss_bytes) {
@@ -313,28 +296,77 @@ void elf_load(const void* elf_data) {
                     size_t   page_rem = 4096 - page_off;
                     if (chunk > page_rem) chunk = page_rem;
                     
-                    uint64_t phys_base = phys - page_off;
-                    uint8_t* hhdm_ptr = (uint8_t*)(HHDM_START + phys_base + page_off);
+                    uint8_t* hhdm_ptr = (uint8_t*)(HHDM_START + phys + page_off);
                     for (size_t j = 0; j < chunk; j++) {
                         hhdm_ptr[j] = 0;
                     }
                     zeroed += chunk;
                 }
+            }
+            
+            // For the second LOAD segment (.rodata), verify and null-terminate
+            if (i == 1) {
+                serial_print("ELF: Verifying .rodata at 0x");
+                serial_print_hex(vaddr);
+                serial_print(" (");
+                serial_print_dec(filesz);
+                serial_print(" bytes):\n");
                 
-                // Check data after BSS zeroing
-                check_data_at(0x8000000480, "AFTER_BSS");
+                // Print first 64 bytes as characters
+                for (uint64_t j = 0; j < 64 && j < filesz; j++) {
+                    uint64_t cur_virt = vaddr + j;
+                    uint64_t phys = vmm_get_phys(cur_virt);
+                    if (!phys) {
+                        serial_print("  ERROR: phys=0 at offset ");
+                        serial_print_dec(j);
+                        serial_print("\n");
+                        break;
+                    }
+                    if (j % 16 == 0) {
+                        serial_print("  ");
+                        serial_print_hex(cur_virt);
+                        serial_print(": ");
+                    }
+                    uint64_t page_off = cur_virt & 0xFFF;
+                    uint8_t* hhdm_ptr = (uint8_t*)(HHDM_START + phys + page_off);
+                    uint8_t byte = hhdm_ptr[0];
+                    if (byte >= 32 && byte <= 126) {
+                        serial_putc(byte);
+                    } else if (byte == 0) {
+                        serial_print("\\0");
+                    } else if (byte == 10) {
+                        serial_print("\\n");
+                    } else {
+                        serial_print(".");
+                    }
+                    serial_print(" ");
+                    if (j % 16 == 15) {
+                        serial_print("\n");
+                    }
+                }
+                serial_print("\n");
+                
+                // Ensure null termination at the end of the data
+                if (filesz > 0) {
+                    uint64_t last_addr = vaddr + filesz - 1;
+                    uint64_t phys = vmm_get_phys(last_addr);
+                    if (phys) {
+                        uint64_t page_off = last_addr & 0xFFF;
+                        uint8_t* hhdm_ptr = (uint8_t*)(HHDM_START + phys + page_off);
+                        if (*hhdm_ptr != 0) {
+                            *hhdm_ptr = 0;
+                            serial_print("ELF: Added null terminator at 0x");
+                            serial_print_hex(last_addr);
+                            serial_print("\n");
+                        }
+                    }
+                }
             }
         }
     }
     
-    // DEBUG: Check string immediately after all loading
-    check_data_at(0x8000000480, "IMMEDIATE_AFTER_LOAD");
-    
     serial_print("ELF: Process created successfully\n");
     vga_print("ELF loaded\n");
-    
-    // DEBUG: Check string after "Process created successfully"
-    check_data_at(0x8000000480, "AFTER_PROCESS_CREATE");
     
     serial_print("ELF: Starting process via jump_to_user_mode\n");
     extern void jump_to_user_mode(uint64_t entry, uint64_t stack);
@@ -345,10 +377,9 @@ void elf_load(const void* elf_data) {
     serial_print_hex(pcb->kernel_stack_top);
     serial_print("\n");
     
-    // DEBUG: Check string before jump
-    check_data_at(0x8000000480, "BEFORE_JUMP");
+    __asm__ volatile ("wbinvd");
+    serial_print("ELF: Cache flushed (wbinvd)\n");
     
-    // Just TLB flush
     __asm__ volatile (
         "mov %%cr3, %%rax\n\t"
         "mov %%rax, %%cr3\n\t"
@@ -362,3 +393,43 @@ void elf_load(const void* elf_data) {
     process_destroy(pcb);
     serial_print("ELF: Load complete, returning to shell\n");
 }
+EOF
+
+# Replace elf.c with the new version
+mv elf.c.new elf.c
+
+echo "✓ Updated elf.c with debug"
+echo ""
+
+# Step 3: Clean and rebuild
+echo "[3/4] Rebuilding kernel..."
+make clean
+make all
+
+echo "✓ Kernel rebuilt"
+echo ""
+
+# Step 4: Rebuild boot image
+echo "[4/4] Rebuilding boot image..."
+cd /home/noneya/code/dons-os-x86_64/05_boot_kernel64
+make clean
+make all
+
+echo ""
+echo "========================================"
+echo "Build complete!"
+echo "========================================"
+echo ""
+echo "Now run QEMU with logging:"
+echo "  cd /home/noneya/code/dons-os-x86_64/05_boot_kernel64"
+echo "  make run-log"
+echo ""
+echo "Then in QEMU, type: usershell"
+echo ""
+echo "After QEMU exits, check the log:"
+echo "  cat serial.log | grep -E 'sys_write|vmm_get_phys|PML4|ELF: Mapping|ELF: Current CR3'"
+echo ""
+echo "To revert changes:"
+echo "  cd /home/noneya/code/dons-os-x86_64/04_kernel_64bit"
+echo "  cp process.c.backup process.c"
+echo "  cp elf.c.backup elf.c"

@@ -1,0 +1,67 @@
+Dons OS Picolibc Integration Status - Session Summary
+
+Project: dons-os-x86_64
+Goal: Integrate Picolibc and get user shell working in Ring 3
+
+Current Status:
+
+    ✅ Picolibc rebuilt with -mcmodel=large and installed at /opt/cross
+
+    ✅ User shell ELF builds successfully with Picolibc
+
+    ✅ ELF loads correctly at 0x8000000000
+
+    ✅ Process enters Ring 3 successfully
+
+    ✅ Syscall SYS_WRITE is being called from user space
+
+    ⚠️ String data is not being copied correctly from user to kernel - only the first character h appears, rest is garbled/null
+
+What We Know:
+
+    The syscall mechanism works - sys_write is called with correct address (buf=0x8000000480) and count (22)
+
+    CR3 is 0x11000 both during ELF loading and during syscall (same page table)
+
+    ELF data is being copied correctly to physical memory (we verified with debug)
+
+    safe_copy_from_user is called but the data copied is garbled (shows \0\0\0\0.\0\0\0h.\0\0.....\0\0\0\0\0)
+
+    The h character appears on screen, proving the syscall path works
+
+Next Steps Needed:
+
+    Debug safe_copy_from_user - add detailed debug to see:
+
+        Physical address translation for each byte
+
+        What bytes are actually being read from memory
+
+        Why the string data is not being copied correctly
+
+    The vmm_get_phys function may be returning wrong physical addresses for user memory
+
+    The .rodata section containing the string may not be properly mapped in the user page table
+
+Key Files:
+
+    04_kernel_64bit/userland/apps/user_shell.c - User shell source
+
+    04_kernel_64bit/user_syscall.c - Syscall dispatcher with safe_copy_from_user
+
+    04_kernel_64bit/elf.c - ELF loader
+
+    04_kernel_64bit/vmm.c - Virtual memory manager with vmm_get_phys
+
+    04_kernel_64bit/process.c - Process creation
+
+Working Commands:
+bash
+
+# Rebuild everything
+cd /home/noneya/code/dons-os-x86_64/04_kernel_64bit/userland && make clean && make all
+cd /home/noneya/code/dons-os-x86_64/04_kernel_64bit && make all
+cd /home/noneya/code/dons-os-x86_64/05_boot_kernel64 && make clean && make all && make run-log
+
+# Check serial output
+cat serial.log | grep -E "sys_write|safe_copy|vmm_get_phys|ELF"
