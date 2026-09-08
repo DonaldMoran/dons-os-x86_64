@@ -12,8 +12,14 @@ int scheduler_ready_queue_empty(void);
 pcb_t* scheduler_schedule(void);
 void scheduler_switch_to(pcb_t* next);
 void process_yield(void);
-void process_exit(void);
+__attribute__((noreturn)) void process_exit(void);
+void scheduler_reset(void);
 pcb_t* scheduler_get_current(void);
+void scheduler_set_current(pcb_t* proc);
 void scheduler_stats(void);
+
+// Shell process management
+void scheduler_set_shell_process(pcb_t* shell);
+pcb_t* scheduler_get_shell_process(void);
 
 #endif

@@ -24,6 +24,10 @@ ENTRY(_start)
          *(.data*)
      }
  
+     .userelf : {
+        *(.userelf)
+    }
+ 
      .bss : {
          *(.bss*)
          *(COMMON)
@@ -31,5 +35,6 @@ ENTRY(_start)
          . += 8192;
          . = ALIGN(4096);
      }
+     
  }
 

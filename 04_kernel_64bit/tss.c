@@ -21,9 +21,6 @@ uint64_t kernel_stack[4096] __attribute__((aligned(16)));
 // First push will go to kernel_stack[4095]
 uint64_t *kernel_stack_top = &kernel_stack[4096];
 
-
-static int tss_loaded = 0;
-
 void tss_init(void) {
     serial_print("=== TSS INIT START ===\n");
     vga_print("TSS: Init start\n");
@@ -97,8 +94,8 @@ void tss_init(void) {
     // Set RSP0 to top of kernel_stack
     // ============================================================
     serial_print("TSS: Setting rsp0...\n");
-    uint64_t kernel_stack_top = (uint64_t)&kernel_stack[4096];
-    tss->rsp0 = kernel_stack_top;
+    uint64_t kernel_stack_top_val = (uint64_t)&kernel_stack[4096];
+    tss->rsp0 = kernel_stack_top_val;
     serial_print("TSS: rsp0 = 0x");
     serial_print_hex(tss->rsp0);
     serial_print("\n");
@@ -123,24 +120,21 @@ void tss_init(void) {
     // ============================================================
     
     // ============================================================
-    // Load TSS with ltr
+    // Load TSS with ltr - ALWAYS executed to support warm reboots safely
     // ============================================================
-    if (!tss_loaded) {
-        serial_print("TSS: Loading TR with selector 0x38...\n");
-        vga_print("TSS: Loading TR...\n");
-        serial_print("TSS: about to execute ltr 0x38\n");
-        __asm__ volatile (
-            "cli\n\t"
-            "ltr %%ax\n\t"
-            "sti"
-            :
-            : "a"(0x38)
-            : "memory"
-        );
-        serial_print("TSS: ltr completed successfully\n");
-        tss_loaded = 1;
-        serial_print("TSS: TR loaded\n");
-    }
+    serial_print("TSS: Loading TR with selector 0x38...\n");
+    vga_print("TSS: Loading TR...\n");
+    serial_print("TSS: about to execute ltr 0x38\n");
+    __asm__ volatile (
+        "cli\n\t"
+        "ltr %%ax\n\t"
+        "sti"
+        :
+        : "a"(0x38)
+        : "memory"
+    );
+    serial_print("TSS: ltr completed successfully\n");
+    serial_print("TSS: TR loaded\n");
     // ============================================================
     
     // ============================================================
@@ -174,5 +168,11 @@ void tss_init(void) {
 }
 
 void tss_set_kernel_stack(uint64_t stack) {
+    serial_print("TSS: Setting rsp0 to 0x");
+    serial_print_hex(stack);
+    serial_print("\n");
     tss->rsp0 = stack;
+    serial_print("TSS: rsp0 set successfully to 0x");
+    serial_print_hex(tss->rsp0);
+    serial_print("\n");
 }

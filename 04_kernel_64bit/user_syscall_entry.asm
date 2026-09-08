@@ -10,8 +10,9 @@ global user_syscall_entry
 global syscall_init_asm
 
 extern syscall_dispatch
-extern kmain_shell_loop
-extern kernel_stack_top
+extern process_exit
+extern serial_print
+extern serial_print_hex
 
 ; ---------------------------------------------------------------------------
 ; Syscall init: set up EFER, STAR, LSTAR, FMASK
@@ -96,7 +97,7 @@ user_syscall_entry:
     
     ; Check for SYS_EXIT (2)
     cmp r14, 2
-    je .return_to_kernel
+    je .handle_exit
     
     ; Normal syscall: restore and return via SYSRET
     pop r15
@@ -113,8 +114,12 @@ user_syscall_entry:
     mov rsp, [user_rsp_storage]
     
     o64 sysret          ; Return to user mode
+
+.handle_exit:
+    ; SYS_EXIT - process_exit() handles cleanup and scheduling
+    ; Use JMP instead of CALL to avoid stack corruption
     
-.return_to_kernel:
+    ; Restore registers
     pop r15
     pop r14
     pop r13
@@ -125,7 +130,21 @@ user_syscall_entry:
     pop rcx             ; discard saved user RIP
     pop rbp
     
-    ; Switch to kernel stack
-    mov rsp, [kernel_stack_top]
+    ; Debug: print that we're exiting
+    push rax            ; save return value
+    mov rdi, exit_msg
+    call serial_print
+    pop rax
+    push rax
+    call serial_print_hex
+    mov rdi, newline
+    call serial_print
+    pop rax
     
-    jmp kmain_shell_loop
+    ; Pass exit status to process_exit
+    mov rdi, rax        ; status
+    jmp process_exit    ; Jump to process_exit (never returns)
+
+section .data
+exit_msg: db "SYS_EXIT: status=", 0
+newline: db 0x0A, 0x0D, 0

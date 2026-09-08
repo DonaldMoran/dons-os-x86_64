@@ -11,6 +11,13 @@
 #define RECURSIVE_PML4_INDEX 510
 #define HHDM_START 0xFFFF800000000000ULL
 
+// Cache control flags
+#define PAGE_PCD (1ULL << 4)  // Cache Disable
+#define PAGE_PWT (1ULL << 3)  // Write-Through
+
+// Force Uncacheable for all mappings to avoid coherency issues
+#define PAGE_UNCACHED (PAGE_PCD | PAGE_PWT)  // UC in PAT
+
 uint64_t vmm_max_physical = 0;
 static BootInfo* vmm_bootinfo = NULL;
 
@@ -29,7 +36,8 @@ void* ensure_hhdm_mapped(uint64_t phys) {
     uint64_t virt = HHDM_START + phys;
 
     if (!vmm_is_mapped(virt)) {
-        vmm_map_page(virt, phys, PT_PRESENT | PT_WRITE);
+        // Use Uncacheable for HHDM to match user mappings
+        vmm_map_page(virt, phys, PT_PRESENT | PT_WRITE | PAGE_UNCACHED);
         serial_print("VMM: Dynamically mapped HHDM 0x");
         serial_print_hex(phys);
         serial_print(" -> 0x");
@@ -71,19 +79,17 @@ void vmm_init(BootInfo* info) {
 
     vmm_max_physical = max_phys;
 
+    // Map low memory with Uncacheable
     for (uint64_t addr = 0; addr < 0x200000; addr += 0x1000) {
-        vmm_map_page(addr, addr, PT_PRESENT | PT_WRITE);
+        vmm_map_page(addr, addr, PT_PRESENT | PT_WRITE | PAGE_UNCACHED);
     }
 
-    serial_print("VMM: Mapping physical memory into HHDM...\n");
-    for (uint64_t phys = 0; phys < max_phys; phys += PAGE_SIZE) {
-        uint64_t virt = HHDM_START + phys;
-        if (!vmm_is_mapped(virt)) {
-            vmm_map_page(virt, phys, PT_PRESENT | PT_WRITE);
-        }
-    }
+    serial_print("VMM: Physical memory into HHDM is already mapped by bootloader.\n");
 
-    serial_print("VMM: HHDM mapping complete.\n");
+    uint64_t bootinfo_phys = (uint64_t)info;
+    serial_print("VMM: BootInfo page at phys=");
+    serial_print_hex(bootinfo_phys);
+    serial_print("\n");
 
     uint64_t cr3;
     asm volatile("mov %%cr3, %0" : "=r"(cr3));
@@ -105,10 +111,14 @@ void vmm_init(BootInfo* info) {
 void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     phys &= ~0xFFFULL;
 
+    // Clean flags - preserve caching attributes
     uint64_t user_flag    = (flags & PT_USER) ? PT_USER : 0;
     uint64_t write_flag   = (flags & PT_WRITE) ? PT_WRITE : 0;
     uint64_t present_flag = PT_PRESENT;
     uint64_t nx_flag      = (flags & PT_NX) ? PT_NX : 0;
+    
+    // Preserve caching flags (PCD, PWT)
+    uint64_t cache_flags = flags & (PAGE_PCD | PAGE_PWT);
 
     uint64_t* pml4 = get_pml4_virt();
 
@@ -119,13 +129,14 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
 
     uint64_t* pdpt;
     if (!(pml4[pml4_idx] & PT_PRESENT)) {
-        uint64_t new_pdpt_phys = pmm_alloc_page();
+        // Allocate PDPT strictly as PAGE_PAGE_TABLE (kernel/LOW zone)
+        uint64_t new_pdpt_phys = pmm_alloc_page_for_tables();
         if (!new_pdpt_phys) {
             serial_print("VMM: Failed to allocate PDPT!\n");
             return;
         }
         memset(phys_to_virt(new_pdpt_phys), 0, PAGE_SIZE);
-        pml4[pml4_idx] = new_pdpt_phys | present_flag | write_flag | user_flag;
+        pml4[pml4_idx] = new_pdpt_phys | present_flag | write_flag | user_flag | cache_flags;
         serial_print("VMM: Allocated PDPT at 0x");
         serial_print_hex(new_pdpt_phys);
         serial_print("\n");
@@ -137,13 +148,14 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
 
     uint64_t* pd;
     if (!(pdpt[pdpt_idx] & PT_PRESENT)) {
-        uint64_t new_pd_phys = pmm_alloc_page();
+        // Allocate PD strictly as PAGE_PAGE_TABLE (kernel/LOW zone)
+        uint64_t new_pd_phys = pmm_alloc_page_for_tables();
         if (!new_pd_phys) {
             serial_print("VMM: Failed to allocate PD!\n");
             return;
         }
         memset(phys_to_virt(new_pd_phys), 0, PAGE_SIZE);
-        pdpt[pdpt_idx] = new_pd_phys | present_flag | write_flag | user_flag;
+        pdpt[pdpt_idx] = new_pd_phys | present_flag | write_flag | user_flag | cache_flags;
         serial_print("VMM: Allocated PD at 0x");
         serial_print_hex(new_pd_phys);
         serial_print("\n");
@@ -155,13 +167,14 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
 
     uint64_t* pt;
     if (!(pd[pd_idx] & PT_PRESENT)) {
-        uint64_t new_pt_phys = pmm_alloc_page();
+        // Allocate PT strictly as PAGE_PAGE_TABLE (kernel/LOW zone)
+        uint64_t new_pt_phys = pmm_alloc_page_for_tables();
         if (!new_pt_phys) {
             serial_print("VMM: Failed to allocate PT!\n");
             return;
         }
         memset(phys_to_virt(new_pt_phys), 0, PAGE_SIZE);
-        pd[pd_idx] = new_pt_phys | present_flag | write_flag | user_flag;
+        pd[pd_idx] = new_pt_phys | present_flag | write_flag | user_flag | cache_flags;
         serial_print("VMM: Allocated PT at 0x");
         serial_print_hex(new_pt_phys);
         serial_print("\n");
@@ -171,7 +184,7 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
         pt = phys_to_virt(existing_pt_phys);
     }
 
-    uint64_t pte = phys | present_flag | write_flag | user_flag;
+    uint64_t pte = phys | present_flag | write_flag | user_flag | cache_flags;
     if (nx_flag) pte |= PT_NX;
 
     pt[pt_idx] = pte;
@@ -212,20 +225,30 @@ uint64_t vmm_get_phys(uint64_t virt) {
     uint32_t pd_idx   = (virt >> 21) & 0x1FF;
     uint32_t pt_idx   = (virt >> 12) & 0x1FF;
 
-    if (!(pml4[pml4_idx] & PT_PRESENT)) return 0;
+    if (!(pml4[pml4_idx] & PT_PRESENT)) {
+        return 0;
+    }
     uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFFULL;
     uint64_t* pdpt = phys_to_virt(pdpt_phys);
 
-    if (!(pdpt[pdpt_idx] & PT_PRESENT)) return 0;
+    if (!(pdpt[pdpt_idx] & PT_PRESENT)) {
+        return 0;
+    }
     uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFFULL;
     uint64_t* pd = phys_to_virt(pd_phys);
 
-    if (!(pd[pd_idx] & PT_PRESENT)) return 0;
+    if (!(pd[pd_idx] & PT_PRESENT)) {
+        return 0;
+    }
     uint64_t pt_phys = pd[pd_idx] & ~0xFFFULL;
     uint64_t* pt = phys_to_virt(pt_phys);
 
-    if (!(pt[pt_idx] & PT_PRESENT)) return 0;
-    return (pt[pt_idx] & ~0xFFFULL) | (virt & 0xFFFULL);
+    if (!(pt[pt_idx] & PT_PRESENT)) {
+        return 0;
+    }
+
+    uint64_t phys = (pt[pt_idx] & ~0xFFFULL) | (virt & 0xFFFULL);
+    return phys;
 }
 
 int vmm_is_mapped(uint64_t virt) {
@@ -368,7 +391,8 @@ uint64_t vmm_clone_page_table(uint64_t src_cr3) {
     serial_print_hex(src_cr3);
     serial_print("\n");
 
-    uint64_t new_pml4_phys = pmm_alloc_page();
+    // New PML4 is a page-table page (kernel/LOW zone)
+    uint64_t new_pml4_phys = pmm_alloc_page_for_tables();
     if (!new_pml4_phys) {
         serial_print("VMM: Failed to allocate new PML4!\n");
         return 0;
@@ -382,11 +406,11 @@ uint64_t vmm_clone_page_table(uint64_t src_cr3) {
 
     memset(new_pml4, 0, PAGE_SIZE);
 
-    for (int i = 256; i < 512; i++) {
+    // Copy ALL present PML4 entries, except the recursive one
+    for (int i = 0; i < 512; i++) {
+        if (i == RECURSIVE_PML4_INDEX)
+            continue;
         if (src_pml4[i] & PT_PRESENT) {
-            if (i == RECURSIVE_PML4_INDEX) {
-                continue;
-            }
             new_pml4[i] = src_pml4[i];
             serial_print("VMM: Copied PML4[");
             serial_print_dec(i);
@@ -396,6 +420,7 @@ uint64_t vmm_clone_page_table(uint64_t src_cr3) {
         }
     }
 
+    // Set recursive mapping for the new PML4
     new_pml4[RECURSIVE_PML4_INDEX] = new_pml4_phys | PT_PRESENT | PT_WRITE;
 
     serial_print("VMM: Page table cloned successfully. New CR3=0x");
@@ -438,6 +463,20 @@ void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t fl
     asm volatile("mov %0, %%cr3" : : "r"(cr3));
 
     vmm_map_page(virt, phys, flags);
+
+    asm volatile("mov %0, %%cr3" : : "r"(old_cr3));
+}
+
+// ============================================================
+// NEW: Unmap a page in a specific CR3 (used during process cleanup)
+// ============================================================
+void vmm_unmap_page_in_cr3(uint64_t cr3, uint64_t virt) {
+    uint64_t old_cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(old_cr3));
+
+    asm volatile("mov %0, %%cr3" : : "r"(cr3));
+
+    vmm_unmap_page(virt);
 
     asm volatile("mov %0, %%cr3" : : "r"(old_cr3));
 }

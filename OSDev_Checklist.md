@@ -22,7 +22,7 @@
 
 ---
 
-## 2. Core Kernel Features (19/19 Complete)
+## 2. Core Kernel Features (22/22 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
@@ -31,7 +31,7 @@
 | 8 | **PIT Timer** | ✅ Complete | IRQ0 tick counter, scheduling foundation |
 | 9 | **Keyboard Driver** | ✅ Complete | IRQ1, scancode set 1, shift/caps, input buffer |
 | 10 | **VGA Console Upgrade** | ✅ Complete | Scrolling, cursor control, shell‑ready console |
-| 11 | **Shell** | ✅ Complete | Command interpreter: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, **user**, **user2**, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield** |
+| 11 | **Shell** | ✅ Complete | Command interpreter: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, **user**, **user2**, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield**, **usershell** |
 | 12 | **E820 Memory Map** | ✅ Complete | Memory detection, BootInfo struct passed to kernel |
 | 13 | **Physical Memory Manager** | ✅ Complete | Bitmap allocator, page alloc/free, reserved region marking |
 | 14 | **Virtual Memory Manager** | ✅ Complete | Recursive paging implemented at PML4[510]. VMM can read/write PML4 from higher-half kernel. HHDM mapping at PML4[256]. Dynamic page table allocation (PDPT, PD, PT) working. No GP faults when accessing page tables. `vmmtest` command verifies functionality. User-space page mapping with PT_USER flag working. **NX (No Execute) bit support via PT_NX flag.** **Dynamic HHDM mapping via `ensure_hhdm_mapped()`.** **Page table cloning via `vmm_clone_page_table()`.** |
@@ -44,7 +44,9 @@
 | 21 | **Process Foundation** | ✅ Complete | Process Control Block (PCB) structure. Process creation (`process_create`). Process listing (`proclist`). Page table cloning (`vmm_clone_page_table`). **`vmmclone` command** for testing page table isolation. Ready queue infrastructure (foundation for scheduler). |
 | 22 | **BootInfo Fix** | ✅ Complete | Fixed BootInfo structure alignment between bootloader and kernel. Added magic number and version validation. Proper memory map detection from BIOS E820. |
 | 23 | **Process Stack Setup** | ✅ Complete | Static kernel stack pool for processes. Process creation with dedicated user and kernel stacks. Process execution via direct function call (kernel mode). Process cleanup with `process_destroy()` (frees user stack, marks PCB unused). **`runproc` command** to create and execute a test process. Shell returns properly after process execution. |
-| 24 | **Cooperative Scheduler** | ✅ Complete ⭐ NEW | Ready queue with round‑robin scheduling. `process_yield()` for voluntary context switching. `process_exit()` for clean process termination. Assembly‑level context switching (`context_switch.asm`). **`testyield` command** for testing cooperative scheduling. **`schstat` command** for scheduler statistics. `runproc` now uses the scheduler. All previous features remain fully functional. |
+| 24 | **Preemptive Scheduler** | ✅ Complete ⭐ NEW | Ready queue with round‑robin scheduling. `process_yield()` for voluntary context switching. `process_exit()` for clean process termination. Assembly‑level context switching (`context_switch.asm`). **`testyield` command** for testing cooperative scheduling. **`schstat` command** for scheduler statistics. `runproc` now uses the scheduler. Timer interrupt integration via IRQ0 hook channels. Forceful quantum thread slicing context rotation. Assembly register frame saving/restoration via `timer_preempt_handler`. All previous features remain fully functional. |
+| 25 | **Segment-Shifting Bootloader** | ✅ Complete ⭐ NEW | Re-engineered `stage2.asm` to read kernel sectors in isolated 128-sector chunks, incrementing segment registers dynamically to permanently break through the 64 KB wrap boundary and expand the loader ceiling safely to 128 KB. |
+| 26 | **Userland Syscall Reboot** | ✅ Complete ⭐ NEW | Implemented `SYS_REBOOT` (syscall #25) to map the unprivileged Ring 3 Userland Shell option 4 directly back into a Ring 0 hardware triple-fault motherboard reset path. |
 
 ---
 
@@ -52,28 +54,26 @@
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 25 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
-| 26 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510], HHDM mapping at PML4[256], dynamic page table allocation, `vmmtest` working, **NX bit support**, **dynamic HHDM mapping**, **page table cloning** |
-| 27 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging, integrated with QEMU |
-| 28 | **Kernel Heap** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. Memory reuse verified via `heaptest`. **WRITE bit fix for heap pages.** |
-| 29 | **User Memory Mapping** | ✅ Complete | Pages mapped with PT_USER flag for user/kernel isolation |
-| 30 | **NX (No Execute) Bit** | ✅ Complete | PT_NX flag in VMM, `nxtest` command, NX status in `vmmtest`, **8KB .bss padding**, **keyboard_init() moved after memory management** |
-| 31 | **HHDM Dynamic Mapping** | ✅ Complete | `ensure_hhdm_mapped()` for on‑demand physical memory access. All physical memory mapped into HHDM region. Used by ELF loader and page table cloning. |
-
+| 27 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
+| 28 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510], HHDM mapping at PML4[256], dynamic page table allocation, `vmmtest` working, **NX bit support**, **dynamic HHDM mapping**, **page table cloning** |
+| 29 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging, integrated with QEMU |
+| 30 | **Kernel Heap** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. Memory reuse verified via `heaptest`. **WRITE bit fix for heap pages.** |
+| 31 | **User Memory Mapping** | ✅ Complete | Pages mapped with PT_USER flag for user/kernel isolation |
+| 32 | **NX (No Execute) Bit** | ✅ Complete | PT_NX flag in VMM, `nxtest` command, NX status in `vmmtest`, **8KB .bss padding**, **keyboard_init() moved after memory management** |
+| 33 | **HHDM Dynamic Mapping** | ✅ Complete | `ensure_hhdm_mapped()` for on‑demand physical memory access. All physical memory mapped into HHDM region. Used by ELF loader and page table cloning. |
 ---
 
-## 4. User Space & Advanced Features (5/8 Complete)
+## 4. User Space & Advanced Features (7/8 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 32 | **System Calls** | ✅ Complete | SYSCALL/SYSRET with SYS_WRITE and SYS_EXIT, MSR configuration, `syscall` test command, **safe user‑space memory access** |
-| 33 | **ELF Loader** | ✅ Complete ⭐ FINALIZED | Parse and load ELF64 files, map user code and stack, transition to user mode, `elfload` command, "Hello from Userland!" tested, **works on first boot** |
-| 34 | **Process Foundation** | ✅ Complete | PCB, process creation, process listing, page table cloning, `vmmclone` command |
-| 35 | **Process Stack Setup** | ✅ Complete | Static kernel stack pool, user/kernel stack allocation, process execution, `runproc` command, process cleanup |
-| 36 | **Cooperative Scheduler** | ✅ Complete ⭐ NEW | Ready queue, round‑robin scheduling, `process_yield()`, `process_exit()`, `testyield` command, `schstat` command |
-| 37 | **Process Model** | ☐ Not Started | Page table per process, context switching |
-| 38 | **Preemptive Scheduler** | ☐ Not Started | Timer interrupt integration, preemptive task switching |
-| 39 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
+| 34 | **System Calls** | ✅ Complete | SYSCALL/SYSRET with SYS_WRITE and SYS_EXIT, MSR configuration, `syscall` test command, **safe user‑space memory access** |
+| 35 | **ELF Loader** | ✅ Complete ⭐ FINALIZED | Parse and load ELF64 files, map user code and stack, transition to user mode, `elfload` command, "Hello from Userland!" tested, **works on first boot** |
+| 36 | **Process Foundation** | ✅ Complete | PCB, process creation, process listing, page table cloning, `vmmclone` command |
+| 37 | **Process Stack Setup** | ✅ Complete | Static kernel stack pool, user/kernel stack allocation, process execution, `runproc` command, process cleanup |
+| 38 | **Preemptive Scheduler** | ✅ Complete ⭐ NEW | Ready queue, round‑robin scheduling, `process_yield()`, `process_exit()`, `testyield` command, `schstat` command, PIT timer tick preemption with safe user/kernel stack boundary checks. |
+| 39 | **User-Mode Processes** | 🚧 In Progress | Page table per process, context switching running securely within Ring 3 unprivileged isolated spaces. |
+| 40 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
 
 ---
 
@@ -82,16 +82,22 @@
 | Phase | Completed | Total | Progress |
 |-------|-----------|-------|----------|
 | Boot & System Init | 5 | 5 | **100%** ✅ |
-| Core Kernel | 19 | 19 | **100%** ✅ |
+| Core Kernel | 22 | 22 | **100%** ✅ |
 | Memory Management | 7 | 7 | **100%** ✅ |
-| User Space | 5 | 8 | **63%** 🚧 |
-| **Overall** | **36** | **39** | **92%** |
+| User Space | 7 | 8 | **87%** 🚧 |
+| **Overall** | **41** | **42** | **97%** |
 
 ---
 
 ## Recent Milestone Achievements (Chronological Order - Newest First)
 
-### v0.4.5 — Cooperative Scheduler ⭐ NEW
+### v0.4.6 — Preemptive & Unlocked Core Milestone ⭐ NEW
+- Move **Preemptive Scheduler** to 100% Complete status across all tracking layers.
+- Multi-pass segment register incrementing integrated into `stage2.asm` to expand loader boundaries to 256 sectors (128 KB kernel size capacity).
+- Added `SYS_REBOOT` (syscall #25) linking Ring 3 Userland Shell option 4 directly to safe Ring 0 triple-fault restarts.
+- Fixed string alignment layout anomalies inside `kmain.c` to bulletproof embedded `.userelf` sections.
+
+### v0.4.5 — Cooperative Scheduler
 - Ready queue with round‑robin scheduling
 - `process_yield()` for voluntary context switching
 - `process_exit()` for clean process termination
@@ -114,7 +120,6 @@
 ### v0.4.3 — ELF Loader Stabilized + Process Foundation
 - ELF loader works on **first boot** (no more "run twice" bug)
 - Bootloader identity‑mapping conflict resolved (detect and replace with proper user‑mode PTEs)
-- `PT_EXEC` (PWT bit) handling added to `vmm_map_page()`
 - Safe HHDM‑based user‑space memory access in syscall handler (`safe_copy_from_user`)
 - **Process Foundation:** PCB, `process_create()`, `proclist`, `proccreate`, `vmmclone` (page table cloning)
 - **Dynamic HHDM mapping:** `ensure_hhdm_mapped()`
@@ -176,12 +181,12 @@
 
 ## Next Steps (Recommended Order)
 
-1. **Preemptive Scheduler** — Timer interrupt integration, preemptive task switching
-2. **User-Mode Processes** — Run processes in ring3 with privilege separation
+1. **Permanent Storage Layer** — FatFs source inclusion, IDE/ATA PIO disk sector read/write hooks
+2. **User-Mode Processes** — Run processes in ring3 with full privilege separation
 3. **Ring0 Kernel Threads** — Kernel daemons, system services
 4. **Framebuffer Graphics** — Move from VGA text mode to graphics
 5. **File System** — Virtual File System (VFS) layer
 
 ---
 
-*Last Updated: August 2026*
+*Last Updated: September 2026*

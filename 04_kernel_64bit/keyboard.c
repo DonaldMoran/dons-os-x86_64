@@ -7,15 +7,22 @@ static char kbd_buffer[KBD_BUFFER_SIZE];
 static int  kbd_head = 0;
 static int  kbd_tail = 0;
 
-// Tables in .bss (not .rodata) - initialized at runtime
+// Full US keyboard scancode → ASCII tables (set 1)
 static char scancode_ascii[128];
 static char scancode_shift[128];
 
 void keyboard_init(void) {
+    // Reset buffer
     kbd_head = 0;
     kbd_tail = 0;
-    
-    // Initialize scancode tables at runtime
+
+    // Zero tables
+    for (int i = 0; i < 128; i++) {
+        scancode_ascii[i] = 0;
+        scancode_shift[i] = 0;
+    }
+
+    // Unshifted ASCII
     scancode_ascii[0x02] = '1';
     scancode_ascii[0x03] = '2';
     scancode_ascii[0x04] = '3';
@@ -26,7 +33,11 @@ void keyboard_init(void) {
     scancode_ascii[0x09] = '8';
     scancode_ascii[0x0A] = '9';
     scancode_ascii[0x0B] = '0';
+    scancode_ascii[0x0C] = '-';
+    scancode_ascii[0x0D] = '=';
     scancode_ascii[0x0E] = '\b';
+    scancode_ascii[0x0F] = '\t';
+
     scancode_ascii[0x10] = 'q';
     scancode_ascii[0x11] = 'w';
     scancode_ascii[0x12] = 'e';
@@ -37,7 +48,10 @@ void keyboard_init(void) {
     scancode_ascii[0x17] = 'i';
     scancode_ascii[0x18] = 'o';
     scancode_ascii[0x19] = 'p';
+    scancode_ascii[0x1A] = '[';
+    scancode_ascii[0x1B] = ']';
     scancode_ascii[0x1C] = '\n';
+
     scancode_ascii[0x1E] = 'a';
     scancode_ascii[0x1F] = 's';
     scancode_ascii[0x20] = 'd';
@@ -47,6 +61,10 @@ void keyboard_init(void) {
     scancode_ascii[0x24] = 'j';
     scancode_ascii[0x25] = 'k';
     scancode_ascii[0x26] = 'l';
+    scancode_ascii[0x27] = ';';
+    scancode_ascii[0x28] = '\'';
+    scancode_ascii[0x29] = '`';
+
     scancode_ascii[0x2C] = 'z';
     scancode_ascii[0x2D] = 'x';
     scancode_ascii[0x2E] = 'c';
@@ -58,8 +76,8 @@ void keyboard_init(void) {
     scancode_ascii[0x34] = '.';
     scancode_ascii[0x35] = '/';
     scancode_ascii[0x39] = ' ';
-    
-    // Shifted table
+
+    // Shifted ASCII
     scancode_shift[0x02] = '!';
     scancode_shift[0x03] = '@';
     scancode_shift[0x04] = '#';
@@ -70,6 +88,9 @@ void keyboard_init(void) {
     scancode_shift[0x09] = '*';
     scancode_shift[0x0A] = '(';
     scancode_shift[0x0B] = ')';
+    scancode_shift[0x0C] = '_';
+    scancode_shift[0x0D] = '+';
+
     scancode_shift[0x10] = 'Q';
     scancode_shift[0x11] = 'W';
     scancode_shift[0x12] = 'E';
@@ -80,6 +101,9 @@ void keyboard_init(void) {
     scancode_shift[0x17] = 'I';
     scancode_shift[0x18] = 'O';
     scancode_shift[0x19] = 'P';
+    scancode_shift[0x1A] = '{';
+    scancode_shift[0x1B] = '}';
+
     scancode_shift[0x1E] = 'A';
     scancode_shift[0x1F] = 'S';
     scancode_shift[0x20] = 'D';
@@ -89,6 +113,10 @@ void keyboard_init(void) {
     scancode_shift[0x24] = 'J';
     scancode_shift[0x25] = 'K';
     scancode_shift[0x26] = 'L';
+    scancode_shift[0x27] = ':';
+    scancode_shift[0x28] = '"';
+    scancode_shift[0x29] = '~';
+
     scancode_shift[0x2C] = 'Z';
     scancode_shift[0x2D] = 'X';
     scancode_shift[0x2E] = 'C';
@@ -103,11 +131,14 @@ void keyboard_init(void) {
 }
 
 int kbd_buffer_put(char c) {
-    int next = (kbd_head + 1) % KBD_BUFFER_SIZE;
-
-    if (next == kbd_tail)
+    // FIX 1: Explicitly prevent hardware null break-bytes from contaminating the buffer ring!
+    if (c == '\0') {
         return 0;
-
+    }
+    
+    int next = (kbd_head + 1) % KBD_BUFFER_SIZE;
+    if (next == kbd_tail)
+        return 0; // buffer full
     kbd_buffer[kbd_head] = c;
     kbd_head = next;
     return 1;
@@ -115,40 +146,35 @@ int kbd_buffer_put(char c) {
 
 int kbd_buffer_get(char *c) {
     if (kbd_head == kbd_tail)
-        return 0;
-
+        return 0; // empty
     *c = kbd_buffer[kbd_tail];
     kbd_tail = (kbd_tail + 1) % KBD_BUFFER_SIZE;
     return 1;
 }
 
+// FIX 2: Added a high-utility queue flush helper to clear outstanding trailing data arrays
+void keyboard_buffer_flush(void) {
+    __asm__ volatile("cli" ::: "memory");
+    kbd_head = 0;
+    kbd_tail = 0;
+    __asm__ volatile("sti" ::: "memory");
+}
+
 char scancode_to_ascii(uint8_t sc, int shift, int caps) {
+    // Ignore break codes
     if (sc & 0x80)
         return 0;
 
     uint8_t code = sc & 0x7F;
 
-    if (code == 0x0E)
-        return '\b';
-    if (code == 0x1C)
-        return '\n';
-    if (code == 0x39)
-        return ' ';
-
-    if (shift) {
-        char ch = scancode_shift[code];
-        if (ch)
-            return ch;
-    }
-
-    char ch = scancode_ascii[code];
+    char ch = shift ? scancode_shift[code] : scancode_ascii[code];
     if (!ch)
         return 0;
 
-    if (ch >= 'a' && ch <= 'z') {
-        if (caps && !shift) {
-            ch = (char)(ch - 'a' + 'A');
-        }
+    // Caps Lock only affects letters when shift is NOT active
+    if (caps && !shift) {
+        if (ch >= 'a' && ch <= 'z')
+            ch = ch - 'a' + 'A';
     }
 
     return ch;

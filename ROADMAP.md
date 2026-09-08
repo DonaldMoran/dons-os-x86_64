@@ -317,7 +317,7 @@ Boot chain is complete and stable.
 | **Cooperative Scheduler** | **✔ Complete ⭐ v0.4.5** |
 | **Context Switching** | **✔ Complete ⭐ v0.4.5** |
 | **Process Yield/Exit** | **✔ Complete ⭐ v0.4.5** |
-| Preemptive Scheduler | ☐ Planned (Next) |
+| **Preemptive Scheduler** | **☐ Planned (Next) ⭐ v0.4.6** |
 | Framebuffer Graphics | ☐ Planned |
 | File System | ☐ Planned |
 

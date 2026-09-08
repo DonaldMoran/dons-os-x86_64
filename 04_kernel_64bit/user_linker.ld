@@ -1,27 +1,32 @@
+OUTPUT_FORMAT("elf64-x86-64")
 ENTRY(_start)
 
 SECTIONS
 {
-    /* User program base address: must match USER_CODE_BASE */
-    . = 0x0000008000000000;
+    /* Absolute base address definition for the user space block */
+    . = 0x8000000000;
 
-    .text : {
-        *(.text*)
+    /* Combine all sections into a single, contiguous unified block 
+       to prevent mcmodel=large segment pointer shifting anomalies */
+    .text : ALIGN(4096) {
+        *(.text .text.*)
+        *(.rodata .rodata.*)
+        *(.data .data.*)
+        *(.user_data)
+        *(.gnu.linkonce.d.*)
+        *(.got)
+        *(.got.plt)
     }
 
-    .rodata : {
-        *(.rodata*)
-    }
-
-    .data : {
-        *(.data*)
-    }
-
-    .bss : {
-        *(.bss*)
+    .bss : ALIGN(4096) {
+        __bss_start = .;
+        *(.bss .bss.*)
         *(COMMON)
+        __bss_end = .;
     }
 
-    /* Align end to page boundary */
-    . = ALIGN(0x1000);
+    /DISCARD/ : {
+        *(.comment)
+        *(.note.*)
+    }
 }

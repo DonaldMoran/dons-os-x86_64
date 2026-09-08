@@ -2,51 +2,53 @@
 default rel
 
 section .text
+
 global jump_to_user_mode
-extern serial_print
-extern serial_print_hex
-
 jump_to_user_mode:
-    cli
+    ; rdi = entry point
+    ; rsi = user stack pointer
 
-    ; entry in rdi, stack in rsi (already aligned by C)
+    ; Load user-mode data segments (DPL=3)
+    mov ax, 0x2B        ; user data selector
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
 
-    push qword 0x2B        ; SS = user data
-    push rsi               ; RSP = user stack
+    ; Build iretq frame for ring 3
+    push qword 0x2B     ; SS = user data
+    push rsi            ; RSP = user stack
     pushfq
     pop rax
-    or rax, 0x3200         ; IF=1, IOPL=3
-    push rax               ; RFLAGS
-    push qword 0x33        ; CS = user code
-    push rdi               ; RIP = entry
-
-    ; After building the frame, before iretq:
-    mov dx, 0x3F8
-    mov al, 'F'
-    out dx, al
-    mov al, ':'
-    out dx, al
-    mov rax, [rsp]        ; RIP
-    call serial_print_hex
-    mov al, ' '
-    out dx, al
-    mov rax, [rsp+8]      ; CS
-    call serial_print_hex
-    mov al, ' '
-    out dx, al
-    mov rax, [rsp+16]     ; RFLAGS
-    call serial_print_hex
-    mov al, ' '
-    out dx, al
-    mov rax, [rsp+24]     ; RSP
-    call serial_print_hex
-    mov al, ' '
-    out dx, al
-    mov rax, [rsp+32]     ; SS
-    call serial_print_hex
-    mov al, 0x0A
-    out dx, al
-    mov al, 0x0D
-    out dx, al
+    or rax, (1 << 9)    ; IF = 1
+    push rax
+    push qword 0x33     ; CS = user code
+    push rdi            ; RIP = entry point
 
     iretq
+
+
+
+
+
+
+
+;~ global jump_to_user_mode
+
+;~ ; void jump_to_user_mode(uint64_t entry, uint64_t stack)
+;~ ; entry in RDI, stack in RSI
+;~ jump_to_user_mode:
+    ;~ ; Build IRETQ frame
+    ;~ push qword 0x2B        ; SS = user data (0x28)
+    ;~ push rsi               ; RSP = user stack
+    ;~ pushfq
+    ;~ pop rax
+    ;~ or rax, 0x0200         ; RFLAGS with IF=1 (bit 9), IOPL=0 (bits 13:12 = 0)
+    ;~ ; Clear IOPL bits (bits 13:12) to avoid GP fault
+    ;~ and rax, ~0x3000       ; Clear IOPL (bits 13:12)
+    ;~ or rax, 0x0200         ; Set IF (bit 9)
+    ;~ push rax
+    ;~ push qword 0x33        ; CS = user code (0x30)
+    ;~ push rdi               ; RIP = entry
+    
+    ;~ iretq

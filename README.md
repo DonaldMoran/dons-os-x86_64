@@ -1,7 +1,7 @@
 # dons‑os  
 ### Educational x86_64 Boot Chain + 64‑bit Interrupt‑Driven Kernel (MIT Licensed)
 
-**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU's reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher-half kernel** with working interrupts, timer, keyboard input, memory management, and a command shell.
+**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU's reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher-half kernel** with working interrupts, timer, keyboard input, memory management, a preemptive round-robin scheduler, system calls, and a command shell.
 
 The project emphasizes clarity, correctness, and educational value.  
 Each stage is isolated, minimal, and fully bootable.
@@ -16,8 +16,8 @@ Each stage is isolated, minimal, and fully bootable.
 - **03_boot_64bit** — PAE paging, PML4/PDPT/PD/PT, IA32_EFER.LME, long‑mode entry  
 
 ### Kernel Development 
-- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**, **system calls**, **ELF loader**, **process system foundation**, **process execution**, **cooperative scheduler**
-- **05_boot_kernel64** — Full boot chain: stage2 loads kernel, enters long mode, jumps to `_start`
+- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, command shell, **heap allocator**, **system calls**, **ELF loader**, **process system foundation**, **process execution**, **preemptive scheduler**
+- **05_boot_kernel64** — Full boot chain: stage2 loads kernel via multi-pass segment incrementing, enters long mode, jumps to `_start`
 
 The top‑level Makefile builds and runs all components.
 
@@ -52,18 +52,18 @@ make runkernel64
 ```bash
 make logkernel64
 ```
-
 This boots:
 
  1. BIOS → stage1  
  2. stage1 loads stage2  
  3. stage2 builds page tables with **recursive mapping**  
- 4. stage2 enters long mode  
- 5. stage2 jumps to kernel at 0xFFFFFFFF80100000 (higher-half)  
- 6. kernel executes `_start` → `kmain`  
- 7. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM, Heap, Syscalls, **ELF loader**, **Process System**  
- 8. kernel displays command prompt `>`  
- 9. User can type commands and receive responses
+ 4. stage2 reads the 64-bit kernel off disk in safe **128-sector chunks (64 KB steps)** to completely bypass real-mode address wrap-around ceilings
+ 5. stage2 enters long mode  
+ 6. stage2 jumps to kernel at 0xFFFFFFFF80100000 (higher-half)  
+ 7. kernel executes `_start` → `kmain`  
+ 8. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM, Heap, Syscalls, **ELF loader**, **Process System**, **Preemptive Scheduler**  
+ 9. kernel displays command prompt `>`  
+ 10. User can type commands and receive responses
 
 ---
 
@@ -93,10 +93,10 @@ Once booted, you'll see a prompt > where you can type commands:
 |---------|-------------|
 | `help` | Show available commands |
 | `clear` | Clear the screen |
-| `version` | Show version information |
+| `version` | Show version information (`DonsDOS v0.4.6`) |
 | `info` | Display system information (PML4, kernel addresses, E820 entries) |
-| `mem` | Display memory statistics (usable/reserved RAM) |
-| `reboot` | Reboot the system |
+| `mem` | Display memory information (usable/reserved RAM) |
+| `reboot` | Reboot the system (Ring 0 supervisor sequence) |
 | `pmmtest` | Test Physical Memory Manager |
 | `test` | Test exception handlers (#DE, #PF, #GP) |
 | `vmmtest` | Test Virtual Memory Manager with HHDM |
@@ -114,10 +114,9 @@ Once booted, you'll see a prompt > where you can type commands:
 | `runproc` | Create and execute a test process |
 | `schstat` | Show scheduler statistics |
 | `testyield` | Test cooperative scheduling with yield |
-
----
+| `usershell` | Step down privilege rings to enter unprivileged Ring 3 shell |
 ```text
-DonsDOS v0.4.5
+DonsDOS v0.4.6
 Type 'help'
 > help
 
@@ -145,6 +144,7 @@ Available commands:
   runproc    - Create and execute a test process
   schstat    - Show scheduler statistics
   testyield  - Test cooperative scheduling with yield
+  usershell  - Launch Ring 3 unprivileged shell interface
 ```
 
 ---
@@ -190,8 +190,6 @@ qemu-system-x86_64 \
 - triple faults  
 - CR0/CR4/EFER misconfiguration  
 - long‑mode entry failures  
-
-This debug mode was instrumental in getting the 64‑bit kernel working.
 
 ---
 
@@ -249,7 +247,7 @@ This project is designed to be:
 - `v0.2.3-vmm-stable` — Recursive paging implemented, VMM can read/write PML4, stable HHDM mapping, serial console fully integrated
 - `v0.2.5-heap-working` — Heap allocator (kmalloc) working, heapstat command, 256MB memory mapping
 - `v0.2.6-heap-stable` — Heap fully working with kfree and memory reuse, free list implemented, heaptest command
-- `v0.3.0-userland` — User mode (Ring 3) working, GDT with user segments, TSS stack switching, user code execution at CPL=3 with memory protection
+- `v0.3.0-userland` — User mode (Ring 3) working, GDT with user segments, TSS configured for stack switching, user code execution at CPL=3 with memory protection
 - `v0.3.1-nx-support` — **NX (No Execute) bit support enabled**, PT_NX flag in VMM, `nxtest` command, heap WRITE bit fix, keyboard buffer corruption resolved
 - `v0.3.2-syscalls` — **System call interface implemented** (SYS_WRITE, SYS_EXIT), SYSCALL/SYSRET support via MSRs, `syscall` test command
 - `v0.4.0-elf-loader` — Fully functional ELF64 loader. Parses and maps ELF segments with correct user permissions, builds a user stack, transitions cleanly into Ring 3, executes embedded user programs (e.g., “Hello from Userland!”), and returns safely back to the Ring 0 shell via the syscall exit path. `elfload` command added.
@@ -259,7 +257,6 @@ This project is designed to be:
   - Fixed bootloader identity‑mapping conflict (now detects and replaces bootloader mappings with proper user‑mode PTEs).  
   - Added safe HHDM‑based user‑space memory access in syscall handler (`safe_copy_from_user`).  
   - Corrected STAR MSR for SYSCALL/SYSRET (User CS = 0x30 → STAR[15:0] = 0x20).  
-  - Added `PT_EXEC` (PWT bit) handling in `vmm_map_page()` to ensure user pages are executable.  
   - Verified `elfload` works reliably on the first boot (no more "run twice" bug).  
   - **Process Foundation:** Process Control Block (PCB) structure, `process_create()`, `proclist`, `proccreate`, `vmmclone` (page table cloning).  
   - **Dynamic HHDM mapping:** `ensure_hhdm_mapped()` for on‑demand physical memory access.  
@@ -273,7 +270,7 @@ This project is designed to be:
   - **`runproc` command** to create and execute a test process.  
   - Shell returns properly after process execution.  
   - All previous features (`proclist`, `proccreate`, `vmmclone`, `elfload`) remain fully functional.
-- **`v0.4.5-cooperative-scheduler`** — **Cooperative Scheduler complete.**  
+- `v0.4.5-cooperative-scheduler` — **Cooperative Scheduler complete.**  
   - Ready queue with round‑robin scheduling.  
   - `process_yield()` for voluntary context switching.  
   - `process_exit()` for clean process termination.  
@@ -282,7 +279,11 @@ This project is designed to be:
   - **`schstat` command** to show scheduler statistics.  
   - `runproc` now uses the scheduler.  
   - All previous features (`proclist`, `proccreate`, `vmmclone`, `elfload`) remain fully functional.
-
+- **`v0.4.6-preemptive-unlocked` ⭐ NEW** — **Preemptive Scheduler & Unlocked Core capacity complete.**
+  - **Multi-Pass Segment Reader:** Configured `stage2.asm` to pull kernel blocks in safe 128-sector chunks, advancing segment offsets dynamically to entirely defeat real-mode 64 KB wrap limits.
+  - **Kernel Size Limit Lifted:** Expanded kernel disk read thresholds up to 256 sectors (128 KB allocation ceiling).
+  - **Userland Reboot System Call:** Added system call #25 (`SYS_REBOOT`) to cleanly wire Ring 3 Userland Shell option 4 right back into a Ring 0 hardware triple-fault motherboard reset.
+  - **Preemptive Core Integration:** Validated PIT clock timer integration (`IRQ0` at 100Hz) enforcing forceful quantum task slicing across ready queues.
 ---
 
 ## 📌 Project Status (as of August 2026)
@@ -411,11 +412,11 @@ The process system provides a foundation for multitasking:
 
 ### Short-term (Next)
 - 1. ~~**Cooperative scheduler** — Ready queue, `process_yield()`, round‑robin task switching~~ ✅
-- 2. **Preemptive scheduler** — Timer interrupt integration, preemptive task switching
-- 3. **User‑mode shell** — Move shell from Ring 0 to Ring 3 (Linux-style architecture)
+- 2. ~~**Preemptive scheduler** — Timer interrupt integration, preemptive task switching~~ ✅
+- 3. ~~**User‑mode shell** — Move shell from Ring 0 to Ring 3 (Linux-style architecture)~~ ✅
 
 ### Medium-term
-- 3. **Ring0 kernel threads** — Kernel daemons, system services
+- 3. ~~**Ring0 kernel threads** — Kernel daemons, system services~~ ✅
 - 4. **Framebuffer graphics** — Move from VGA text mode to graphics
 
 ### Long-term

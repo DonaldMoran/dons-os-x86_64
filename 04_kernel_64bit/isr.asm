@@ -14,16 +14,64 @@ extern isr1_handler
 extern isr8_handler
 extern isr14_handler
 
-extern irq0_handler
+; CORE SYSTEM LINK REGISTER FOR PREEMPTIVE SCHEDULING:
+extern timer_preempt_handler
 extern irq1_handler
 extern isr13_handler
 
-
 irq0_stub:
+    ; 1. CPU has automatically pushed: SS, RSP, RFLAGS, CS, RIP
+    ; Push all remaining general purpose registers to form a clean preempt_frame_t struct
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
     push rbp
-    mov rbp, rsp
-    call irq0_handler
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+
+    ; 2. Pass the exact memory pointer to this saved register frame as argument 1 (RDI)
+    mov rdi, rsp
+
+    ; 3. Invoke the core C kernel preemptive time-slicer logic
+    call timer_preempt_handler
+
+    ; 4. CRITICAL RECOVERY JUMP: Update RSP to whatever stack register node 
+    ; the scheduler selected to run next!
+    mov rsp, rax
+
+    ; 5. Restore registers belonging to the incoming thread context
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
     pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+
+    ; 6. Issue EOI notification back to the master PIC 
+    push rax
+    mov al, 0x20
+    out 0x20, al
+    pop rax
+
+    ; Return safely from the interrupt frame
     iretq
 
 irq1_stub:
@@ -87,5 +135,3 @@ isr14_stub:
     pop  rbp
     add  rsp, 8
     iretq
-
-
