@@ -1,0 +1,237 @@
+make -C 01_boot_16bit clean
+make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/01_boot_16bit'
+rm -f boot.bin stage2.bin hdd.img
+make[1]: Leaving directory '/home/noneya/code/dons-os-x86_64/01_boot_16bit'
+make -C 02_boot_32bit clean
+make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/02_boot_32bit'
+rm -f boot.bin stage2.bin hdd.img
+make[1]: Leaving directory '/home/noneya/code/dons-os-x86_64/02_boot_32bit'
+make -C 03_boot_64bit clean
+make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/03_boot_64bit'
+rm -f boot.bin stage2.bin kernel.bin hdd.img
+make[1]: Leaving directory '/home/noneya/code/dons-os-x86_64/03_boot_64bit'
+make -C 04_kernel_64bit clean
+make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/04_kernel_64bit'
+rm -f *.o *.bin *.elf test_program test_program.bin test_program_data.c
+rm -f user_shell.elf user_shell_data.c
+rm -f user_shell.bin
+make -C userland/newlib clean
+make[2]: Entering directory '/home/noneya/code/dons-os-x86_64/04_kernel_64bit/userland/newlib'
+rm -rf build ../../user_shell_data.c
+make[2]: Leaving directory '/home/noneya/code/dons-os-x86_64/04_kernel_64bit/userland/newlib'
+make[1]: Leaving directory '/home/noneya/code/dons-os-x86_64/04_kernel_64bit'
+make -C 05_boot_kernel64 clean
+make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/05_boot_kernel64'
+rm -f serial.log qemu.log qemu_debug.log
+rm -f boot.bin stage2.bin hdd.img
+make[1]: Leaving directory '/home/noneya/code/dons-os-x86_64/05_boot_kernel64'
+make -C 01_boot_16bit
+make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/01_boot_16bit'
+nasm -f bin boot.asm -o boot.bin
+nasm -f bin stage2.asm -o stage2.bin
+rm -f hdd.img
+qemu-img create -f raw hdd.img 10M
+Formatting 'hdd.img', fmt=raw size=10485760
+dd if=boot.bin   of=hdd.img conv=notrunc
+dd if=stage2.bin of=hdd.img bs=512 seek=1 conv=notrunc
+make[1]: Leaving directory '/home/noneya/code/dons-os-x86_64/01_boot_16bit'
+make -C 02_boot_32bit
+make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/02_boot_32bit'
+nasm -f bin boot.asm -o boot.bin
+nasm -f bin stage2.asm -o stage2.bin
+rm -f hdd.img
+qemu-img create -f raw hdd.img 10M
+Formatting 'hdd.img', fmt=raw size=10485760
+dd if=boot.bin   of=hdd.img conv=notrunc
+dd if=stage2.bin of=hdd.img bs=512 seek=1 conv=notrunc
+make[1]: Leaving directory '/home/noneya/code/dons-os-x86_64/02_boot_32bit'
+make -C 03_boot_64bit
+make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/03_boot_64bit'
+nasm -f bin boot.asm -o boot.bin
+nasm -f bin stage2.asm -o stage2.bin
+nasm -f bin kernel.asm -o kernel.bin
+rm -f hdd.img
+qemu-img create -f raw hdd.img 10M
+Formatting 'hdd.img', fmt=raw size=10485760
+dd if=boot.bin    of=hdd.img conv=notrunc
+dd if=stage2.bin  of=hdd.img bs=512 seek=1  conv=notrunc
+dd if=kernel.bin  of=hdd.img bs=512 seek=64 conv=notrunc
+make[1]: Leaving directory '/home/noneya/code/dons-os-x86_64/03_boot_64bit'
+make -C 04_kernel_64bit
+make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/04_kernel_64bit'
+make -C userland/newlib
+make[2]: Entering directory '/home/noneya/code/dons-os-x86_64/04_kernel_64bit/userland/newlib'
+/opt/cross/bin/x86_64-elf-gcc -Iinclude -Iapps/include -O2 -Wall -Wextra -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -mcmodel=large -fno-common -g -fno-stack-protector -Wno-missing-field-initializers -fno-builtin-memset -c arc2/crt0.S -o build/arc2/crt0.o
+/opt/cross/bin/x86_64-elf-gcc -Iinclude -Iapps/include -O2 -Wall -Wextra -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -mcmodel=large -fno-common -g -fno-stack-protector -Wno-missing-field-initializers -fno-builtin-memset -c arc2/syscalls.c -o build/arc2/syscalls.o
+/opt/cross/bin/x86_64-elf-gcc -Iinclude -Iapps/include -O2 -Wall -Wextra -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -mcmodel=large -fno-common -g -fno-stack-protector -Wno-missing-field-initializers -fno-builtin-memset -c arc2/reent.c -o build/arc2/reent.o
+/opt/cross/bin/x86_64-elf-gcc -Iinclude -Iapps/include -O2 -Wall -Wextra -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -mcmodel=large -fno-common -g -fno-stack-protector -Wno-missing-field-initializers -fno-builtin-memset -c apps/user_shell.c -o build/apps/user_shell.o
+/opt/cross/bin/x86_64-elf-gcc -T ../../user_newlib_linker.ld -nostdlib -mcmodel=large -Wl,--no-warn-rwx-segments -Llib -o build/user_shell.elf build/arc2/crt0.o build/arc2/syscalls.o build/arc2/reent.o build/apps/user_shell.o -lc
+xxd -i build/user_shell.elf > ../../user_shell_data.c
+make[2]: Leaving directory '/home/noneya/code/dons-os-x86_64/04_kernel_64bit/userland/newlib'
+nasm -f elf64 entry.asm -o entry.o
+nasm -f elf64 ring3_entry.S -o ring3_entry.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c kmain.c -o kmain.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c pmm.c -o pmm.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c vmm.c -o vmm.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c heap.c -o heap.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c idt.c -o idt.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c interrupts.c -o interrupts.o
+nasm -f elf64 idt_load.asm -o idt_load.o
+nasm -f elf64 isr.asm -o isr.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -I. -c vga.c -o vga.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c keyboard.c -o keyboard.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c serial.c -o serial.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c tss.c -o tss.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c gdt.c -o gdt.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -I. -c elf.c -o elf.o
+nasm -f elf64 test_program.asm -o test_program.o
+ld.lld -T user_linker.ld -o test_program test_program.o
+xxd -i test_program > test_program_data.c
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c test_program_data.c -o test_program_data.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -I. -c user_syscall.c -o user_syscall.o
+nasm -f elf64 user_syscall_entry.asm -o user_syscall_entry.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c process.c -o process.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c string.c -o string.o
+clang -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra -mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -Iinclude -c scheduler.c -o scheduler.o
+nasm -f elf64 context_switch.asm -o context_switch.o
+sed -i 's/unsigned char build_user_shell_elf/__attribute__((section(".userelf"))) unsigned char build_user_shell_elf/' user_shell_data.c
+sed -i 's/unsigned int build_user_shell_elf_len/const unsigned int build_user_shell_elf_len/' user_shell_data.c
+clang -target x86_64-unknown-elf -ffreestanding -O0 -Wall -Wextra -fno-pic -mno-red-zone -mno-sse -mno-sse2 -mno-avx -mno-mmx -mcmodel=large -fno-builtin -fno-common -Iinclude -Iinclude -c user_shell_data.c -o user_shell_data.o
+ld.lld -nostdlib -T linker.ld -o kernel.elf entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o idt_load.o isr.o vga.o keyboard.o serial.o tss.o gdt.o elf.o test_program_data.o user_syscall.o user_syscall_entry.o process.o string.o scheduler.o context_switch.o user_shell_data.o
+objcopy -O binary kernel.elf kernel.bin
+make[1]: Leaving directory '/home/noneya/code/dons-os-x86_64/04_kernel_64bit'
+make -C 05_boot_kernel64
+make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/05_boot_kernel64'
+nasm -f bin boot.asm -o boot.bin
+nasm -f bin stage2.asm -o stage2.bin
+rm -f hdd.img
+qemu-img create -f raw hdd.img 20M
+Formatting 'hdd.img', fmt=raw size=20971520
+dd if=boot.bin of=hdd.img conv=notrunc
+dd if=stage2.bin of=hdd.img bs=512 seek=1 conv=notrunc
+dd if=../04_kernel_64bit/kernel.bin of=hdd.img bs=512 seek=64 conv=notrunc
+make[1]: Leaving directory '/home/noneya/code/dons-os-x86_64/05_boot_kernel64'
+make -C 05_boot_kernel64 run
+make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/05_boot_kernel64'
+qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -monitor none
+BootInfo validated successfully
+PMM: Initializing with page type system...
+PMM: Zones computed:
+  LOW  zone: pages 288 - 8399
+  HIGH zone: pages 8400 - 32735
+PMM: Max physical memory: 0x8000000 (128 MB)
+PMM: Total pages: 32640
+PMM: Free pages: 32448
+PMM: Free memory: 126 MB
+VMM: Initializing...
+VMM: Detected 127 MB usable RAM
+VMM: Highest physical address: 0x7FE0000
+VMM: Physical memory into HHDM is already mapped by bootloader.
+VMM: BootInfo page at phys=17000
+VMM: CR3 = 0x11000
+VMM: NX support available
+VMM: Initialization complete
+HEAP: Initializing...
+HEAP: Extending heap by 1024 KB (256 pages)
+HEAP: Extended to 1024 KB total
+HEAP: Initialized at 0xFFFF900000000000 size=1024 KB
+PROCESS: Initializing...
+PROCESS: Initialization complete. 1 processes ready.
+GDT: Old user code at 0x30 = 0xAFF2000000FFFF
+GDT: Old user data at 0x28 = 0xAFFA000000FFFF
+GDT: New user data at 0x28 = 0xCFF2000000FFFF
+GDT: New user code at 0x30 = 0xAFFA000000FFFF
+GDT: User segments fixed for Ring 3
+=== TSS INIT START ===
+TSS: vmm_get_phys(0x5000) = 0x5000
+TSS: probing 0x5000...
+TSS: read ok
+TSS: write ok
+TSS: tss pointer = 0x5000
+TSS: sizeof(tss_t) = 0x68
+TSS: TSS_TOTAL_SIZE = 0x2069
+TSS: iomap pointer = 0x5068
+TSS: zeroing range [0x5000 .. 0x7069)
+TSS: zeroed 0x400 bytes
+TSS: zeroed 0x800 bytes
+TSS: zeroed 0xC00 bytes
+TSS: zeroed 0x1000 bytes
+TSS: zeroed 0x1400 bytes
+TSS: zeroed 0x1800 bytes
+TSS: zeroed 0x1C00 bytes
+TSS: zeroed 0x2000 bytes
+TSS: Zeroing loop completed
+TSS: I/O Permission Bitmap terminator set at 0x7068
+TSS: Setting rsp0...
+TSS: rsp0 = 0xFFFFFFFF8026B9E0
+TSS: Setting iopb_base...
+TSS: iopb_base = 0x68
+TSS: Calling gdt_set_tss...
+GDT: Setting TSS in bootloader GDT...
+GDT: Bootloader GDT at 0x1013B (limit: 0x47)
+GDT: TSS descriptor at GDT+0x38
+GDT: TSS base=0x5000 size=0x2068
+GDT: TSS descriptor low=0x890050002068
+GDT: TSS descriptor high=0x0
+GDT: Reading back TSS descriptor...
+  Low: 0x890050002068
+  High: 0x0
+GDT: TSS descriptor set successfully
+TSS: gdt_set_tss completed
+TSS: Loading TR with selector 0x38...
+TSS: about to execute ltr 0x38
+TSS: ltr completed successfully
+TSS: TR loaded
+TSS: TR register = 0x38
+
+=== GDT DEBUG ===
+GDT Base: 0x1013B Limit: 0x47
+GDT+0x0 (selector 0x0): 0x0 [Not Present]
+GDT+0x8 (selector 0x8): 0xCF9A000000FFFF [Code DPL=0]
+GDT+0x10 (selector 0x10): 0xCF93000000FFFF [Data DPL=0]
+GDT+0x18 (selector 0x18): 0xAF9A000000FFFF [Code DPL=0 64-bit]
+GDT+0x20 (selector 0x20): 0xAF93000000FFFF [Data DPL=0 64-bit]
+GDT+0x28 (selector 0x28): 0xCFF2000000FFFF [Data DPL=3 USER]
+GDT+0x30 (selector 0x30): 0xAFFA000000FFFF [Code DPL=3 64-bit USER]
+GDT+0x38 (selector 0x38): 0x8B0050002068 [System DPL=0]
+GDT+0x40 (selector 0x40): 0x0 [Not Present]
+=== END GDT DEBUG ===
+
+TSS: TR loaded correctly!
+=== TSS INIT COMPLETE ===
+CPU: x86_64 FSGSBASE instructions successfully enabled for Ring 3.
+SYSCALL init done
+Initializing **RING** 3 syscalls...
+SYSCALL init done
+CPU: Native hardware SSE vector extensions safely enabled.
+PROCESS: Realignment mapping user stack inside verified code segment: 0x8000100000
+PROCESS: User stack pointer finalized at RSP = 0x80000FFFE0
+VMM: Dynamically mapped HHDM 0x7ED0000 -> 0xFFFF800007ED0000
+VMM: Dynamically mapped HHDM 0x7ECF000 -> 0xFFFF800007ECF000
+VMM: Dynamically mapped HHDM 0x7ECE000 -> 0xFFFF800007ECE000
+VMM: Dynamically mapped HHDM 0x7ECD000 -> 0xFFFF800007ECD000
+VMM: Dynamically mapped HHDM 0x7ECC000 -> 0xFFFF800007ECC000
+VMM: Dynamically mapped HHDM 0x7ECB000 -> 0xFFFF800007ECB000
+VMM: Dynamically mapped HHDM 0x7ECA000 -> 0xFFFF800007ECA000
+VMM: Dynamically mapped HHDM 0x7EC9000 -> 0xFFFF800007EC9000
+VMM: Dynamically mapped HHDM 0x7EC8000 -> 0xFFFF800007EC8000
+VMM: Dynamically mapped HHDM 0x7EC7000 -> 0xFFFF800007EC7000
+VMM: Dynamically mapped HHDM 0x7EC6000 -> 0xFFFF800007EC6000
+VMM: Dynamically mapped HHDM 0x7EC5000 -> 0xFFFF800007EC5000
+VMM: Dynamically mapped HHDM 0x7EC4000 -> 0xFFFF800007EC4000
+VMM: Dynamically mapped HHDM 0x7EC3000 -> 0xFFFF800007EC3000
+VMM: Dynamically mapped HHDM 0x7EC2000 -> 0xFFFF800007EC2000
+VMM: Dynamically mapped HHDM 0x7EC1000 -> 0xFFFF800007EC1000
+VMM: Dynamically mapped HHDM 0x7EC0000 -> 0xFFFF800007EC0000
+AC D E Hello, world! 
+ INF inf NAN nan 0123456789abcdef 0123456789ABCDEF (null) 0 Infinity NaN REENT malloc succeeded Balloc succeeded POSIX . , function:   
+[USER LAND DIRECT] Assembly kernel trap successfully executed!
+        [USER LAND printf] If you see this, Newlib reentrancy is operational.
+>         
+[USER LAND DIAG] Option 1 pressed!
+>   
+[USER LAND DIAG] Option 2 pressed, exiting loop...
+    ../../../newlib-cygwin/newlib/libc/stdlib/dtoa.c        ../../../newlib-cygwin/newlib/libc/stdlib/mprec.c       assertion "%s" failed: file "%s", line %d%s%s
+     	     ÿÿp  €   P  €           1%  €      €      €   $%  €      €      €      €   ­$  €      €      €   ÷"  €   ?#  €      €   2#  €   A$  €      €   4$  €   È  €   È  €   È  €   È  €   È  €   È  €   È  €   È  €   È  €      €      €      €      €      €      €      €       €      €   Q!  €   /"  €       €       €       €      €      €      €      €   -&  €      €      €   N%  €      €      €      €   ‚!  €      €   O#  €      €      €   <7  €      €      €      €      €      €      €      €      €       €      €   Q!  €   !  €       €       €       €   :&  €   !  €   Ñ  €      €   Š&  €      €   Q&  €   €%  €   ®&  €   ¡&  €      €   ‚!  €   Ñ  €   y#  €      €      €   ñ7  €      €   Ñ  €           0000000000000000                ÿÿÿÿÿÿÿ               €        0000000000000000ÿÿÿÿÿÿï      À?      0@      à?      PC      ø?aCoc§‡Ò?³È`‹(ŠÆ?ûyŸPDÓ?      ð?      @      $@      @0x            }                       ¼‰Ø—²Òœ<3§¨Õ#öI9=§ôDý¥2—ŒÏº[%Co¬d(È
+                         €à7yÃACnµµ¸“Fõù?éO8M20ùHw‚Z<¿sÝOu                              ð?      $@      Y@     @@     ˆÃ@     jø@    €„.A    ÐcA    „×—A    eÍÍA    _ B   èvH7B   ¢”mB  @åœ0¢B  Ä¼ÖB  4&õkC €à7yÃAC  Ø…W4vC ÈNgmÁ«C =‘`äXáC@Œµx¯DPïâÖäKD’ÕMÏð€DöJáÇ-µD´ÙyCxêD                                  (((((                  ˆAAAAAABBBBBB                                                                                                                                                                                                                                                                                                         (((((                  ˆAAAAAABBBBBB                                                                                                                                 ö°  €   P«  €   P«  €   é°  €   P«  €   P«  €   P«  €   h°  €   P«  €   P«  €   ´¯  €   í¯  €   P«  €   à¯  €   
+°  €   P«  €   ý¯  €    «  €    «  €    «  €    «  €    «  €    «  €    «  €    «  €    «  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   ç®  €   ¯  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   ±  €   P«  €   P«  €   P«  €   0®  €   P«  €   Ù±  €   P«  €   P«  €   e½  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   P«  €   ç®  €   Ù­  €   P«  €   P«  €   P«  €   ’²  €   Ù­  €   Ú¬  €   P«  €   ¯³  €   P«  €   s³  €   K±  €   µ²  €   ¨²  €   P«  €   0®  €   Ú¬  €   ²  €   P«  €   P«  €   0¾  €   P«  €   Ú¬  €           0000000000000000                                ð  €           `Ý  €                                    ð  €   Ðð  €   €ñ  €                                                                                                                                   C                               C                               C                               C                               C                               C                               C                                ¨  €    §  €           Ù  €   Ð  €   Ð  €   Ð  €   Ð  €   Ð  €   Ð  €   Ð  €   Ð  €   Ð  €   Ð  €      ASCII                           ASCII                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          œ                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              

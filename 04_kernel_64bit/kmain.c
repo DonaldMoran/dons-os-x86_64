@@ -25,11 +25,34 @@ extern void pit_init(uint32_t freq);
 extern unsigned char test_program[];
 extern unsigned int test_program_len;
 
-// Embedded user shell binary
+//~ // Embedded user shell binary
 extern unsigned char build_user_shell_elf[];
 extern unsigned int build_user_shell_elf_len;
 
+// PATCH: Apply volatile to both external definitions. This forces Clang's 
+// optimizer to bypass relative code model assumptions and generate direct, absolute 
+// hardware memory load lookups from RAM, instantly resolving the cross-boundary link truncation.
+//~ extern volatile unsigned char build_user_shell_elf[];
+//~ extern volatile unsigned int build_user_shell_elf_len;
+
 static BootInfo *g_bootinfo = NULL;
+
+// Add this directly into your kernel initialization pipeline inside kmain.c
+void enable_user_fsgsbase(void) {
+    uint64_t cr4;
+    
+    // Read the current Control Register 4 state
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    
+    // Set Bit 16 (CR4.FSGSBASE = 1) to unlock user-mode wrfsbase/wrgsbase instructions
+    cr4 |= (1ULL << 16);
+    
+    // Write back the updated properties to the hardware execution matrix
+    __asm__ volatile("mov %0, %%cr4" : : "r"(cr4));
+    
+    serial_print("CPU: x86_64 FSGSBASE instructions successfully enabled for Ring 3.\n");
+}
+
 
 static inline uint8_t inb(uint16_t port) {
     uint8_t ret;
@@ -698,40 +721,38 @@ static void handle_command(const char *cmd) {
         vga_print("> ");
     } else if (strcmp(cmd, "elfload") == 0) {
         vga_print("\n--- Standalone Ring 3 ELF Loader ---\n");
-        vga_print("WARNING: Bypasses scheduler. Execution ends in a hardware fault.\n");
-        vga_print("Proceed? (y/n): ");
-
-        char confirm = 0;
-        while (!kbd_buffer_get(&confirm)) { __asm__ volatile("hlt"); }
-        vga_putc(confirm); vga_print("\n");
-
-        if (confirm != 'y' && confirm != 'Y') {
-            vga_print("Aborted.\n> ");
-            return;
-        }
-
         if (test_program_len == 0) { 
-            vga_print("Error: Binary missing.\n> "); 
+            vga_print("Error: Test program binary data missing.\n> "); 
             return; 
         }
 
-        pcb_t* proc = process_create("elf_prog", 0x8000001080ULL, 0);
+        /* Allocate process container target */
+        pcb_t* proc = process_create("elf_prog", 0x8000000000ULL, 0);
         if (proc) {
+            extern uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data);
+            
             uint64_t old_cr3;
             __asm__ volatile("mov %%cr3, %0" : "=r"(old_cr3));
             __asm__ volatile("mov %0, %%cr3" : : "r"(proc->cr3));
             
-            extern void elf_load(const void* elf_data);
-            elf_load(test_program);
+            /* Parse test program bytes natively into its page tables */
+            uint64_t entry = elf_load_into_process(proc, test_program);
             
             __asm__ volatile("mov %0, %%cr3" : : "r"(old_cr3));
-            
-            vga_print("Launching Ring 3 standalone test...\n");
-            keyboard_buffer_flush();
-            process_start(proc);
+
+            if (entry != 0) {
+                proc->entry_point = entry;
+                vga_print("Launching Ring 3 scheduled test program...\n");
+                keyboard_buffer_flush();
+                scheduler_switch_to(proc);
+            } else {
+                vga_print("Error: ELF structural mapping failed.\n");
+                process_destroy(proc);
+            }
         } else {
             vga_print("Error: PCB allocation failed.\n> ");
         }
+        vga_print("> ");
     } else if (strcmp(cmd, "proclist") == 0) {
         vga_print("\n=== Process List (Printed to Serial Monitor) ===\n");
         process_dump_all(); 
@@ -801,34 +822,52 @@ static void handle_command(const char *cmd) {
         
         // Print the single clean trailing prompt row for the user
         vga_print("> ");
+    /* ---------------------------------------------------------------------------
+     * RE-ALIGNED SYNCED USER SHELL MOUNT NODE INTERCEPT LINK
+     * --------------------------------------------------------------------------- */
+    /* ---------------------------------------------------------------------------
+     * CLEAN SYNCHRONIZED USER SHELL MOUNT NODE LINK
+     * --------------------------------------------------------------------------- */
+    /* ---------------------------------------------------------------------------
+     * CLEAN SYNCHRONIZED USER SHELL MOUNT NODE LINK (NO CR3 OVERRIDES)
+     * --------------------------------------------------------------------------- */
     } else if (strcmp(cmd, "usershell") == 0) {
-        vga_print("\n=== User Shell ===\nStarting user shell...\n");
-        unsigned int len = build_user_shell_elf_len;
-        if (len == 0) { vga_print("No user shell embedded!\n> "); return; }
-        
+        vga_print("\n=== DonsDOS Newlib Runtime Environment Boot ===\n");
+        if (build_user_shell_elf_len == 0) { 
+            vga_print("Error: Shell image data completely unmapped!\n> "); 
+            return; 
+        }
+
+        /* 1. Allocate a clean process container frame slot */
         pcb_t* shell_proc = process_create("usershell", 0x8000000000ULL, 0);
+        
         if (shell_proc) {
-            uint64_t old_cr3;
-            asm volatile("mov %%cr3, %0" : "=r"(old_cr3));
-            asm volatile("mov %0, %%cr3" : : "r"(shell_proc->cr3));
-            elf_load(build_user_shell_elf);
-            asm volatile("mov %0, %%cr3" : : "r"(old_cr3));
-
-            // CLEAR STALE CODES: Purge any trailing enter keys right before entering user space!
-            keyboard_buffer_flush();
-
-            scheduler_switch_to(shell_proc);
+            /* External function declaration lookup from elf.c */
+            extern uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data);
+            
+            /* 2. Map pages natively without touching active hardware CR3 registers.
+               Our updated VMM handles the table traversal safely via HHDM pointers,
+               preserving complete visibility over your kernel data source symbols! */
+            uint64_t user_entry = elf_load_into_process(shell_proc, build_user_shell_elf);
+            
+            if (user_entry != 0) {
+                /* Update the target entry address point coordinate dynamically */
+                shell_proc->entry_point = user_entry;
+                
+                /* Flush keyboard buffer cache values prior to task handover */
+                keyboard_buffer_flush();
+                
+                /* 3. Pass task execution control smoothly to the scheduler context switcher */
+                scheduler_switch_to(shell_proc);
+            } else {
+                vga_print("Error: Compiled binary structure validation failed!\n");
+                process_destroy(shell_proc);
+            }
         } else {
-            vga_print("Error: Could not allocate PCB for shell.\n");
+            vga_print("Error: Process Control Block allocation denied!\n");
         }
         vga_print("> ");
-    }
-
-
-    
-    
-    
-    else {
+    } else {
         vga_print("\nUnknown command. Type 'help'\n> ");
     }
 }
@@ -886,9 +925,31 @@ void kmain(BootInfo *info) {
     gdt_fix_user_segments(); 
     tss_init();
     keyboard_init();
+    
+    enable_user_fsgsbase();
+    
     syscall_init();
     user_syscall_init();
-    
+
+    // =======================================================================
+    // DONSDOS HARDWARE SUBSYSTEM: SAFE ENABLING OF HARDWARE SSE REGISTERS
+    // =======================================================================
+    // This explicitly configures CR0 and CR4 to allow Ring 3 unprivileged tasks
+    // to utilize SSE vector instructions safely, killing the library #GP crashes!
+    __asm__ volatile (
+        "mov %%cr0, %%rax\n\t"
+        "and $0xFFFB, %%ax\n\t"  /* Clear CR0.EM (Emulation Bit) */
+        "or $0x2, %%ax\n\t"      /* Set CR0.MP (Monitor Coprocessor) */
+        "mov %%rax, %%cr0\n\t"
+        "mov %%cr4, %%rax\n\t"
+        "or $0x600, %%eax\n\t"   /* Set CR4.OSFXSR (bit 9) and CR4.OSXMMEXCPT (bit 10) */
+        "mov %%rax, %%cr4\n\t"
+        : : : "rax", "cc", "memory"
+    );
+    serial_print("CPU: Native hardware SSE vector extensions safely enabled.\n");
+    vga_print("CPU: Native hardware SSE vector extensions safely enabled.\n");
+
+
     vga_clear();
     kmain_shell_loop();
 }

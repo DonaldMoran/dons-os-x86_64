@@ -24,22 +24,22 @@ hdd.img: boot.bin stage2.bin ../04_kernel_64bit/kernel.bin
 # QEMU Run Targets
 # ---------------------------------------------------------
 
-# Default: VGA + Serial in terminal (best for development)
+# PATCH: Appended '-cpu max' to default run targets. 
+# This unlocks modern instructions like wrfsbase/wrgsbase required by Newlib
 run:
-	qemu-system-x86_64 -drive file=hdd.img,format=raw -serial stdio -display sdl -monitor none
+	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -monitor none
 
 # Serial output to file (view later with 'cat serial.log')
 run-log:
-	qemu-system-x86_64 -drive file=hdd.img,format=raw -serial file:serial.log -display sdl
+	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial file:serial.log -display sdl
 
 # Debug mode with GDB server (port 1234)
-# Connect with: gdb -ex "target remote localhost:1234" kernel.elf
 run-debug:
-	qemu-system-x86_64 -drive file=hdd.img,format=raw -serial stdio -display sdl -s -S
+	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -s -S
 
 # Full debug with logging
 run-verbose:
-	qemu-system-x86_64 -drive file=hdd.img,format=raw \
+	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw \
 		-serial stdio \
 		-display sdl \
 		-d int,cpu_reset,guest_errors,page \
@@ -48,7 +48,7 @@ run-verbose:
 
 # No graphics, serial to stdio (headless - good for servers)
 run-headless:
-	qemu-system-x86_64 -drive file=hdd.img,format=raw -serial stdio -nographic -monitor none
+	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -nographic -monitor none
 
 # With KVM acceleration (faster, if available)
 run-kvm:
@@ -56,11 +56,11 @@ run-kvm:
 
 # With telnet serial (connect with 'telnet localhost 4444')
 run-telnet:
-	qemu-system-x86_64 -drive file=hdd.img,format=raw -serial telnet::4444,server,nowait -display sdl
+	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial telnet::4444,server,nowait -display sdl
 
 # Legacy debug targets (kept for compatibility)
 log:
-	qemu-system-x86_64 -drive file=hdd.img,format=raw \
+	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw \
 		-d int,cpu_reset,guest_errors,unimp,page \
 		-no-reboot -no-shutdown \
 		-serial file:qemu.log \
@@ -68,7 +68,7 @@ log:
 		-monitor stdio
 
 debug:
-	qemu-system-x86_64 -drive file=hdd.img,format=raw \
+	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw \
 		-s -S \
 		-no-reboot -no-shutdown \
 		-d int,cpu_reset,guest_errors \

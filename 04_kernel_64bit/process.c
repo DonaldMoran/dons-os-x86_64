@@ -26,13 +26,23 @@ static void process_initialize_pcb(pcb_t* pcb);
 // Kernel base address for user/kernel detection
 #define KERNEL_BASE 0xFFFFFFFF80000000ULL
 
+// PATCH: Explicit, clean, non-destructive fallback processing loop for the idle thread context.
+// This prevents uninitialized context frames from throwing supervisor General Protection Faults!
+void kernel_idle_loop(void) {
+    for (;;) {
+        __asm__ volatile("hlt");
+    }
+}
+
 void process_init(void) {
     serial_print("PROCESS: Initializing...\n");
     vga_print("PROCESS: Initializing...\n");
     
     memset(pcb_pool, 0, sizeof(pcb_pool));
     
-    pcb_t* idle = process_create("idle", 0, 0);
+    // PATCH: Assign the explicit kernel_idle_loop function symbol as entry point coordinate
+    // instead of a raw 0 address value to correctly instantiate a safe supervisor stack backframe.
+    pcb_t* idle = process_create("idle", (uint64_t)kernel_idle_loop, 0);
     if (idle) {
         idle->state = PROC_STATE_READY;
         current_process = idle;
@@ -164,12 +174,36 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
         ensure_hhdm_mapped(pcb->user_stack_phys);
     }
     
-    pcb->r15 = 0; pcb->r14 = 0; pcb->r13 = 0; pcb->r12 = 0;
-    pcb->r11 = 0; pcb->r10 = 0; pcb->r9 = 0;  pcb->r8 = 0;
-    pcb->rbp = 0; pcb->rdi = 0; pcb->rsi = 0; pcb->rdx = 0;
-    pcb->rcx = 0; pcb->rbx = 0; pcb->rax = 0;
-    
-    pcb->rsp = pcb->kernel_stack_top;
+    // PATCH: Properly lay out an authentic initial System V AMD64 interrupt execution
+    // frame directly on the task's private kernel stack. This ensures that the first
+    // context switch out from the timer code handles register state pops seamlessly.
+    uint64_t* stack_ptr = (uint64_t*)pcb->kernel_stack_top;
+
+    // Standard initial IRETQ frame structures for kernel tasks:
+    stack_ptr--; *stack_ptr = 0x20;               // SS = Kernel Data Selector (0x20)
+    stack_ptr--; *stack_ptr = pcb->kernel_stack_top; // RSP = Task stack pointer coordinate
+    stack_ptr--; *stack_ptr = 0x202;              // RFLAGS = Interrupts enabled (IF=1)
+    stack_ptr--; *stack_ptr = 0x18;               // CS = Kernel Code Selector (0x18)
+    stack_ptr--; *stack_ptr = entry_point;        // RIP = Target Execution function address location
+
+    // Standard general purpose task registers expected by context_switch.asm:
+    stack_ptr--; *stack_ptr = 0; // rax
+    stack_ptr--; *stack_ptr = 0; // rbx
+    stack_ptr--; *stack_ptr = 0; // rcx
+    stack_ptr--; *stack_ptr = 0; // rdx
+    stack_ptr--; *stack_ptr = 0; // rsi
+    stack_ptr--; *stack_ptr = 0; // rdi
+    stack_ptr--; *stack_ptr = 0; // rbp
+    stack_ptr--; *stack_ptr = 0; // r8
+    stack_ptr--; *stack_ptr = 0; // r9
+    stack_ptr--; *stack_ptr = 0; // r10
+    stack_ptr--; *stack_ptr = 0; // r11
+    stack_ptr--; *stack_ptr = 0; // r12
+    stack_ptr--; *stack_ptr = 0; // r13
+    stack_ptr--; *stack_ptr = 0; // r14
+    stack_ptr--; *stack_ptr = 0; // r15
+
+    pcb->rsp = (uint64_t)stack_ptr;
     pcb->rip = entry_point;
     
     pcb->next = NULL; pcb->prev = NULL;
@@ -196,8 +230,6 @@ pcb_t* process_find_by_pid(uint64_t pid) {
     return NULL;
 }
 
-// FIX: Dual-routed process tracking charts to print directly to 
-// both your background serial debugger port AND your physical VGA screen panels!
 void process_dump_all(void) {
     serial_print("\n=== PROCESS LIST ===\n");
     serial_print("PID  Name                State    Entry     Kernel Stack\n");
@@ -220,7 +252,6 @@ void process_dump_all(void) {
             default: state_str = "UNKNOWN"; break;
         }
         
-        // --- 1. TRANSMIT ROUTE: BACKGROUND SERIAL MONITOR ---
         serial_print_dec(p->pid); serial_print("  ");
         serial_print(p->name);
         int len = strlen(p->name);
@@ -231,7 +262,6 @@ void process_dump_all(void) {
         serial_print("0x"); serial_print_hex(p->kernel_stack_top);
         serial_print("\n");
 
-        // --- 2. TRANSMIT ROUTE: VISUAL VGA SCREEN DISPLAY ---
         vga_print_dec_cur(p->pid); vga_print("  ");
         vga_print(p->name);
         for (int j = len; j < 18; j++) vga_print(" ");
@@ -248,19 +278,16 @@ void process_dump_all(void) {
 }
 
 void process_test_clone(void) {
-    // Output headers to both display channels
     vga_print("\n=== Virtual Memory Manager Page Table Clone Test ===\n");
     serial_print("\n=== Virtual Memory Manager Page Table Clone Test ===\n");
     
-    // 1. Capture the currently running hardware page directory table root
     uint64_t current_cr3;
     asm volatile("mov %%cr3, %0" : "=r"(current_cr3));
-    uint64_t clean_src_cr3 = current_cr3 & ~0xFFFULL; // Mask off attributes
+    uint64_t clean_src_cr3 = current_cr3 & ~0xFFFULL;
     
     vga_print("  1. Source Paging Table Root (CR3) : 0x"); vga_print_hex_cur(clean_src_cr3); vga_print("\n");
     serial_print("  1. Source Paging Table Root (CR3) : 0x"); serial_print_hex(clean_src_cr3); serial_print("\n");
     
-    // 2. Invoke your core clone routine to generate a copy of the address space
     uint64_t new_cr3 = vmm_clone_page_table(current_cr3);
     uint64_t clean_new_cr3 = new_cr3 & ~0xFFFULL;
     
@@ -273,8 +300,6 @@ void process_test_clone(void) {
     vga_print("  2. Cloned Paging Table Root (CR3) : 0x"); vga_print_hex_cur(clean_new_cr3); vga_print("\n");
     serial_print("  2. Cloned Paging Table Root (CR3) : 0x"); serial_print_hex(clean_new_cr3); serial_print("\n");
     
-    // 3. HARDWARE PROBE: Read into the newly allocated PML4 frame via the HHDM 
-    // to check if recursive index 510 was written correctly.
     uint64_t* new_pml4 = (uint64_t*)ensure_hhdm_mapped(clean_new_cr3);
     uint64_t recursive_entry = new_pml4[RECURSIVE_PML4_INDEX];
     
@@ -295,15 +320,12 @@ void process_test_clone(void) {
         serial_print("  Status: FAILED! Recursive index entry flag is marked NOT PRESENT.\n");
     }
 
-    // 4. CLEANUP SANBOX PASS: Free the testing PML4 root page frame from the PMM
-    // to prevent memory leaks every time you type vmmclone
     extern void pmm_free_page(uint64_t phys_addr);
     pmm_free_page(clean_new_cr3);
     
     vga_print("  4. Testing sandbox page tables released back to PMM cleanly.\n");
     serial_print("  4. Testing sandbox page tables released back to PMM cleanly.\n");
 }
-
 
 void process_start(pcb_t* process) {
     if (!process) return;

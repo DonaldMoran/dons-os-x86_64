@@ -50,7 +50,11 @@ kernel64:
 # -------------------------
 # Full 64-bit boot + kernel pipeline (05)
 # -------------------------
-bootkernel64:
+
+# PATCH: Forced 'bootkernel64' to explicitly depend on 'kernel64'.
+# This guarantees your user land and kernel binary images are fully
+# recompiled before QEMU packages them onto hdd.img.
+bootkernel64: kernel64
 	$(MAKE) -C 05_boot_kernel64
 
 # ---- QEMU run targets ----

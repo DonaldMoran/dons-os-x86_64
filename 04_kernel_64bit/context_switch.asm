@@ -1,8 +1,6 @@
 [bits 64]
 default rel
 
-%define HHDM_START 0xFFFF800000000000
-
 section .text
 global context_switch
 
@@ -15,12 +13,13 @@ context_switch:
     push r13
     push r14
     push r15
-    
-    mov r12, rsi
-    
+
+    mov r12, rsi            ; r12 = next
+
+    ; Save previous process's registers (if prev != NULL)
     test rdi, rdi
     jz .skip_save
-    
+
     mov [rdi + 0x70], rax
     mov [rdi + 0x78], rbx
     mov [rdi + 0x80], rcx
@@ -36,52 +35,44 @@ context_switch:
     mov [rdi + 0xD0], r13
     mov [rdi + 0xD8], r14
     mov [rdi + 0xE0], r15
-    
-    mov [rdi + 0xE8], rsp
+
+    mov [rdi + 0xE8], rsp   ; save current RSP
     mov rax, [rsp]
-    mov [rdi + 0xF0], rax
+    mov [rdi + 0xF0], rax   ; save current RIP (return address)
+
+    ; Save current CR3 into prev->cr3
+    mov rax, cr3
+    mov [rdi + 0x30], rax
 
 .skip_save:
     test r12, r12
     jz .restore_and_return
-    
-    ; Check if this is a user process
-    ; entry_point != 0 AND entry_point is in user space (bit 63 = 0)
-    cmp qword [r12 + 0x38], 0
-    je .kernel_process      ; entry_point == 0 -> kernel process (idle)
-    
-    ; Check if entry_point is in user space (bit 63 = 0)
-    mov rax, [r12 + 0x38]
-    test rax, rax
-    js .kernel_process      ; Bit 63 set -> kernel address
-    
-    ; User process - enter user mode
-    jmp .switch_to_user
 
-.kernel_process:
-    jmp .restore_and_return
+    ; Load the next process's CR3
+    mov rax, [r12 + 0x30]   ; pcb->cr3
+    mov cr3, rax
 
-.switch_to_user:
-    mov [r12 + 0x30], rsp
-    
-    push rax
-    push rbx
-    push rcx
-    push rdx
-    
-    mov rax, [r12 + 0x30]
-    mov rbx, HHDM_START + 0x5000 + 0x04
-    mov [rbx], rax
-    
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rax
-    
-    ; Flush TLB to ensure user stack mapping is visible
+    ; Flush TLB (double reload)
     mov rax, cr3
     mov cr3, rax
-    
+    nop
+    nop
+    nop
+    mov cr3, rax
+
+    ; Determine if it's a user process (entry_point < KERNEL_BASE)
+    mov rax, [r12 + 0x38]   ; entry_point
+    cmp rax, 0xFFFFFFFF80000000
+    jae .kernel_task        ; if >= KERNEL_BASE → kernel task
+
+    ; ---- User process: use iretq with user selectors ----
+    ; Invalidate user addresses
+    mov rcx, [r12 + 0x38]   ; entry point
+    invlpg [rcx]
+    mov rcx, [r12 + 0x68]   ; user_stack_top
+    invlpg [rcx]
+
+    ; Restore general registers (except RSP, which will be set by iret)
     mov rax, [r12 + 0x70]
     mov rbx, [r12 + 0x78]
     mov rcx, [r12 + 0x80]
@@ -96,17 +87,50 @@ context_switch:
     mov r15, [r12 + 0xE0]
     mov rdi, [r12 + 0x98]
     mov rsi, [r12 + 0x90]
+
+    ; Build iretq frame for ring 3
+    push qword 0x2B         ; SS (user data selector with RPL=3)
+    push qword [r12 + 0x68] ; RSP (user stack top)
     
-    push qword 0x2B        ; SS (User Data)
-    push qword [r12 + 0x68] ; RSP (User stack top)
-    pushfq
-    pop rax
-    or rax, 0x3200         ; RFLAGS (IF=1, IOPL=3)
-    push rax
-    push qword 0x33        ; CS (User Code)
-    push qword [r12 + 0x38] ; RIP (Entry point)
+    ; CRITICAL FIX: Force an explicit clean 64-bit user flag structure (0x3202)
+    ; Bit 1 (0x02) = Mandatory System Reserved Bit
+    ; Bit 9 (0x0200) = Interrupt Flag Enabled (IF=1), allowing hardware timer ticks
+    ; Bits 12-13 (0x3000) = Input/Output Privilege Level set to Ring 3 (IOPL=3)
+    ; This explicitly allows standard Newlib runtime libraries to coordinate unprivileged code!
+    push qword 0x3202       ; RFLAGS (IF=1, IOPL=3, Clean Long Mode structure)
     
+    push qword 0x33         ; CS (user code selector with RPL=3)
+    push qword [r12 + 0x38] ; RIP (entry point)
+
+    ; Clear r12 last since it was holding our pcb_t pointer structure
+    mov r12, [r12 + 0xC8]
+
     iretq
+
+.kernel_task:
+    ; ---- Kernel task (idle, etc.): just switch stack and return ----
+    ; Restore general registers (except RSP and RIP)
+    mov rax, [r12 + 0x70]
+    mov rbx, [r12 + 0x78]
+    mov rcx, [r12 + 0x80]
+    mov rdx, [r12 + 0x88]
+    mov rbp, [r12 + 0xA0]
+    mov r8,  [r12 + 0xA8]
+    mov r9,  [r12 + 0xB0]
+    mov r10, [r12 + 0xB8]
+    mov r11, [r12 + 0xC0]
+    mov r13, [r12 + 0xD0]
+    mov r14, [r12 + 0xD8]
+    mov r15, [r12 + 0xE0]
+    mov rdi, [r12 + 0x98]
+    mov rsi, [r12 + 0x90]
+
+    ; Switch stack to the new task's kernel stack
+    mov rsp, [r12 + 0xE8]   ; load saved RSP
+
+    ; Jump to the new task's entry point
+    mov rax, [r12 + 0xF0]   ; load saved RIP
+    jmp rax
 
 .restore_and_return:
     pop r15

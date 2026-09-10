@@ -36,7 +36,6 @@ void* ensure_hhdm_mapped(uint64_t phys) {
     uint64_t virt = HHDM_START + phys;
 
     if (!vmm_is_mapped(virt)) {
-        // Use Uncacheable for HHDM to match user mappings
         vmm_map_page(virt, phys, PT_PRESENT | PT_WRITE | PAGE_UNCACHED);
         serial_print("VMM: Dynamically mapped HHDM 0x");
         serial_print_hex(phys);
@@ -79,7 +78,6 @@ void vmm_init(BootInfo* info) {
 
     vmm_max_physical = max_phys;
 
-    // Map low memory with Uncacheable
     for (uint64_t addr = 0; addr < 0x200000; addr += 0x1000) {
         vmm_map_page(addr, addr, PT_PRESENT | PT_WRITE | PAGE_UNCACHED);
     }
@@ -111,14 +109,11 @@ void vmm_init(BootInfo* info) {
 void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     phys &= ~0xFFFULL;
 
-    // Clean flags - preserve caching attributes
     uint64_t user_flag    = (flags & PT_USER) ? PT_USER : 0;
     uint64_t write_flag   = (flags & PT_WRITE) ? PT_WRITE : 0;
     uint64_t present_flag = PT_PRESENT;
     uint64_t nx_flag      = (flags & PT_NX) ? PT_NX : 0;
-    
-    // Preserve caching flags (PCD, PWT)
-    uint64_t cache_flags = flags & (PAGE_PCD | PAGE_PWT);
+    uint64_t cache_flags  = flags & (PAGE_PCD | PAGE_PWT);
 
     uint64_t* pml4 = get_pml4_virt();
 
@@ -127,68 +122,48 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     uint32_t pd_idx   = (virt >> 21) & 0x1FF;
     uint32_t pt_idx   = (virt >> 12) & 0x1FF;
 
+    uint64_t dir_flags = PT_PRESENT | PT_WRITE | PT_USER | cache_flags;
+
     uint64_t* pdpt;
     if (!(pml4[pml4_idx] & PT_PRESENT)) {
-        // Allocate PDPT strictly as PAGE_PAGE_TABLE (kernel/LOW zone)
         uint64_t new_pdpt_phys = pmm_alloc_page_for_tables();
-        if (!new_pdpt_phys) {
-            serial_print("VMM: Failed to allocate PDPT!\n");
-            return;
-        }
+        if (!new_pdpt_phys) return;
         memset(phys_to_virt(new_pdpt_phys), 0, PAGE_SIZE);
-        pml4[pml4_idx] = new_pdpt_phys | present_flag | write_flag | user_flag | cache_flags;
-        serial_print("VMM: Allocated PDPT at 0x");
-        serial_print_hex(new_pdpt_phys);
-        serial_print("\n");
+        pml4[pml4_idx] = new_pdpt_phys | dir_flags;
         pdpt = phys_to_virt(new_pdpt_phys);
     } else {
-        uint64_t existing_pdpt_phys = pml4[pml4_idx] & ~0xFFFULL;
-        pdpt = phys_to_virt(existing_pdpt_phys);
+        pml4[pml4_idx] |= (PT_WRITE | PT_USER);
+        pdpt = phys_to_virt(pml4[pml4_idx] & ~0xFFFULL);
     }
 
     uint64_t* pd;
     if (!(pdpt[pdpt_idx] & PT_PRESENT)) {
-        // Allocate PD strictly as PAGE_PAGE_TABLE (kernel/LOW zone)
         uint64_t new_pd_phys = pmm_alloc_page_for_tables();
-        if (!new_pd_phys) {
-            serial_print("VMM: Failed to allocate PD!\n");
-            return;
-        }
+        if (!new_pd_phys) return;
         memset(phys_to_virt(new_pd_phys), 0, PAGE_SIZE);
-        pdpt[pdpt_idx] = new_pd_phys | present_flag | write_flag | user_flag | cache_flags;
-        serial_print("VMM: Allocated PD at 0x");
-        serial_print_hex(new_pd_phys);
-        serial_print("\n");
+        pdpt[pdpt_idx] = new_pd_phys | dir_flags;
         pd = phys_to_virt(new_pd_phys);
     } else {
-        uint64_t existing_pd_phys = pdpt[pdpt_idx] & ~0xFFFULL;
-        pd = phys_to_virt(existing_pd_phys);
+        pdpt[pdpt_idx] |= (PT_WRITE | PT_USER);
+        pd = phys_to_virt(pdpt[pdpt_idx] & ~0xFFFULL);
     }
 
     uint64_t* pt;
     if (!(pd[pd_idx] & PT_PRESENT)) {
-        // Allocate PT strictly as PAGE_PAGE_TABLE (kernel/LOW zone)
         uint64_t new_pt_phys = pmm_alloc_page_for_tables();
-        if (!new_pt_phys) {
-            serial_print("VMM: Failed to allocate PT!\n");
-            return;
-        }
+        if (!new_pt_phys) return;
         memset(phys_to_virt(new_pt_phys), 0, PAGE_SIZE);
-        pd[pd_idx] = new_pt_phys | present_flag | write_flag | user_flag | cache_flags;
-        serial_print("VMM: Allocated PT at 0x");
-        serial_print_hex(new_pt_phys);
-        serial_print("\n");
+        pd[pd_idx] = new_pt_phys | dir_flags;
         pt = phys_to_virt(new_pt_phys);
     } else {
-        uint64_t existing_pt_phys = pd[pd_idx] & ~0xFFFULL;
-        pt = phys_to_virt(existing_pt_phys);
+        pd[pd_idx] |= (PT_WRITE | PT_USER);
+        pt = phys_to_virt(pd[pd_idx] & ~0xFFFULL);
     }
 
     uint64_t pte = phys | present_flag | write_flag | user_flag | cache_flags;
     if (nx_flag) pte |= PT_NX;
 
     pt[pt_idx] = pte;
-
     asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
 }
 
@@ -201,19 +176,15 @@ void vmm_unmap_page(uint64_t virt) {
     uint32_t pt_idx   = (virt >> 12) & 0x1FF;
 
     if (!(pml4[pml4_idx] & PT_PRESENT)) return;
-    uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFFULL;
-    uint64_t* pdpt = phys_to_virt(pdpt_phys);
+    uint64_t* pdpt = phys_to_virt(pml4[pml4_idx] & ~0xFFFULL);
 
     if (!(pdpt[pdpt_idx] & PT_PRESENT)) return;
-    uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFFULL;
-    uint64_t* pd = phys_to_virt(pd_phys);
+    uint64_t* pd = phys_to_virt(pdpt[pdpt_idx] & ~0xFFFULL);
 
     if (!(pd[pd_idx] & PT_PRESENT)) return;
-    uint64_t pt_phys = pd[pd_idx] & ~0xFFFULL;
-    uint64_t* pt = phys_to_virt(pt_phys);
+    uint64_t* pt = phys_to_virt(pd[pd_idx] & ~0xFFFULL);
 
     pt[pt_idx] = 0;
-
     asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
 }
 
@@ -225,30 +196,17 @@ uint64_t vmm_get_phys(uint64_t virt) {
     uint32_t pd_idx   = (virt >> 21) & 0x1FF;
     uint32_t pt_idx   = (virt >> 12) & 0x1FF;
 
-    if (!(pml4[pml4_idx] & PT_PRESENT)) {
-        return 0;
-    }
-    uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFFULL;
-    uint64_t* pdpt = phys_to_virt(pdpt_phys);
+    if (!(pml4[pml4_idx] & PT_PRESENT)) return 0;
+    uint64_t* pdpt = phys_to_virt(pml4[pml4_idx] & ~0xFFFULL);
 
-    if (!(pdpt[pdpt_idx] & PT_PRESENT)) {
-        return 0;
-    }
-    uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFFULL;
-    uint64_t* pd = phys_to_virt(pd_phys);
+    if (!(pdpt[pdpt_idx] & PT_PRESENT)) return 0;
+    uint64_t* pd = phys_to_virt(pdpt[pdpt_idx] & ~0xFFFULL);
 
-    if (!(pd[pd_idx] & PT_PRESENT)) {
-        return 0;
-    }
-    uint64_t pt_phys = pd[pd_idx] & ~0xFFFULL;
-    uint64_t* pt = phys_to_virt(pt_phys);
+    if (!(pd[pd_idx] & PT_PRESENT)) return 0;
+    uint64_t* pt = phys_to_virt(pd[pd_idx] & ~0xFFFULL);
 
-    if (!(pt[pt_idx] & PT_PRESENT)) {
-        return 0;
-    }
-
-    uint64_t phys = (pt[pt_idx] & ~0xFFFULL) | (virt & 0xFFFULL);
-    return phys;
+    if (!(pt[pt_idx] & PT_PRESENT)) return 0;
+    return (pt[pt_idx] & ~0xFFFULL) | (virt & 0xFFFULL);
 }
 
 int vmm_is_mapped(uint64_t virt) {
@@ -260,16 +218,13 @@ int vmm_is_mapped(uint64_t virt) {
     uint32_t pt_idx   = (virt >> 12) & 0x1FF;
 
     if (!(pml4[pml4_idx] & PT_PRESENT)) return 0;
-    uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFFULL;
-    uint64_t* pdpt = phys_to_virt(pdpt_phys);
+    uint64_t* pdpt = phys_to_virt(pml4[pml4_idx] & ~0xFFFULL);
 
     if (!(pdpt[pdpt_idx] & PT_PRESENT)) return 0;
-    uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFFULL;
-    uint64_t* pd = phys_to_virt(pd_phys);
+    uint64_t* pd = phys_to_virt(pdpt[pdpt_idx] & ~0xFFFULL);
 
     if (!(pd[pd_idx] & PT_PRESENT)) return 0;
-    uint64_t pt_phys = pd[pd_idx] & ~0xFFFULL;
-    uint64_t* pt = phys_to_virt(pt_phys);
+    uint64_t* pt = phys_to_virt(pd[pd_idx] & ~0xFFFULL);
 
     if (!(pt[pt_idx] & PT_PRESENT)) return 0;
     return 1;
@@ -277,206 +232,160 @@ int vmm_is_mapped(uint64_t virt) {
 
 void vmm_dump_page_table(uint64_t virt) {
     uint64_t* pml4 = get_pml4_virt();
-
     uint32_t pml4_idx = (virt >> 39) & 0x1FF;
     uint32_t pdpt_idx = (virt >> 30) & 0x1FF;
     uint32_t pd_idx   = (virt >> 21) & 0x1FF;
     uint32_t pt_idx   = (virt >> 12) & 0x1FF;
 
-    serial_print("\n=== PAGE TABLE DUMP for 0x");
-    serial_print_hex(virt);
-    serial_print(" ===\n");
-    serial_print("  Indices: PML4=");
-    serial_print_dec(pml4_idx);
-    serial_print(" PDPT=");
-    serial_print_dec(pdpt_idx);
-    serial_print(" PD=");
-    serial_print_dec(pd_idx);
-    serial_print(" PT=");
-    serial_print_dec(pt_idx);
-    serial_print("\n");
-
-    serial_print("  PML4[");
-    serial_print_dec(pml4_idx);
-    serial_print("] = 0x");
-    serial_print_hex(pml4[pml4_idx]);
-    serial_print("\n");
-
-    if (!(pml4[pml4_idx] & PT_PRESENT)) {
-        serial_print("  PML4 entry NOT PRESENT!\n");
-        serial_print("=== END DUMP ===\n\n");
-        return;
-    }
-    serial_print("    Present: YES\n");
-    serial_print("    Flags: 0x");
-    serial_print_hex(pml4[pml4_idx] & 0xFFFULL);
-    serial_print("\n");
-
-    uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFFULL;
-    uint64_t* pdpt = phys_to_virt(pdpt_phys);
-
-    serial_print("  PDPT[");
-    serial_print_dec(pdpt_idx);
-    serial_print("] = 0x");
-    serial_print_hex(pdpt[pdpt_idx]);
-    serial_print("\n");
-
-    if (!(pdpt[pdpt_idx] & PT_PRESENT)) {
-        serial_print("  PDPT entry NOT PRESENT!\n");
-        serial_print("=== END DUMP ===\n\n");
-        return;
-    }
-    serial_print("    Present: YES\n");
-    serial_print("    Flags: 0x");
-    serial_print_hex(pdpt[pdpt_idx] & 0xFFFULL);
-    serial_print("\n");
-
-    uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFFULL;
-    uint64_t* pd = phys_to_virt(pd_phys);
-
-    serial_print("  PD[");
-    serial_print_dec(pd_idx);
-    serial_print("] = 0x");
-    serial_print_hex(pd[pd_idx]);
-    serial_print("\n");
-
-    if (!(pd[pd_idx] & PT_PRESENT)) {
-        serial_print("  PD entry NOT PRESENT!\n");
-        serial_print("=== END DUMP ===\n\n");
-        return;
-    }
-    serial_print("    Present: YES\n");
-    serial_print("    Flags: 0x");
-    serial_print_hex(pd[pd_idx] & 0xFFFULL);
-    serial_print("\n");
-
-    uint64_t pt_phys = pd[pd_idx] & ~0xFFFULL;
-    uint64_t* pt = phys_to_virt(pt_phys);
-
-    serial_print("  PT[");
-    serial_print_dec(pt_idx);
-    serial_print("] = 0x");
+    serial_print("\n=== PAGE TABLE DUMP ===\n");
+    if (!(pml4[pml4_idx] & PT_PRESENT)) return;
+    uint64_t* pdpt = phys_to_virt(pml4[pml4_idx] & ~0xFFFULL);
+    if (!(pdpt[pdpt_idx] & PT_PRESENT)) return;
+    uint64_t* pd = phys_to_virt(pdpt[pdpt_idx] & ~0xFFFULL);
+    if (!(pd[pd_idx] & PT_PRESENT)) return;
+    uint64_t* pt = phys_to_virt(pd[pd_idx] & ~0xFFFULL);
+    
+    serial_print("  PTE Entry Found: 0x");
     serial_print_hex(pt[pt_idx]);
     serial_print("\n");
-
-    if (!(pt[pt_idx] & PT_PRESENT)) {
-        serial_print("  PT entry NOT PRESENT!\n");
-        serial_print("=== END DUMP ===\n\n");
-        return;
-    }
-    serial_print("    Present: YES\n");
-    serial_print("    Physical address: 0x");
-    serial_print_hex(pt[pt_idx] & ~0xFFFULL);
-    serial_print("\n");
-    serial_print("    Flags: 0x");
-    serial_print_hex(pt[pt_idx] & 0xFFFULL);
-    serial_print("\n");
-
-    if (pt[pt_idx] & PT_NX) {
-        serial_print("    NX bit: SET\n");
-    } else {
-        serial_print("    NX bit: CLEAR (executable)\n");
-    }
-
-    serial_print("=== END DUMP ===\n\n");
 }
 
 uint64_t vmm_clone_page_table(uint64_t src_cr3) {
-    if (src_cr3 == 0) {
-        serial_print("VMM: Cannot clone NULL page table!\n");
-        return 0;
-    }
-
-    serial_print("VMM: Cloning page table CR3=0x");
-    serial_print_hex(src_cr3);
-    serial_print("\n");
-
-    // New PML4 is a page-table page (kernel/LOW zone)
     uint64_t new_pml4_phys = pmm_alloc_page_for_tables();
-    if (!new_pml4_phys) {
-        serial_print("VMM: Failed to allocate new PML4!\n");
-        return 0;
-    }
-    serial_print("VMM: Allocated new PML4 at 0x");
-    serial_print_hex(new_pml4_phys);
-    serial_print("\n");
+    if (!new_pml4_phys) return 0;
 
-    uint64_t* src_pml4 = (uint64_t*)ensure_hhdm_mapped(src_cr3);
-    uint64_t* new_pml4 = (uint64_t*)ensure_hhdm_mapped(new_pml4_phys);
+    uint64_t* src_pml4 = (uint64_t*)phys_to_virt(src_cr3);
+    uint64_t* new_pml4 = (uint64_t*)phys_to_virt(new_pml4_phys);
 
     memset(new_pml4, 0, PAGE_SIZE);
 
-    // Copy ALL present PML4 entries, except the recursive one
     for (int i = 0; i < 512; i++) {
-        if (i == RECURSIVE_PML4_INDEX)
-            continue;
+        if (i == RECURSIVE_PML4_INDEX) continue;
         if (src_pml4[i] & PT_PRESENT) {
             new_pml4[i] = src_pml4[i];
-            serial_print("VMM: Copied PML4[");
-            serial_print_dec(i);
-            serial_print("] = 0x");
-            serial_print_hex(src_pml4[i]);
-            serial_print("\n");
         }
     }
-
-    // Set recursive mapping for the new PML4
     new_pml4[RECURSIVE_PML4_INDEX] = new_pml4_phys | PT_PRESENT | PT_WRITE;
-
-    serial_print("VMM: Page table cloned successfully. New CR3=0x");
-    serial_print_hex(new_pml4_phys);
-    serial_print("\n");
-
     return new_pml4_phys;
 }
 
 uint64_t vmm_get_phys_from_cr3(uint64_t cr3, uint64_t virt) {
-    if (cr3 == 0) return 0;
-
-    uint64_t* pml4 = (uint64_t*)ensure_hhdm_mapped(cr3);
-
+    uint64_t* pml4 = (uint64_t*)phys_to_virt(cr3);
     uint32_t pml4_idx = (virt >> 39) & 0x1FF;
     uint32_t pdpt_idx = (virt >> 30) & 0x1FF;
     uint32_t pd_idx   = (virt >> 21) & 0x1FF;
     uint32_t pt_idx   = (virt >> 12) & 0x1FF;
 
     if (!(pml4[pml4_idx] & PT_PRESENT)) return 0;
-    uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFFULL;
-    uint64_t* pdpt = (uint64_t*)ensure_hhdm_mapped(pdpt_phys);
+    uint64_t* pdpt = (uint64_t*)phys_to_virt(pml4[pml4_idx] & ~0xFFFULL);
 
     if (!(pdpt[pdpt_idx] & PT_PRESENT)) return 0;
-    uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFFULL;
-    uint64_t* pd = (uint64_t*)ensure_hhdm_mapped(pd_phys);
+    uint64_t* pd = (uint64_t*)phys_to_virt(pdpt[pdpt_idx] & ~0xFFFULL);
 
     if (!(pd[pd_idx] & PT_PRESENT)) return 0;
-    uint64_t pt_phys = pd[pd_idx] & ~0xFFFULL;
-    uint64_t* pt = (uint64_t*)ensure_hhdm_mapped(pt_phys);
+    uint64_t* pt = (uint64_t*)phys_to_virt(pd[pd_idx] & ~0xFFFULL);
 
     if (!(pt[pt_idx] & PT_PRESENT)) return 0;
     return (pt[pt_idx] & ~0xFFFULL) | (virt & 0xFFFULL);
 }
 
+/* ---------------------------------------------------------------------------
+ * ROBUST CROSS-CR3 MAPPING ROUTINE (WITH HIERARCHICAL PERMISSION FIX)
+ * This traverses any target process's page table directly via HHDM offsets,
+ * keeping the active kernel visible during multi-page segment mapping operations.
+ * --------------------------------------------------------------------------- */
 void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags) {
-    uint64_t old_cr3;
-    asm volatile("mov %%cr3, %0" : "=r"(old_cr3));
+    phys &= ~0xFFFULL;
 
-    asm volatile("mov %0, %%cr3" : : "r"(cr3));
+    uint64_t user_flag    = (flags & PT_USER) ? PT_USER : 0;
+    uint64_t write_flag   = (flags & PT_WRITE) ? PT_WRITE : 0;
+    uint64_t present_flag = PT_PRESENT;
+    uint64_t nx_flag      = (flags & PT_NX) ? PT_NX : 0;
+    uint64_t cache_flags  = flags & (PAGE_PCD | PAGE_PWT);
 
-    vmm_map_page(virt, phys, flags);
+    uint64_t* pml4 = (uint64_t*)phys_to_virt(cr3);
 
-    asm volatile("mov %0, %%cr3" : : "r"(old_cr3));
+    uint32_t pml4_idx = (virt >> 39) & 0x1FF;
+    uint32_t pdpt_idx = (virt >> 30) & 0x1FF;
+    uint32_t pd_idx   = (virt >> 21) & 0x1FF;
+    uint32_t pt_idx   = (virt >> 12) & 0x1FF;
+
+    uint64_t dir_flags = PT_PRESENT | PT_WRITE | PT_USER | cache_flags;
+
+    uint64_t* pdpt;
+    if (!(pml4[pml4_idx] & PT_PRESENT)) {
+        uint64_t new_pdpt_phys = pmm_alloc_page_for_tables();
+        if (!new_pdpt_phys) return;
+        memset(phys_to_virt(new_pdpt_phys), 0, PAGE_SIZE);
+        pml4[pml4_idx] = new_pdpt_phys | dir_flags;
+        pdpt = (uint64_t*)phys_to_virt(new_pdpt_phys);
+    } else {
+        /* PATCH: Explicitly enforce hierarchical user privileges on existing entries */
+        pml4[pml4_idx] |= (PT_WRITE | PT_USER);
+        pdpt = (uint64_t*)phys_to_virt(pml4[pml4_idx] & ~0xFFFULL);
+    }
+
+    uint64_t* pd;
+    if (!(pdpt[pdpt_idx] & PT_PRESENT)) {
+        uint64_t new_pd_phys = pmm_alloc_page_for_tables();
+        if (!new_pd_phys) return;
+        memset(phys_to_virt(new_pd_phys), 0, PAGE_SIZE);
+        pdpt[pdpt_idx] = new_pd_phys | dir_flags;
+        pd = (uint64_t*)phys_to_virt(new_pd_phys);
+    } else {
+        /* PATCH: Explicitly enforce hierarchical user privileges on existing entries */
+        pdpt[pdpt_idx] |= (PT_WRITE | PT_USER);
+        pd = (uint64_t*)phys_to_virt(pdpt[pdpt_idx] & ~0xFFFULL);
+    }
+
+    uint64_t* pt;
+    if (!(pd[pd_idx] & PT_PRESENT)) {
+        uint64_t new_pt_phys = pmm_alloc_page_for_tables();
+        if (!new_pt_phys) return;
+        memset(phys_to_virt(new_pt_phys), 0, PAGE_SIZE);
+        pd[pd_idx] = new_pt_phys | dir_flags;
+        pt = (uint64_t*)phys_to_virt(new_pt_phys);
+    } else {
+        /* PATCH: Explicitly enforce hierarchical user privileges on existing entries */
+        pd[pd_idx] |= (PT_WRITE | PT_USER);
+        pt = (uint64_t*)phys_to_virt(pd[pd_idx] & ~0xFFFULL);
+    }
+
+    uint64_t pte = phys | present_flag | write_flag | user_flag | cache_flags;
+    if (nx_flag) pte |= PT_NX;
+
+    pt[pt_idx] = pte;
+
+    /* Flush the specific TLB entry if this table corresponds to the active CPU context */
+    uint64_t active_cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(active_cr3));
+    if ((active_cr3 & ~0xFFFULL) == (cr3 & ~0xFFFULL)) {
+        asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
+    }
 }
 
-// ============================================================
-// NEW: Unmap a page in a specific CR3 (used during process cleanup)
-// ============================================================
+
 void vmm_unmap_page_in_cr3(uint64_t cr3, uint64_t virt) {
-    uint64_t old_cr3;
-    asm volatile("mov %%cr3, %0" : "=r"(old_cr3));
+    uint64_t* pml4 = (uint64_t*)phys_to_virt(cr3);
+    uint32_t pml4_idx = (virt >> 39) & 0x1FF;
+    uint32_t pdpt_idx = (virt >> 30) & 0x1FF;
+    uint32_t pd_idx   = (virt >> 21) & 0x1FF;
+    uint32_t pt_idx   = (virt >> 12) & 0x1FF;
 
-    asm volatile("mov %0, %%cr3" : : "r"(cr3));
+    if (!(pml4[pml4_idx] & PT_PRESENT)) return;
+    uint64_t* pdpt = (uint64_t*)phys_to_virt(pml4[pml4_idx] & ~0xFFFULL);
 
-    vmm_unmap_page(virt);
+    if (!(pdpt[pdpt_idx] & PT_PRESENT)) return;
+    uint64_t* pd = (uint64_t*)phys_to_virt(pdpt[pdpt_idx] & ~0xFFFULL);
 
-    asm volatile("mov %0, %%cr3" : : "r"(old_cr3));
+    if (!(pd[pd_idx] & PT_PRESENT)) return;
+    uint64_t* pt = (uint64_t*)phys_to_virt(pd[pd_idx] & ~0xFFFULL);
+
+    pt[pt_idx] = 0;
+
+    uint64_t active_cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(active_cr3));
+    if ((active_cr3 & ~0xFFFULL) == (cr3 & ~0xFFFULL)) {
+        asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
+    }
 }

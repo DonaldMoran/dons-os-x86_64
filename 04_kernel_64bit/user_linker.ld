@@ -3,19 +3,12 @@ ENTRY(_start)
 
 SECTIONS
 {
-    /* Absolute base address definition for the user space block */
     . = 0x8000000000;
 
-    /* Combine all sections into a single, contiguous unified block 
-       to prevent mcmodel=large segment pointer shifting anomalies */
     .text : ALIGN(4096) {
         *(.text .text.*)
         *(.rodata .rodata.*)
         *(.data .data.*)
-        *(.user_data)
-        *(.gnu.linkonce.d.*)
-        *(.got)
-        *(.got.plt)
     }
 
     .bss : ALIGN(4096) {
@@ -28,5 +21,6 @@ SECTIONS
     /DISCARD/ : {
         *(.comment)
         *(.note.*)
+        *(.eh_frame)
     }
 }

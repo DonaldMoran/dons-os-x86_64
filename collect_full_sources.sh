@@ -40,7 +40,7 @@ for dir in $DIRS; do
 done
 
 # --- 2. Specifically add capture.txt from 04_kernel_64bit (if present) ---
-CAPTURE="04_kernel_64bit/capture.txt"
+CAPTURE="capture.txt"
 if [ -f "$CAPTURE" ]; then
     echo "===== FILE: $CAPTURE (last run log) =====" >> "$OUTPUT"
     cat "$CAPTURE" >> "$OUTPUT"

@@ -24,7 +24,6 @@ LDFLAGS := -nostdlib
 # Build both kernel and userland
 all: userland kernel.bin
 
-
 # Build userland - now directly calls newlib Makefile
 userland:
 	$(MAKE) -C $(USERLAND_DIR)
@@ -62,9 +61,13 @@ test_program.o: test_program.asm
 # ============================================================
 # USER SHELL (embedded ELF blob)
 # ============================================================
+
+# PATCH: Swapped $(CFLAGS) for $(USER_CFLAGS) to force 64-bit absolute 
+# memory instruction layout maps for the massive Newlib data array payload!
 user_shell_data.o: user_shell_data.c
-	sed -i 's/unsigned char build_user_shell_elf/__attribute__((section(".userelf"))) unsigned char build_user_shell_elf/' $<
-	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
+	sed -i 's/unsigned char build_user_shell_elf/__attribute__((section(".userelf"))) unsigned char build_user_shell_elf/' user_shell_data.c
+	sed -i 's/unsigned int build_user_shell_elf_len/const unsigned int build_user_shell_elf_len/' user_shell_data.c
+	$(CC) $(USER_CFLAGS) -Iinclude -c user_shell_data.c -o user_shell_data.o
 
 # ============================================================
 # ASSEMBLY RULES
@@ -113,4 +116,3 @@ clean:
 	rm -f user_shell.elf user_shell_data.c
 	rm -f user_shell.bin
 	$(MAKE) -C $(USERLAND_DIR) clean
-

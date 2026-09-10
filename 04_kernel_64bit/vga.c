@@ -17,7 +17,162 @@
 
 static int cursor_row = 0;
 static int cursor_col = 0;
-static uint8_t cursor_attr = 0x07;
+
+/* Background 0 — Black
+static uint8_t cursor_attr = 0x00;   // black on black
+static uint8_t cursor_attr = 0x01;   // blue on black
+static uint8_t cursor_attr = 0x02;   // green on black
+static uint8_t cursor_attr = 0x03;   // cyan on black
+static uint8_t cursor_attr = 0x04;   // red on black
+static uint8_t cursor_attr = 0x05;   // magenta on black
+static uint8_t cursor_attr = 0x06;   // brown on black
+static uint8_t cursor_attr = 0x07;   // light gray on black
+static uint8_t cursor_attr = 0x08;   // dark gray on black
+static uint8_t cursor_attr = 0x09;   // light blue on black
+static uint8_t cursor_attr = 0x0A;   // light green on black
+static uint8_t cursor_attr = 0x0B;   // light cyan on black
+static uint8_t cursor_attr = 0x0C;   // light red on black
+static uint8_t cursor_attr = 0x0D;   // light magenta on black
+static uint8_t cursor_attr = 0x0E;   // yellow on black
+static uint8_t cursor_attr = 0x0F;   // white on black 
+*/
+
+/* Background 1 — Blue
+static uint8_t cursor_attr = 0x10;   // black on blue
+static uint8_t cursor_attr = 0x11;   // blue on blue
+static uint8_t cursor_attr = 0x12;   // green on blue
+static uint8_t cursor_attr = 0x13;   // cyan on blue
+static uint8_t cursor_attr = 0x14;   // red on blue
+static uint8_t cursor_attr = 0x15;   // magenta on blue
+static uint8_t cursor_attr = 0x16;   // brown on blue
+static uint8_t cursor_attr = 0x17;   // light gray on blue
+static uint8_t cursor_attr = 0x18;   // dark gray on blue
+static uint8_t cursor_attr = 0x19;   // light blue on blue
+static uint8_t cursor_attr = 0x1A;   // light green on blue
+static uint8_t cursor_attr = 0x1B;   // light cyan on blue
+static uint8_t cursor_attr = 0x1C;   // light red on blue
+static uint8_t cursor_attr = 0x1D;   // light magenta on blue
+static uint8_t cursor_attr = 0x1E;   // yellow on blue
+static uint8_t cursor_attr = 0x1F;   // white on blue
+*/
+
+/* Background 2 — Green
+static uint8_t cursor_attr = 0x20;   // black on green
+static uint8_t cursor_attr = 0x21;   // blue on green
+static uint8_t cursor_attr = 0x22;   // green on green
+static uint8_t cursor_attr = 0x23;   // cyan on green
+static uint8_t cursor_attr = 0x24;   // red on green
+static uint8_t cursor_attr = 0x25;   // magenta on green
+static uint8_t cursor_attr = 0x26;   // brown on green
+static uint8_t cursor_attr = 0x27;   // light gray on green
+static uint8_t cursor_attr = 0x28;   // dark gray on green
+static uint8_t cursor_attr = 0x29;   // light blue on green
+static uint8_t cursor_attr = 0x2A;   // light green on green
+static uint8_t cursor_attr = 0x2B;   // light cyan on green
+static uint8_t cursor_attr = 0x2C;   // light red on green
+static uint8_t cursor_attr = 0x2D;   // light magenta on green
+static uint8_t cursor_attr = 0x2E;   // yellow on green
+static uint8_t cursor_attr = 0x2F;   // white on green
+*/
+
+/* Background 3 — Cyan
+static uint8_t cursor_attr = 0x30;   // black on cyan
+static uint8_t cursor_attr = 0x31;   // blue on cyan
+static uint8_t cursor_attr = 0x32;   // green on cyan
+static uint8_t cursor_attr = 0x33;   // cyan on cyan
+static uint8_t cursor_attr = 0x34;   // red on cyan
+static uint8_t cursor_attr = 0x35;   // magenta on cyan
+static uint8_t cursor_attr = 0x36;   // brown on cyan
+static uint8_t cursor_attr = 0x37;   // light gray on cyan
+static uint8_t cursor_attr = 0x38;   // dark gray on cyan
+static uint8_t cursor_attr = 0x39;   // light blue on cyan
+static uint8_t cursor_attr = 0x3A;   // light green on cyan
+static uint8_t cursor_attr = 0x3B;   // light cyan on cyan
+static uint8_t cursor_attr = 0x3C;   // light red on cyan
+static uint8_t cursor_attr = 0x3D;   // light magenta on cyan
+static uint8_t cursor_attr = 0x3E;   // yellow on cyan
+static uint8_t cursor_attr = 0x3F;   // white on cyan
+*/
+
+/* Background 4 — Red
+static uint8_t cursor_attr = 0x40;   // black on red
+static uint8_t cursor_attr = 0x41;   // blue on red
+static uint8_t cursor_attr = 0x42;   // green on red
+static uint8_t cursor_attr = 0x43;   // cyan on red
+static uint8_t cursor_attr = 0x44;   // red on red
+static uint8_t cursor_attr = 0x45;   // magenta on red
+static uint8_t cursor_attr = 0x46;   // brown on red
+static uint8_t cursor_attr = 0x47;   // light gray on red
+static uint8_t cursor_attr = 0x48;   // dark gray on red
+static uint8_t cursor_attr = 0x49;   // light blue on red
+static uint8_t cursor_attr = 0x4A;   // light green on red
+static uint8_t cursor_attr = 0x4B;   // light cyan on red
+static uint8_t cursor_attr = 0x4C;   // light red on red
+static uint8_t cursor_attr = 0x4D;   // light magenta on red
+static uint8_t cursor_attr = 0x4E;   // yellow on red
+static uint8_t cursor_attr = 0x4F;   // white on red
+*/
+
+/* Background 5 — Magenta
+static uint8_t cursor_attr = 0x50;   // black on magenta
+static uint8_t cursor_attr = 0x51;   // blue on magenta
+static uint8_t cursor_attr = 0x52;   // green on magenta
+static uint8_t cursor_attr = 0x53;   // cyan on magenta
+static uint8_t cursor_attr = 0x54;   // red on magenta
+static uint8_t cursor_attr = 0x55;   // magenta on magenta
+static uint8_t cursor_attr = 0x56;   // brown on magenta
+static uint8_t cursor_attr = 0x57;   // light gray on magenta
+static uint8_t cursor_attr = 0x58;   // dark gray on magenta
+static uint8_t cursor_attr = 0x59;   // light blue on magenta
+static uint8_t cursor_attr = 0x5A;   // light green on magenta
+static uint8_t cursor_attr = 0x5B;   // light cyan on magenta
+static uint8_t cursor_attr = 0x5C;   // light red on magenta
+static uint8_t cursor_attr = 0x5D;   // light magenta on magenta
+static uint8_t cursor_attr = 0x5E;   // yellow on magenta
+static uint8_t cursor_attr = 0x5F;   // white on magenta
+*/
+
+/* Background 6 — Brown
+static uint8_t cursor_attr = 0x60;   // black on brown
+static uint8_t cursor_attr = 0x61;   // blue on brown
+static uint8_t cursor_attr = 0x62;   // green on brown
+static uint8_t cursor_attr = 0x63;   // cyan on brown
+static uint8_t cursor_attr = 0x64;   // red on brown
+static uint8_t cursor_attr = 0x65;   // magenta on brown
+static uint8_t cursor_attr = 0x66;   // brown on brown
+static uint8_t cursor_attr = 0x67;   // light gray on brown
+static uint8_t cursor_attr = 0x68;   // dark gray on brown
+static uint8_t cursor_attr = 0x69;   // light blue on brown
+static uint8_t cursor_attr = 0x6A;   // light green on brown
+static uint8_t cursor_attr = 0x6B;   // light cyan on brown
+static uint8_t cursor_attr = 0x6C;   // light red on brown
+static uint8_t cursor_attr = 0x6D;   // light magenta on brown
+static uint8_t cursor_attr = 0x6E;   // yellow on brown
+static uint8_t cursor_attr = 0x6F;   // white on brown
+*/
+
+/* Background 7 — Light Gray
+static uint8_t cursor_attr = 0x70;   // black on light gray
+static uint8_t cursor_attr = 0x71;   // blue on light gray
+static uint8_t cursor_attr = 0x72;   // green on light gray
+static uint8_t cursor_attr = 0x73;   // cyan on light gray
+static uint8_t cursor_attr = 0x74;   // red on light gray
+static uint8_t cursor_attr = 0x75;   // magenta on light gray
+static uint8_t cursor_attr = 0x76;   // brown on light gray
+static uint8_t cursor_attr = 0x77;   // light gray on light gray
+static uint8_t cursor_attr = 0x78;   // dark gray on light gray
+static uint8_t cursor_attr = 0x79;   // light blue on light gray
+static uint8_t cursor_attr = 0x7A;   // light green on light gray
+static uint8_t cursor_attr = 0x7B;   // light cyan on light gray
+static uint8_t cursor_attr = 0x7C;   // light red on light gray
+static uint8_t cursor_attr = 0x7D;   // light magenta on light gray
+static uint8_t cursor_attr = 0x7E;   // yellow on light gray
+static uint8_t cursor_attr = 0x7F;   // white on light gray
+*/
+
+// static uint8_t cursor_attr = 0x07;   // light gray on black
+static uint8_t cursor_attr = 0x1E;   // yellow on blue
+
 
 void vga_write(const char* data, size_t count) {
     for (size_t i = 0; i < count; i++) {

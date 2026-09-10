@@ -1,40 +1,47 @@
 ENTRY(_start)
  
- SECTIONS
- {
-     /* --- LOW MEMORY TSS SECTION FIRST --- */
-     . = 0x5000;
+SECTIONS
+{
+    /* --- LOW MEMORY TSS SECTION FIRST --- */
+    . = 0x5000;
  
-     .tss (NOLOAD) : {
-         *(.data.tss)
-     }
+    .tss (NOLOAD) : {
+        *(.data.tss)
+    }
  
-     /* --- NOW SWITCH TO HIGHER-HALF KERNEL BASE --- */
-     . = 0xFFFFFFFF80100000;
+    /* --- NOW SWITCH TO HIGHER-HALF KERNEL BASE --- */
+    . = 0xFFFFFFFF80100000;
  
-     .text : {
-         *(.text*)
-     }
+    .text : {
+        *(.text*)
+    }
  
-     .rodata : {
-         *(.rodata*)
-     }
+    .rodata : {
+        *(.rodata*)
+    }
  
-     .data : {
-         *(.data*)
-     }
+    .data : {
+        *(.data*)
+    }
  
-     .userelf : {
+    /* Your original clean section */
+    .userelf : {
         *(.userelf)
     }
  
-     .bss : {
-         *(.bss*)
-         *(COMMON)
-         . = ALIGN(4096);
-         . += 8192;
-         . = ALIGN(4096);
-     }
-     
- }
+    .bss : {
+        *(.bss*)
+        *(COMMON)
+        . = ALIGN(4096);
+        . += 8192;
+        . = ALIGN(4096);
+    }
 
+    /* Traps Newlib's metadata tables to prevent them from corrupting .userelf offsets */
+    /DISCARD/ : {
+        *(.comment)
+        *(.note.*)
+        *(.eh_frame)
+        *(.rela.*)
+    }
+}
