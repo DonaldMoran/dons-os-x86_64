@@ -85,21 +85,67 @@ void scheduler_set_current(pcb_t* proc) {
     process_set_current(proc);
 }
 
+//~ void __attribute__((noreturn)) process_exit(void) {
+    //~ if (!current_process) {
+        //~ while(1) asm volatile("hlt");
+    //~ }
+    
+    //~ pcb_t* exiting = current_process;
+    //~ scheduler_ready_queue_remove(exiting);
+    //~ exiting->state = PROC_STATE_TERMINATED;
+    
+    //~ if (process_get_current() == exiting) {
+        //~ process_set_current(NULL);
+    //~ }
+    
+    //~ pcb_t* next = scheduler_ready_queue_next();
+    //~ if (!next) {
+        //~ scheduler_reset();
+        //~ __asm__ volatile (
+            //~ "mov $0xFFFFFFFF8008FF00, %%rsp\n"
+            //~ "jmp *%0\n"
+            //~ : : "r"(kmain_shell_loop)
+            //~ : "memory"
+        //~ );
+        //~ while(1) asm volatile("hlt");
+    //~ }
+    
+    //~ current_process = next;
+    //~ process_set_current(next);
+    //~ next->state = PROC_STATE_RUNNING;
+    //~ next->total_ticks++;
+    
+    //~ context_switch(exiting, next);
+    //~ while(1) asm volatile("hlt");
+//~ }
 void __attribute__((noreturn)) process_exit(void) {
+    serial_print("\n[PROC_EXIT] entered\n");
+
     if (!current_process) {
+        serial_print("[PROC_EXIT] no current process -- halting\n");
         while(1) asm volatile("hlt");
     }
-    
+
     pcb_t* exiting = current_process;
+
+    serial_print("[PROC_EXIT] exiting pid=");
+    serial_print_dec(exiting->pid);
+    serial_print(" state=");
+    serial_print_dec(exiting->state);
+    serial_print("\n");
+
     scheduler_ready_queue_remove(exiting);
     exiting->state = PROC_STATE_TERMINATED;
-    
+
     if (process_get_current() == exiting) {
         process_set_current(NULL);
     }
-    
+
+    serial_print("[PROC_EXIT] removed from queue, now selecting next\n");
+
     pcb_t* next = scheduler_ready_queue_next();
     if (!next) {
+        serial_print("[PROC_EXIT] ready queue empty -- resetting to kernel shell\n");
         scheduler_reset();
         __asm__ volatile (
             "mov $0xFFFFFFFF8008FF00, %%rsp\n"
@@ -107,17 +153,28 @@ void __attribute__((noreturn)) process_exit(void) {
             : : "r"(kmain_shell_loop)
             : "memory"
         );
+        serial_print("[PROC_EXIT] UNREACHABLE: jmp kmain_shell_loop returned\n");
         while(1) asm volatile("hlt");
     }
-    
+
+    serial_print("[PROC_EXIT] switching to pid=");
+    serial_print_dec(next->pid);
+    serial_print(" entry=0x");
+    serial_print_hex(next->entry_point);
+    serial_print("\n");
+
     current_process = next;
     process_set_current(next);
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
-    
+
+    serial_print("[PROC_EXIT] calling context_switch(exiting, next)\n");
     context_switch(exiting, next);
+
+    serial_print("[PROC_EXIT] UNREACHABLE: context_switch returned\n");
     while(1) asm volatile("hlt");
 }
+
 
 void scheduler_switch_to(pcb_t* next) {
     if (!next) return;

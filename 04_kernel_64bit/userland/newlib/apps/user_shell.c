@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
 
     char input_char = 0;
     while (1) {
-        // FIXED: Re-mapped assembly trap register identifier matching your original SYS_READ = 3 constant vector
+        // Re-mapped assembly trap register identifier matching the SYS_READ = 3 constant vector
         register long sys_read_num __asm__("rax") = 3; /* SYS_READ = 3 */
         register long sys_read_fd  __asm__("rdi") = 0; /* fd = 0 (stdin) */
         register char* sys_read_buf __asm__("rsi") = &input_char;
@@ -60,16 +60,22 @@ int main(int argc, char** argv) {
 
         if (sys_read_num > 0) {
             if (input_char == '1') {
-                direct_serial_write("\n[USER LAND DIAG] Option 1 pressed!\n> ");
-            } 
-            else if (input_char == '2') {
-                direct_serial_write("\n[USER LAND DIAG] Option 2 pressed, exiting loop...\n");
-                break;
+                direct_serial_write("\n[USER LAND DIAG] Option 1 pressed! (still alive)\n> ");
             }
+            else if (input_char == '2') {
+                direct_serial_write("\n[USER LAND DIAG] Option 2 pressed! (still alive)\n> ");
+            }
+            else if (input_char == 'q' || input_char == 'Q') {
+                direct_serial_write("\n[USER LAND DIAG] 'q' pressed. User shell is immortal; ignoring.\n> ");
+            }
+            /* The shell never breaks out of this loop. It is immortal. */
         }
     }
 
-    return 0;
+    /* Unreachable: the loop above never breaks. */
+    for (;;) {
+        __asm__ volatile("hlt");
+    }
 }
 
 

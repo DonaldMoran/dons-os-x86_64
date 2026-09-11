@@ -18,11 +18,11 @@ static void diag_write(const char *s, unsigned long len) {
 }
 
 void donsdos_newlib_init(void) {
-    diag_write("A", 1);
-    diag_write("B", 1);
-    diag_write("C", 1);
+    //~ diag_write("A", 1);
+    //~ diag_write("B", 1);
+    //~ diag_write("C", 1);
     _impure_ptr = &_impure_data;
-    diag_write("D", 1);
+    //~ diag_write("D", 1);
     __sinit(_impure_ptr);
-    diag_write("E", 1);
+    //~ diag_write("E", 1);
 }

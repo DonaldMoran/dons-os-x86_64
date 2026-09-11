@@ -67,25 +67,54 @@ long sys_write(int fd, const void* buf, size_t count) {
     return 0;
 }
 
+//~ long sys_read(int fd, void* buf, size_t count) {
+    //~ if (fd == 0) {
+        //~ char c;
+        //~ size_t bytes_read = 0;
+        //~ uint8_t* dest_ptr = (uint8_t*)buf; // Explicit typecast for safe pointer arithmetic
+        
+        //~ while (bytes_read < count) {
+            //~ // Re-enable interrupts to allow keyboard hardware IRQ1 to fill the buffer
+            //~ __asm__ volatile("sti");
+
+            //~ // =======================================================================
+            //~ // CRITICAL CORE FIX: COOPERATIVE YIELDING
+            //~ // =======================================================================
+            //~ // Instead of executing a low-level 'hlt' instruction which stalls the CPU mid-transit
+            //~ // inside Ring 0 and leaves context registers vulnerable to preemption clobbering,
+            //~ // we cleanly yield the timeslice back to the scheduler Ready Queue.
+            //~ while (!kbd_buffer_get(&c)) {
+                //~ process_yield();
+            //~ }
+
+            //~ if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
+                //~ bytes_read++;
+            //~ } else {
+                //~ return -1;
+            //~ }
+        //~ }
+        //~ return bytes_read;
+    //~ }
+    //~ return 0;
+//~ }
 long sys_read(int fd, void* buf, size_t count) {
     if (fd == 0) {
         char c;
         size_t bytes_read = 0;
-        uint8_t* dest_ptr = (uint8_t*)buf; // Explicit typecast for safe pointer arithmetic
-        
+        uint8_t* dest_ptr = (uint8_t*)buf;
+
         while (bytes_read < count) {
-            // Re-enable interrupts to allow keyboard hardware IRQ1 to fill the buffer
             __asm__ volatile("sti");
 
-            // =======================================================================
-            // CRITICAL CORE FIX: COOPERATIVE YIELDING
-            // =======================================================================
-            // Instead of executing a low-level 'hlt' instruction which stalls the CPU mid-transit
-            // inside Ring 0 and leaves context registers vulnerable to preemption clobbering,
-            // we cleanly yield the timeslice back to the scheduler Ready Queue.
             while (!kbd_buffer_get(&c)) {
                 process_yield();
             }
+
+            //~ serial_print("\n[READ] got '");
+            //~ serial_putc(c);
+            //~ serial_print("' (0x");
+            //~ serial_print_hex((uint8_t)c);
+            //~ serial_print(")\n");
 
             if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
                 bytes_read++;
@@ -97,6 +126,7 @@ long sys_read(int fd, void* buf, size_t count) {
     }
     return 0;
 }
+
 
 void* sys_brk(long inc) {
     pcb_t* current = process_get_current();
@@ -137,13 +167,26 @@ void* sys_brk(long inc) {
 
 void sys_exit(int status) {
     (void)status;
+
     pcb_t* current = process_get_current();
+
+    serial_print("\n[EXIT] sys_exit, pid=");
+    serial_print_dec(current ? current->pid : 0);
+    serial_print(", state=");
+    serial_print_dec(current ? current->state : 0);
+    serial_print("\n");
+
     if (current && current->pid != 1) {
         current->state = PROC_STATE_TERMINATED;
         extern void scheduler_ready_queue_remove(pcb_t* pcb);
         scheduler_ready_queue_remove(current);
+        serial_print("[EXIT] marked TERMINATED\n");
     }
-    process_yield();
+
+    /* Do NOT call process_yield or context_switch. The timer preempt
+     * handler checks for state == TERMINATED and returns immediately,
+     * so this halt loop is safe and the CPU simply idles forever. */
+    serial_print("[EXIT] halting in kernel loop\n");
     while (1) __asm__ volatile("hlt");
 }
 

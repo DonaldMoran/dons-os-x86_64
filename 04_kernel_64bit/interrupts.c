@@ -202,6 +202,7 @@ void pit_init(uint32_t freq) {
 
 void isr8_handler(void) {
     vga_print("\n!!! DOUBLE FAULT !!!\n");
+    serial_print("\n!!! DOUBLE FAULT !!!\n");
     while (1) __asm__ volatile("hlt");
 }
 
@@ -217,6 +218,13 @@ void isr13_handler(exception_frame_t *frame) {
     vga_print("  Code Seg (CS): 0x"); vga_print_hex_cur(fault_cs);   vga_print("\n");
     vga_print("  Stack (RSP)  : 0x"); vga_print_hex_cur(fault_rsp);  vga_print("\n");
     vga_print("  Error Code   : 0x"); vga_print_hex_cur(error_code); vga_print("\n");
+
+    serial_print("\n=== GENERAL PROTECTION FAULT (#GP) ===\n");
+    serial_print("  Faulting RIP : 0x"); serial_print_hex(fault_rip);  serial_print("\n");
+    serial_print("  Code Seg (CS): 0x"); serial_print_hex(fault_cs);   serial_print("\n");
+    serial_print("  Stack (RSP)  : 0x"); serial_print_hex(fault_rsp);  serial_print("\n");
+    serial_print("  Error Code   : 0x"); serial_print_hex(error_code); serial_print("\n");
+
     while (1) __asm__ volatile("hlt");
 }
 
@@ -233,5 +241,13 @@ void isr14_handler(exception_frame_t *frame) {
     vga_print("  CR2 (Bad Address) : 0x"); vga_print_hex_cur(fault_addr); vga_print("\n");
     vga_print("  Faulting RIP      : 0x"); vga_print_hex_cur(fault_rip);  vga_print("\n");
     vga_print("  Raw Error Code    : 0x"); vga_print_hex_cur(error_code); vga_print("\n");
+
+    serial_print("\n=== PAGE FAULT (#PF) ===\n");
+    serial_print("  CR2 (Bad Address) : 0x"); serial_print_hex(fault_addr); serial_print("\n");
+    serial_print("  Faulting RIP      : 0x"); serial_print_hex(fault_rip);  serial_print("\n");
+    serial_print("  Raw Error Code    : 0x"); serial_print_hex(error_code); serial_print("\n");
+    serial_print("  CS                : 0x"); serial_print_hex(fault_cs);   serial_print("\n");
+    serial_print("  RSP               : 0x"); serial_print_hex(fault_rsp);  serial_print("\n");
+
     while (1) __asm__ volatile("hlt");
 }

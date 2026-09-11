@@ -77,7 +77,23 @@ user_syscall_entry:
     ; C signature expects: syscall_dispatch(num, arg0, arg1, arg2, arg3, arg4, arg5)
     ; System V ABI expects:   rdi,  rsi,  rdx,  rcx,  r8,   r9,   [stack]
     
+    ;push r9                         ; Parameter 7 (arg5) -> Placed on the stack frame
+    ;mov r9, r8                      ; Parameter 6 (arg4) -> Moves into r9
+    ;mov r8, r10                     ; Parameter 5 (arg3) -> Moves into r8
+    ;mov rcx, rdx                    ; Parameter 4 (arg2) -> Moves safely into rcx
+    ;mov rdx, rsi                    ; Parameter 3 (arg1) -> Moves into rdx
+    ;mov rsi, rdi                    ; Parameter 2 (arg0) -> Moves into rsi
+	;
+    ;mov rdi, rax                    ; Parameter 1 (num)  -> Moves into rdi
+	;
+    ;call syscall_dispatch
+    ;add rsp, 8                      ; Instantly discard stacked Parameter 7
+	;
+    ;; Check if process called SYS_EXIT (2)
+    ;cmp rdi, 2                      ; rdi contains our tracked syscall number (num)
+    ;je .handle_exit
     push r9                         ; Parameter 7 (arg5) -> Placed on the stack frame
+    mov rbx, rax                    ; Save syscall number in callee-saved rbx
     mov r9, r8                      ; Parameter 6 (arg4) -> Moves into r9
     mov r8, r10                     ; Parameter 5 (arg3) -> Moves into r8
     mov rcx, rdx                    ; Parameter 4 (arg2) -> Moves safely into rcx
@@ -88,9 +104,12 @@ user_syscall_entry:
     call syscall_dispatch
     add rsp, 8                      ; Instantly discard stacked Parameter 7
 
-    ; Check if process called SYS_EXIT (2)
-    cmp rdi, 2                      ; rdi contains our tracked syscall number (num)
+    ; Check if process called SYS_EXIT (2).
+    ; rbx is callee-saved under System V AMD64 ABI, so syscall_dispatch
+    ; is required to preserve it across the call.
+    cmp rbx, 2
     je .handle_exit
+
 
     ; 5. Restore registers back to their original userland states
     pop r9

@@ -284,6 +284,10 @@ This project is designed to be:
   - **Kernel Size Limit Lifted:** Expanded kernel disk read thresholds up to 256 sectors (128 KB allocation ceiling).
   - **Userland Reboot System Call:** Added system call #25 (`SYS_REBOOT`) to cleanly wire Ring 3 Userland Shell option 4 right back into a Ring 0 hardware triple-fault motherboard reset.
   - **Preemptive Core Integration:** Validated PIT clock timer integration (`IRQ0` at 100Hz) enforcing forceful quantum task slicing across ready queues.
+## 20260910A — Newlib printf working
+- Fix: `_impure_ptr = &_impure_data` in `arc2/reent.c`
+- Proved: `printf("Hello, world!\n")` reaches VGA + serial from Ring 3
+- Known issue: `user_shell.c` input loop misreads garbage as '1'/'2', then GP faults at RIP 0x800000006B
 ---
 
 ## 📌 Project Status (as of August 2026)
