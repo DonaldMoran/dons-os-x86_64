@@ -858,6 +858,52 @@ static void handle_command(const char *cmd) {
                 keyboard_buffer_flush();
                 
                 /* 3. Pass task execution control smoothly to the scheduler context switcher */
+                
+                // ============================================================
+                // >>>>>> REPLACE FROM HERE >>>>>>
+                // ============================================================
+                /* 3. Pass task execution control smoothly to the scheduler context switcher */
+                
+                {
+                    extern uint64_t vmm_get_phys_from_cr3(uint64_t cr3, uint64_t virt);
+                    extern void serial_print(const char *s);
+                    extern void serial_print_hex(uint64_t v);
+
+                    /* Current ELF symbol addresses (from `nm user_shell.elf`):
+                     *   _impure_ptr  = 0x80000020e0
+                     *   _impure_data = 0x8000002100
+                     * Re-run `nm` after any rebuild and update these if they move. */
+                    const uint64_t V_IMP_PTR  = 0x80000020e0ULL;
+                    const uint64_t V_IMP_DATA = 0x8000002100ULL;
+
+                    uint64_t p = vmm_get_phys_from_cr3(shell_proc->cr3, V_IMP_PTR);
+                    serial_print("KM: pre-switch _impure_ptr phys=0x");
+                    serial_print_hex(p);
+                    serial_print(" bytes=");
+                    if (p == 0) {
+                        serial_print("PAGE-NOT-MAPPED\n");
+                    } else {
+                        uint8_t *b = (uint8_t *)(0xFFFF800000000000ULL + p);
+                        for (int k = 0; k < 8; k++) serial_print_hex(b[k]);
+                        serial_print("\n");
+                    }
+
+                    uint64_t p2 = vmm_get_phys_from_cr3(shell_proc->cr3, V_IMP_DATA);
+                    serial_print("KM: pre-switch _impure_data phys=0x");
+                    serial_print_hex(p2);
+                    serial_print(" bytes=");
+                    if (p2 == 0) {
+                        serial_print("PAGE-NOT-MAPPED\n");
+                    } else {
+                        uint8_t *b2 = (uint8_t *)(0xFFFF800000000000ULL + p2);
+                        for (int k = 0; k < 8; k++) serial_print_hex(b2[k]);
+                        serial_print("\n");
+                    }
+                }
+                // ============================================================
+                // <<<<<< REPLACE TO HERE <<<<<<
+                // ============================================================
+                
                 scheduler_switch_to(shell_proc);
             } else {
                 vga_print("Error: Compiled binary structure validation failed!\n");

@@ -1,22 +1,22 @@
 #include <stdio.h>
 #include <unistd.h>
 
-// Clean inline string length helper to eliminate manual buffer count errors
+/* Clean inline string length helper */
 static inline size_t user_strlen(const char* str) {
     size_t len = 0;
     while (str[len]) len++;
     return len;
 }
 
-/* Register-level raw kernel write trap using explicit ABI constraints */
+/* Register-level raw kernel write trap */
 static void direct_serial_write(const char* str) {
     size_t len = user_strlen(str);
     if (len == 0) return;
 
-    register long rax __asm__("rax") = 1;   /* SYS_WRITE = 1 */
-    register long rdi __asm__("rdi") = 1;   /* fd = 1 (stdout) */
-    register const char* rsi __asm__("rsi") = str; 
-    register size_t rdx __asm__("rdx") = len;      
+    register long rax __asm__("rax") = 1;
+    register long rdi __asm__("rdi") = 1;
+    register const char* rsi __asm__("rsi") = str;
+    register size_t rdx __asm__("rdx") = len;
 
     __asm__ volatile (
         "syscall"
@@ -26,59 +26,51 @@ static void direct_serial_write(const char* str) {
     );
 }
 
+/* Print a 64-bit value as 0x + 16 hex digits + newline */
+static void print_hex_label(const char *label, unsigned long val) {
+    char buf[40];
+    static const char hx[] = "0123456789abcdef";
+    int i = 0;
+    while (label[i] && i < 12) { buf[i] = label[i]; i++; }
+    buf[i++] = '=';
+    buf[i++] = '0';
+    buf[i++] = 'x';
+    for (int k = 15; k >= 0; k--) {
+        buf[i++] = hx[(val >> (k * 4)) & 0xF];
+    }
+    buf[i++] = '\n';
+    buf[i] = '\0';
+    direct_serial_write(buf);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
 
-    // Force unbuffered I/O on stdout immediately BEFORE printing anything.
-    setvbuf(stdout, NULL, _IONBF, 0);
+    extern struct _reent *_impure_ptr;
+    extern struct _reent _impure_data;
 
-    /* 1. STANDARD NEWLIB PRINTF TEST */
-    printf("Hello, world!\n");
+    /* ============================================================
+     * MAIN ISOLATION TEST
+     * Each line is a distinct, short write so we can see exactly
+     * which one lands and which does not.
+     * ============================================================ */
 
-    /* 2. IMMEDIATE DIRECT HARDWARE BYPASS TEST */
-    direct_serial_write("\n[USER LAND DIRECT] Assembly kernel trap successfully executed!\n");
-    direct_serial_write("\n[USER LAND DIRECT] Assembly kernel trap successfully executed!\n");
+    direct_serial_write("M1\n");
+    direct_serial_write("M2\n");
+    direct_serial_write("M3\n");
 
-    /* 3. STANDARD NEWLIB PRINTF REENTRANCY TEST */
-    printf("[USER LAND printf] If you see this, Newlib reentrancy is operational.\n> ");
+    /* Now the pointer diagnostics, in a stable order. */
+    print_hex_label("imp_ptr",  (unsigned long)_impure_ptr);
+    print_hex_label("imp_data", (unsigned long)&_impure_data);
+    print_hex_label("sf0",      (unsigned long)&__sf[0]);
+    print_hex_label("sf1",      (unsigned long)&__sf[1]);
 
-    char input_char = 0;
-    while (1) {
-        // Re-mapped assembly trap register identifier matching the SYS_READ = 3 constant vector
-        register long sys_read_num __asm__("rax") = 3; /* SYS_READ = 3 */
-        register long sys_read_fd  __asm__("rdi") = 0; /* fd = 0 (stdin) */
-        register char* sys_read_buf __asm__("rsi") = &input_char;
-        register size_t sys_read_cnt __asm__("rdx") = 1;
+    direct_serial_write("MAIN_DONE\n");
 
-        __asm__ volatile (
-            "syscall"
-            : "+r"(sys_read_num)
-            : "r"(sys_read_fd), "r"(sys_read_buf), "r"(sys_read_cnt)
-            : "rcx", "r11", "memory"
-        );
-
-        if (sys_read_num > 0) {
-            if (input_char == '1') {
-                direct_serial_write("\n[USER LAND DIAG] Option 1 pressed! (still alive)\n> ");
-            }
-            else if (input_char == '2') {
-                direct_serial_write("\n[USER LAND DIAG] Option 2 pressed! (still alive)\n> ");
-            }
-            else if (input_char == 'q' || input_char == 'Q') {
-                direct_serial_write("\n[USER LAND DIAG] 'q' pressed. User shell is immortal; ignoring.\n> ");
-            }
-            /* The shell never breaks out of this loop. It is immortal. */
-        }
-    }
-
-    /* Unreachable: the loop above never breaks. */
-    for (;;) {
-        __asm__ volatile("hlt");
-    }
+    /* Do not loop; exit cleanly so the kernel logs its exit path. */
+    return 0;
 }
-
-
 
 
 

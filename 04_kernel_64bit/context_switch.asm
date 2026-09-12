@@ -4,6 +4,28 @@ default rel
 section .text
 global context_switch
 
+; Correct pcb_t offsets (from process.h):
+;   cr3              = 0x30
+;   entry_point      = 0x38
+;   user_stack_top   = 0x68
+;   r15              = 0x90
+;   r14              = 0x98
+;   r13              = 0xa0
+;   r12              = 0xa8
+;   r11              = 0xb0
+;   r10              = 0xb8
+;   r9               = 0xc0
+;   r8               = 0xc8
+;   rbp              = 0xd0
+;   rdi              = 0xd8
+;   rsi              = 0xe0
+;   rdx              = 0xe8
+;   rcx              = 0xf0
+;   rbx              = 0xf8
+;   rax              = 0x100
+;   rsp              = 0x108
+;   rip              = 0x110
+
 ; void context_switch(pcb_t* prev, pcb_t* next)
 ; prev in RDI, next in RSI
 context_switch:
@@ -20,25 +42,25 @@ context_switch:
     test rdi, rdi
     jz .skip_save
 
-    mov [rdi + 0x70], rax
-    mov [rdi + 0x78], rbx
-    mov [rdi + 0x80], rcx
-    mov [rdi + 0x88], rdx
-    mov [rdi + 0x90], rsi
-    mov [rdi + 0x98], rdi
-    mov [rdi + 0xA0], rbp
-    mov [rdi + 0xA8], r8
-    mov [rdi + 0xB0], r9
-    mov [rdi + 0xB8], r10
-    mov [rdi + 0xC0], r11
-    mov [rdi + 0xC8], r12
-    mov [rdi + 0xD0], r13
-    mov [rdi + 0xD8], r14
-    mov [rdi + 0xE0], r15
+    mov [rdi + 0x100], rax
+    mov [rdi + 0x0F8], rbx
+    mov [rdi + 0x0F0], rcx
+    mov [rdi + 0x0E8], rdx
+    mov [rdi + 0x0E0], rsi
+    mov [rdi + 0x0D8], rdi
+    mov [rdi + 0x0D0], rbp
+    mov [rdi + 0x0C8], r8
+    mov [rdi + 0x0C0], r9
+    mov [rdi + 0x0B8], r10
+    mov [rdi + 0x0B0], r11
+    mov [rdi + 0x0A8], r12
+    mov [rdi + 0x0A0], r13
+    mov [rdi + 0x098], r14
+    mov [rdi + 0x090], r15
 
-    mov [rdi + 0xE8], rsp   ; save current RSP
+    mov [rdi + 0x108], rsp   ; save current RSP
     mov rax, [rsp]
-    mov [rdi + 0xF0], rax   ; save current RIP (return address)
+    mov [rdi + 0x110], rax   ; save current RIP (return address)
 
     ; Save current CR3 into prev->cr3
     mov rax, cr3
@@ -73,63 +95,52 @@ context_switch:
     invlpg [rcx]
 
     ; Restore general registers (except RSP, which will be set by iret)
-    mov rax, [r12 + 0x70]
-    mov rbx, [r12 + 0x78]
-    mov rcx, [r12 + 0x80]
-    mov rdx, [r12 + 0x88]
-    mov rbp, [r12 + 0xA0]
-    mov r8,  [r12 + 0xA8]
-    mov r9,  [r12 + 0xB0]
-    mov r10, [r12 + 0xB8]
-    mov r11, [r12 + 0xC0]
-    mov r13, [r12 + 0xD0]
-    mov r14, [r12 + 0xD8]
-    mov r15, [r12 + 0xE0]
-    mov rdi, [r12 + 0x98]
-    mov rsi, [r12 + 0x90]
+    mov rax, [r12 + 0x100]
+    mov rbx, [r12 + 0x0F8]
+    mov rcx, [r12 + 0x0F0]
+    mov rdx, [r12 + 0x0E8]
+    mov rbp, [r12 + 0x0D0]
+    mov r8,  [r12 + 0x0C8]
+    mov r9,  [r12 + 0x0C0]
+    mov r10, [r12 + 0x0B8]
+    mov r11, [r12 + 0x0B0]
+    mov r13, [r12 + 0x0A0]
+    mov r14, [r12 + 0x098]
+    mov r15, [r12 + 0x090]
+    mov rdi, [r12 + 0x0D8]
+    mov rsi, [r12 + 0x0E0]
 
     ; Build iretq frame for ring 3
-    push qword 0x2B         ; SS (user data selector with RPL=3)
+    push qword 0x2B         ; SS
     push qword [r12 + 0x68] ; RSP (user stack top)
-    
-    ; CRITICAL FIX: Force an explicit clean 64-bit user flag structure (0x3202)
-    ; Bit 1 (0x02) = Mandatory System Reserved Bit
-    ; Bit 9 (0x0200) = Interrupt Flag Enabled (IF=1), allowing hardware timer ticks
-    ; Bits 12-13 (0x3000) = Input/Output Privilege Level set to Ring 3 (IOPL=3)
-    ; This explicitly allows standard Newlib runtime libraries to coordinate unprivileged code!
-    push qword 0x3202       ; RFLAGS (IF=1, IOPL=3, Clean Long Mode structure)
-    
-    push qword 0x33         ; CS (user code selector with RPL=3)
+    push qword 0x3202       ; RFLAGS
+    push qword 0x33         ; CS
     push qword [r12 + 0x38] ; RIP (entry point)
 
-    ; Clear r12 last since it was holding our pcb_t pointer structure
-    mov r12, [r12 + 0xC8]
+    ; Clear r12 last
+    mov r12, [r12 + 0x0A8]
 
     iretq
 
 .kernel_task:
     ; ---- Kernel task (idle, etc.): just switch stack and return ----
-    ; Restore general registers (except RSP and RIP)
-    mov rax, [r12 + 0x70]
-    mov rbx, [r12 + 0x78]
-    mov rcx, [r12 + 0x80]
-    mov rdx, [r12 + 0x88]
-    mov rbp, [r12 + 0xA0]
-    mov r8,  [r12 + 0xA8]
-    mov r9,  [r12 + 0xB0]
-    mov r10, [r12 + 0xB8]
-    mov r11, [r12 + 0xC0]
-    mov r13, [r12 + 0xD0]
-    mov r14, [r12 + 0xD8]
-    mov r15, [r12 + 0xE0]
-    mov rdi, [r12 + 0x98]
-    mov rsi, [r12 + 0x90]
+    mov rax, [r12 + 0x100]
+    mov rbx, [r12 + 0x0F8]
+    mov rcx, [r12 + 0x0F0]
+    mov rdx, [r12 + 0x0E8]
+    mov rbp, [r12 + 0x0D0]
+    mov r8,  [r12 + 0x0C8]
+    mov r9,  [r12 + 0x0C0]
+    mov r10, [r12 + 0x0B8]
+    mov r11, [r12 + 0x0B0]
+    mov r13, [r12 + 0x0A0]
+    mov r14, [r12 + 0x098]
+    mov r15, [r12 + 0x090]
+    mov rdi, [r12 + 0x0D8]
+    mov rsi, [r12 + 0x0E0]
 
-    ; Switch stack to the new task's kernel stack
-    mov rsp, [r12 + 0xE8]   ; load saved RSP
-
-    ; Jump to the new task's entry point
-    mov rax, [r12 + 0xF0]   ; load saved RIP
+    mov rsp, [r12 + 0x108]
+    mov rax, [r12 + 0x110]
     jmp rax
 
 .restore_and_return:

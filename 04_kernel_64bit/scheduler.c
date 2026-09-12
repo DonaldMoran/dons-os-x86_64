@@ -199,6 +199,20 @@ void scheduler_switch_to(pcb_t* next) {
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
     
+    /* PATCH: Set TSS.RSP0 for user processes before the context switch.
+       Without this, the first interrupt/syscall in the new user process
+       pushes its exception frame onto a stale kernel stack, causing the
+       reported fault RIP/CR2 to be garbage. */
+    if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
+        extern void tss_set_kernel_stack(uint64_t stack);
+        serial_print("SCHED: Setting TSS.RSP0 for user pid=");
+        serial_print_dec(next->pid);
+        serial_print(" to 0x");
+        serial_print_hex(next->kernel_stack_top);
+        serial_print("\n");
+        tss_set_kernel_stack(next->kernel_stack_top);
+    }
+    
     context_switch(prev, next);
 }
 

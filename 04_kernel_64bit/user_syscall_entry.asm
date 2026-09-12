@@ -9,6 +9,7 @@ extern syscall_dispatch
 extern process_exit
 extern serial_print
 extern serial_print_hex
+extern syscall_pre_sysret_diag
 
 ; ---------------------------------------------------------------------------
 ; Syscall init: set up EFER, STAR, LSTAR, FMASK
@@ -77,21 +78,6 @@ user_syscall_entry:
     ; C signature expects: syscall_dispatch(num, arg0, arg1, arg2, arg3, arg4, arg5)
     ; System V ABI expects:   rdi,  rsi,  rdx,  rcx,  r8,   r9,   [stack]
     
-    ;push r9                         ; Parameter 7 (arg5) -> Placed on the stack frame
-    ;mov r9, r8                      ; Parameter 6 (arg4) -> Moves into r9
-    ;mov r8, r10                     ; Parameter 5 (arg3) -> Moves into r8
-    ;mov rcx, rdx                    ; Parameter 4 (arg2) -> Moves safely into rcx
-    ;mov rdx, rsi                    ; Parameter 3 (arg1) -> Moves into rdx
-    ;mov rsi, rdi                    ; Parameter 2 (arg0) -> Moves into rsi
-	;
-    ;mov rdi, rax                    ; Parameter 1 (num)  -> Moves into rdi
-	;
-    ;call syscall_dispatch
-    ;add rsp, 8                      ; Instantly discard stacked Parameter 7
-	;
-    ;; Check if process called SYS_EXIT (2)
-    ;cmp rdi, 2                      ; rdi contains our tracked syscall number (num)
-    ;je .handle_exit
     push r9                         ; Parameter 7 (arg5) -> Placed on the stack frame
     mov rbx, rax                    ; Save syscall number in callee-saved rbx
     mov r9, r8                      ; Parameter 6 (arg4) -> Moves into r9
@@ -129,6 +115,23 @@ user_syscall_entry:
     pop rcx                         ; Restore Userland Instruction Pointer (RIP)
     pop rbp
     pop rsp                         ; Restore Userland Stack Pointer (RSP)
+
+    ; ============================================================
+    ; DIAGNOSTIC: at this point, RCX = user RIP, R11 = user RFLAGS,
+    ; RSP = user RSP. sysret will use RCX, R11, and RSP.
+    ; Preserve all three across a call to syscall_pre_sysret_diag.
+    ; ============================================================
+    push rsp                        ; save user RSP
+    push rcx                        ; save user RIP
+    push r11                        ; save user RFLAGS
+    mov rdi, rcx                    ; arg0 = user RIP
+    mov rsi, r11                    ; arg1 = user RFLAGS
+    sub rsp, 8                      ; align stack for the call
+    call syscall_pre_sysret_diag
+    add rsp, 8
+    pop r11                         ; restore user RFLAGS
+    pop rcx                         ; restore user RIP
+    pop rsp                         ; restore user RSP
     
     o64 sysret                      ; Secure privilege step down to Ring 3
 

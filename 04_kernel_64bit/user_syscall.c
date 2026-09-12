@@ -12,6 +12,17 @@
 #include "include/elf.h"
 
 // ============================================================
+// DIAGNOSTIC CALLED FROM user_syscall_entry.asm JUST BEFORE sysret
+// ============================================================
+void syscall_pre_sysret_diag(uint64_t user_rip, uint64_t user_rflags) {
+    serial_print("PRE-SYSRET rcx(rip)=");
+    serial_print_hex(user_rip);
+    serial_print(" r11(rflags)=");
+    serial_print_hex(user_rflags);
+    serial_print("\n");
+}
+
+// ============================================================
 // SAFE COPY FUNCTIONS
 // ============================================================
 static int safe_copy_to_user(void* user_dest, const void* kernel_src, size_t count) {
@@ -42,61 +53,10 @@ static int safe_copy_to_user(void* user_dest, const void* kernel_src, size_t cou
 // SYSCALL HANDLERS
 // ============================================================
 long sys_write(int fd, const void* buf, size_t count) {
-    if (!buf || count == 0) return -1;
-
-    if (fd == 1 || fd == 2) {
-        pcb_t* current = process_get_current();
-        if (!current) return -1;
-
-        uint64_t user_ptr = (uint64_t)buf;
-        size_t processed = 0;
-
-        while (processed < count) {
-            uint64_t cur_addr = user_ptr + processed;
-            uint64_t phys = vmm_get_phys_from_cr3(current->cr3, cur_addr);
-            if (!phys) return (processed > 0 ? processed : -1);
-
-            uint8_t* raw_ram = (uint8_t*)(HHDM_START + phys);
-            char c = (char)*raw_ram;
-            vga_putc(c);
-            serial_putc(c);
-            processed++;
-        }
-        return (long)processed;
-    }
-    return 0;
+    (void)fd; (void)buf; (void)count;
+    return (long)count;
 }
 
-//~ long sys_read(int fd, void* buf, size_t count) {
-    //~ if (fd == 0) {
-        //~ char c;
-        //~ size_t bytes_read = 0;
-        //~ uint8_t* dest_ptr = (uint8_t*)buf; // Explicit typecast for safe pointer arithmetic
-        
-        //~ while (bytes_read < count) {
-            //~ // Re-enable interrupts to allow keyboard hardware IRQ1 to fill the buffer
-            //~ __asm__ volatile("sti");
-
-            //~ // =======================================================================
-            //~ // CRITICAL CORE FIX: COOPERATIVE YIELDING
-            //~ // =======================================================================
-            //~ // Instead of executing a low-level 'hlt' instruction which stalls the CPU mid-transit
-            //~ // inside Ring 0 and leaves context registers vulnerable to preemption clobbering,
-            //~ // we cleanly yield the timeslice back to the scheduler Ready Queue.
-            //~ while (!kbd_buffer_get(&c)) {
-                //~ process_yield();
-            //~ }
-
-            //~ if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
-                //~ bytes_read++;
-            //~ } else {
-                //~ return -1;
-            //~ }
-        //~ }
-        //~ return bytes_read;
-    //~ }
-    //~ return 0;
-//~ }
 long sys_read(int fd, void* buf, size_t count) {
     if (fd == 0) {
         char c;
@@ -110,12 +70,6 @@ long sys_read(int fd, void* buf, size_t count) {
                 process_yield();
             }
 
-            //~ serial_print("\n[READ] got '");
-            //~ serial_putc(c);
-            //~ serial_print("' (0x");
-            //~ serial_print_hex((uint8_t)c);
-            //~ serial_print(")\n");
-
             if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
                 bytes_read++;
             } else {
@@ -126,7 +80,6 @@ long sys_read(int fd, void* buf, size_t count) {
     }
     return 0;
 }
-
 
 void* sys_brk(long inc) {
     pcb_t* current = process_get_current();

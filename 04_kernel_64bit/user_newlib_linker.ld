@@ -33,16 +33,6 @@ SECTIONS
         *(.dynstr)
     }
 
-    /* CRITICAL FIX SECTION: Explicitly capture Newlib's common impure variables
-       and lock them down into a dedicated, page-aligned 64-bit section container.
-       This forces ld.lld to preserve full absolute 64-bit pointer metrics. */
-    .impure : ALIGN(4096) {
-        _impure_ptr = .;
-        . += 8;
-        _global_impure_ptr = .;
-        . += 8;
-    }
-
     .bss : ALIGN(4096) {
         __bss_start = .;
         *(.bss .bss.*)
