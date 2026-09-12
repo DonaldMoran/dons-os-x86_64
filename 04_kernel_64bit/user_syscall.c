@@ -12,17 +12,6 @@
 #include "include/elf.h"
 
 // ============================================================
-// DIAGNOSTIC CALLED FROM user_syscall_entry.asm JUST BEFORE sysret
-// ============================================================
-//~ void syscall_pre_sysret_diag(uint64_t user_rip, uint64_t user_rflags) {
-    //~ serial_print("PRE-SYSRET rcx(rip)=");
-    //~ serial_print_hex(user_rip);
-    //~ serial_print(" r11(rflags)=");
-    //~ serial_print_hex(user_rflags);
-    //~ serial_print("\n");
-//~ }
-
-// ============================================================
 // SAFE COPY: user -> kernel
 // ============================================================
 static int safe_copy_from_user(void* kernel_dest, const void* user_src, size_t count) {
@@ -97,9 +86,6 @@ long sys_write(int fd, const void* buf, size_t count) {
     while (remaining > 0) {
         size_t chunk = remaining > WRITE_CHUNK ? WRITE_CHUNK : remaining;
         if (safe_copy_from_user(g_write_bounce, user_ptr, chunk) != 0) {
-            serial_print("[sys_write] copy_from_user failed at user addr=0x");
-            serial_print_hex((uint64_t)user_ptr);
-            serial_print("\n");
             return -1;
         }
 
@@ -115,87 +101,22 @@ long sys_write(int fd, const void* buf, size_t count) {
     return (long)count;
 }
 
-//~ long sys_read(int fd, void* buf, size_t count) {
-    //~ if (fd == 0) {
-        //~ char c;
-        //~ size_t bytes_read = 0;
-        //~ uint8_t* dest_ptr = (uint8_t*)buf;
-
-        //~ while (bytes_read < count) {
-            //~ __asm__ volatile("sti");
-
-            //~ while (!kbd_buffer_get(&c)) {
-                //~ process_yield();
-            //~ }
-
-            //~ if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
-                //~ bytes_read++;
-            //~ } else {
-                //~ return -1;
-            //~ }
-        //~ }
-        //~ return bytes_read;
-    //~ }
-    //~ return 0;
-//~ }
-
-//~ long sys_read(int fd, void* buf, size_t count) {
-    //~ if (fd == 0) {
-        //~ char c;
-        //~ size_t bytes_read = 0;
-        //~ uint8_t* dest_ptr = (uint8_t*)buf;
-
-        //~ while (bytes_read < count) {
-            //~ __asm__ volatile("sti; hlt");
-
-            //~ if (kbd_buffer_get(&c)) {
-                //~ serial_print("[sys_read] got 0x");
-                //~ serial_print_hex((unsigned char)c);
-                //~ serial_print("\n");
-
-                //~ if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
-                    //~ bytes_read++;
-                //~ } else {
-                    //~ serial_print("[sys_read] copy_to_user FAILED\n");
-                    //~ return -1;
-                //~ }
-            //~ }
-        //~ }
-        //~ return bytes_read;
-    //~ }
-    //~ return 0;
-//~ }
-
 long sys_read(int fd, void* buf, size_t count) {
     if (fd == 0) {
         char c;
         size_t bytes_read = 0;
         uint8_t* dest_ptr = (uint8_t*)buf;
 
-        serial_print("[sys_read] enter fd=0 count=");
-        serial_print_dec(count);
-        serial_print(" user_buf=");
-        serial_print_hex((uint64_t)buf);
-        serial_print("\n");
-
         while (bytes_read < count) {
             __asm__ volatile("sti; hlt");
             if (kbd_buffer_get(&c)) {
-                serial_print("[sys_read] got 0x");
-                serial_print_hex((unsigned char)c);
-                serial_print("\n");
                 if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
                     bytes_read++;
                 } else {
-                    serial_print("[sys_read] copy_to_user FAILED\n");
                     return -1;
                 }
             }
         }
-
-        serial_print("[sys_read] return ");
-        serial_print_dec(bytes_read);
-        serial_print("\n");
         return bytes_read;
     }
     return 0;
@@ -243,20 +164,12 @@ void sys_exit(int status) {
 
     pcb_t* current = process_get_current();
 
-    serial_print("\n[EXIT] sys_exit, pid=");
-    serial_print_dec(current ? current->pid : 0);
-    serial_print(", state=");
-    serial_print_dec(current ? current->state : 0);
-    serial_print("\n");
-
     if (current && current->pid != 1) {
         current->state = PROC_STATE_TERMINATED;
         extern void scheduler_ready_queue_remove(pcb_t* pcb);
         scheduler_ready_queue_remove(current);
-        serial_print("[EXIT] marked TERMINATED\n");
     }
 
-    serial_print("[EXIT] halting in kernel loop\n");
     while (1) __asm__ volatile("hlt");
 }
 

@@ -115,8 +115,7 @@ make -C 05_boot_kernel64 run
 make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/05_boot_kernel64'
 qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -monitor none
 BootInfo validated successfully
-TIMER[1] frame=FFFFFFFF8008FF30 cs=18 ss=10 rip=FFFFFFFF80104DEE rsp=FFFFFFFF8008FFD0 rflags=10207 cur=NULL
-TIMER: no/terminated current, no switch
+TIMER[1] frame=FFFFFFFF8008FF30 cs=18 ss=10 rip=FFFFFFFF80104B7E rsp=FFFFFFFF8008FFD0 rflags=10207 cur=NULL
 PMM: Initializing with page type system...
 PMM: Zones computed:
   LOW  zone: pages 288 - 8399
@@ -130,14 +129,13 @@ VMM: Detected 127 MB usable RAM
 VMM: Highest physical address: 0x7FE0000
 VMM: Physical memory into HHDM is already mapped by bootloader.
 VMM: BootInfo page at phys=17000
+TIMER[2] frame=FFFFFFFF8008FEE0 cs=18 ss=10 rip=FFFFFFFF801052C9 rsp=FFFFFFFF8008FF88 rflags=10246 cur=NULL
 VMM: CR3 = 0x11000
 VMM: NX support available
 VMM: Initialization complete
 HEAP: Initializing...
 HEAP: Extending heap by 1024 KB (256 pages)
-HEAP: Extended to TIMER[2] frame=FFFFFFFF8008FEE0 cs=18 ss=10 rip=FFFFFFFF80103F13 rsp=FFFFFFFF8008FF80 rflags=10246 cur=NULL
-TIMER: no/terminated current, no switch
-1024 KB total
+HEAP: Extended to 1024 KB total
 HEAP: Initialized at 0xFFFF900000000000 size=1024 KB
 PROCESS: Initializing...
 PROCESS: Initialization complete. 1 processes ready.
@@ -162,12 +160,13 @@ TSS: zeroed 0xC00 bytes
 TSS: zeroed 0x1000 bytes
 TSS: zeroed 0x1400 bytes
 TSS: zeroed 0x1800 bytes
-TSS: zeroed 0x1C00 bytes
+TTIMER[3] frame=FFFFFFFF8008FF10 cs=18 ss=20 rip=FFFFFFFF80105E40 rsp=FFFFFFFF8008FFB0 rflags=10202 cur=1
+SS: zeroed 0x1C00 bytes
 TSS: zeroed 0x2000 bytes
 TSS: Zeroing loop completed
 TSS: I/O Permission Bitmap terminator set at 0x7068
 TSS: Setting rsp0...
-TSS: rsp0 = 0xFFFFFFFF8026C150
+TSS: rsp0 = 0xFFFFFFFF8026BCA0
 TSS: Setting iopb_base...
 TSS: iopb_base = 0x68
 TSS: Calling gdt_set_tss...
@@ -208,87 +207,11 @@ SYSCALL init done
 Initializing **RING** 3 syscalls...
 SYSCALL init done
 CPU: Native hardware SSE vector extensions safely enabled.
-TIMER[3] frame=FFFFFFFF8008FF30 cs=18 ss=20 rip=FFFFFFFF80105CC6 rsp=FFFFFFFF8008FFD8 rflags=10246 cur=1
-IDLE[1] tick=3 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[4] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[2] tick=4 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[5] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[3] tick=5 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[6] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[4] tick=6 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[7] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[5] tick=7 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[8] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[6] tick=8 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[9] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[7] tick=9 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[10] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[8] tick=10 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[11] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[9] tick=11 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[12] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[10] tick=12 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[13] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[11] tick=13 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[14] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[12] tick=14 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[15] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[13] tick=15 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[16] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[14] tick=16 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[17] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[15] tick=17 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[18] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[16] tick=18 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[19] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[17] tick=19 peek=pid=1 state=1
-TIMER: idle, no user ready
-TIMER[20] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
-IDLE[18] tick=20 peek=pid=1 state=1
-TIMER: idle, no user ready
-.IDLE[19] tick=21 peek=pid=1 state=1
-.IDLE[20] tick=22 peek=pid=1 state=1
-.IDLE[21] tick=23 peek=pid=1 state=1
-.IDLE[22] tick=24 peek=pid=1 state=1
-.IDLE[23] tick=25 peek=pid=1 state=1
-.IDLE[24] tick=26 peek=pid=1 state=1
-.IDLE[25] tick=27 peek=pid=1 state=1
-.IDLE[26] tick=28 peek=pid=1 state=1
-.IDLE[27] tick=29 peek=pid=1 state=1
-.IDLE[28] tick=30 peek=pid=1 state=1
-.IDLE[29] tick=31 peek=pid=1 state=1
-.IDLE[30] tick=32 peek=pid=1 state=1
-.IDLE[31] tick=33 peek=pid=1 state=1
-.IDLE[32] tick=34 peek=pid=1 state=1
-.IDLE[33] tick=35 peek=pid=1 state=1
-.IDLE[34] tick=36 peek=pid=1 state=1
-.IDLE[35] tick=37 peek=pid=1 state=1
-.IDLE[36] tick=38 peek=pid=1 state=1
-.IDLE[37] tick=39 peek=pid=1 state=1
-.IDLE[38] tick=40 peek=pid=1 state=1
-.IDLE[39] tick=41 peek=pid=1 state=1
-.IDLE[40] tick=42 peek=pid=1 state=1
-....................................................................................................................................................................PROCESS: Realignment mapping user stack inside verified code segment: 0x8000100000
+PROCESS: Realignment mapping user stack inside verified code segment: 0x8000100000
 PROCESS: User stack pointer finalized at RSP = 0x80000FFFE0
 VMM: Dynamically mapped HHDM 0x7ED0000 -> 0xFFFF800007ED0000
-ELF: elf_data=FFFFFFFF8010D7C0 e_phoff=40 e_phnum=2 e_entry=8000000000
-ELF: PT_LOAD[0] off=1000 vaddr=8000000000 filesz=CE7C. memsz=CE7C
+ELF: elf_data=FFFFFFFF8010D310 e_phoff=40 e_phnum=2 e_entry=8000000000
+ELF: PT_LOAD[0] off=1000 vaddr=8000000000 filesz=CE7C memsz=CE7C
 VMM: Dynamically mapped HHDM 0x7ECF000 -> 0xFFFF800007ECF000
 VMM: Dynamically mapped HHDM 0x7ECE000 -> 0xFFFF800007ECE000
 VMM: Dynamically mapped HHDM 0x7ECD000 -> 0xFFFF800007ECD000
@@ -311,9 +234,9 @@ VMM: Dynamically mapped HHDM 0x7EC1000 -> 0xFFFF800007EC1000
 ELF: VERIFY bss_3000 vaddr=8000003000 phys=7ECC000 bytes=83EB1083FB107E644883C01083C214C
 ELF: VERIFY bss_3200 vaddr=8000003200 phys=7ECC200 bytes=561488985D0FEFFFF8995C8FEFFFF83
 ELF: VERIFY main_first16 vaddr=8000000530 phys=7ECF530 bytes=F8C9FFE0F1F400488B5DF8C9C36690
-SCHED: Setting TSS.RSP0 for user pid=2 to 0xFFFFFFFF80274C70
-TSS: Setting rsp0 to 0xFFFFFFFF80274C70
-TSS: rsp0 set successfully to 0xFFFFFFFF80274C70
+SCHED: Setting TSS.RSP0 for user pid=2 to 0xFFFFFFFF802747C0
+TSS: Setting rsp0 to 0xFFFFFFFF802747C0
+TSS: rsp0 set successfully to 0xFFFFFFFF802747C0
 
 ========================================
    DonsDOS Native Newlib 4.x User Shell
@@ -323,23 +246,8 @@ Select option node:
   1. Print a message via printf
   2. Exit Runtime Environment
 
-.UTICK[1] rip=8000005E80 rsp=80000FF9C8 rbp=80000FFEA0 cs=33 ss=2B
-TIMER: cur pid=2 rsp=FFFFFFFF80274BD0 -> next pid=1 rsp=FFFFFFFF8008FE38
-.TSS: Setting rsp0 to 0xFFFFFFFF80274C70
-TSS: rsp0 set successfully to 0xFFFFFFFF80274C70
-TIMER: cur pid=1 rsp=FFFFFFFF80272B20 -> next pid=2 rsp=FFFFFFFF80274BD0
-> [sys_read] enter fd=0 count=1 user_buf=80000FFF9F
-......................................[sys_read] got 0x31
-[sys_read] return 1
-
+> 
 [SUCCESS] printf works in ring 3!
-> [sys_read] enter fd=0 count=1 user_buf=80000FFF9F
-.............................[sys_read] got 0x32
-[sys_read] return 1
-
+> 
 Exiting user shell environment...
-
-[EXIT] sys_exit, pid=2, state=2
-[EXIT] marked TERMINATED
-[EXIT] halting in kernel loop
 make[1]: Leaving directory '/home/noneya/code/dons-os-x86_64/05_boot_kernel64'
