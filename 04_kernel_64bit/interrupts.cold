@@ -23,7 +23,7 @@
 typedef struct {
     uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
     uint64_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
-    uint64_t rip, cs, rflags, rsp, ss;
+    uint64_t rip, cs, rflags, rsp, ss; 
 } __attribute__((packed)) preempt_frame_t;
 
 static inline void outb(uint16_t port, uint8_t val) {
@@ -68,10 +68,8 @@ uint64_t timer_preempt_handler(uint64_t stack_pointer) {
     pcb_t* current = process_get_current();
     preempt_frame_t* frame = (preempt_frame_t*)stack_pointer;
 
-    /* Boot-sequence fingerprint: dump the interrupt frame for the
-       first 20 ticks only. After that, stay quiet so the serial log
-       isn't flooded once user processes are running. */
-    if (g_ticks <= 20) {
+    int is_user = ((frame->cs & 3) == 3);
+    if (g_ticks <= 20 || is_user) {
         serial_print("TIMER[");
         serial_print_dec(g_ticks);
         serial_print("] frame=");
@@ -297,7 +295,7 @@ void isr14_handler(exception_frame_t *frame) {
     uint64_t fault_rip  = raw[1];
     uint64_t fault_cs   = raw[2];
     uint64_t fault_rsp  = raw[4];
-    uint64_t fault_addr;
+    uint64_t fault_addr; 
     __asm__ volatile("mov %%cr2, %0" : "=r"(fault_addr));
 
     vga_print("\n=== PAGE FAULT (#PF) ===\n");

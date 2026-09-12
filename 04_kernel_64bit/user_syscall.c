@@ -14,13 +14,13 @@
 // ============================================================
 // DIAGNOSTIC CALLED FROM user_syscall_entry.asm JUST BEFORE sysret
 // ============================================================
-void syscall_pre_sysret_diag(uint64_t user_rip, uint64_t user_rflags) {
-    serial_print("PRE-SYSRET rcx(rip)=");
-    serial_print_hex(user_rip);
-    serial_print(" r11(rflags)=");
-    serial_print_hex(user_rflags);
-    serial_print("\n");
-}
+//~ void syscall_pre_sysret_diag(uint64_t user_rip, uint64_t user_rflags) {
+    //~ serial_print("PRE-SYSRET rcx(rip)=");
+    //~ serial_print_hex(user_rip);
+    //~ serial_print(" r11(rflags)=");
+    //~ serial_print_hex(user_rflags);
+    //~ serial_print("\n");
+//~ }
 
 // ============================================================
 // SAFE COPY: user -> kernel
