@@ -85,39 +85,6 @@ void scheduler_set_current(pcb_t* proc) {
     process_set_current(proc);
 }
 
-//~ void __attribute__((noreturn)) process_exit(void) {
-    //~ if (!current_process) {
-        //~ while(1) asm volatile("hlt");
-    //~ }
-    
-    //~ pcb_t* exiting = current_process;
-    //~ scheduler_ready_queue_remove(exiting);
-    //~ exiting->state = PROC_STATE_TERMINATED;
-    
-    //~ if (process_get_current() == exiting) {
-        //~ process_set_current(NULL);
-    //~ }
-    
-    //~ pcb_t* next = scheduler_ready_queue_next();
-    //~ if (!next) {
-        //~ scheduler_reset();
-        //~ __asm__ volatile (
-            //~ "mov $0xFFFFFFFF8008FF00, %%rsp\n"
-            //~ "jmp *%0\n"
-            //~ : : "r"(kmain_shell_loop)
-            //~ : "memory"
-        //~ );
-        //~ while(1) asm volatile("hlt");
-    //~ }
-    
-    //~ current_process = next;
-    //~ process_set_current(next);
-    //~ next->state = PROC_STATE_RUNNING;
-    //~ next->total_ticks++;
-    
-    //~ context_switch(exiting, next);
-    //~ while(1) asm volatile("hlt");
-//~ }
 void __attribute__((noreturn)) process_exit(void) {
     serial_print("\n[PROC_EXIT] entered\n");
 
@@ -192,14 +159,20 @@ void scheduler_switch_to(pcb_t* next) {
     
     if (prev && prev->state != PROC_STATE_TERMINATED) {
         prev->state = PROC_STATE_READY;
-        if (prev->state == PROC_STATE_READY) {
+        /* Idle (pid=1) is the fallback process and is already on the
+           ready queue (it was placed there by process_create at boot).
+           Re-adding it here would create a self-cycle in the doubly-linked
+           list, corrupting the queue and orphaning every other task.
+           Skip the add for idle; the timer path already follows this
+           convention with its own `current->pid != 1` check. */
+        if (prev->pid != 1) {
             scheduler_ready_queue_add(prev);
         }
     }
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
     
-    /* PATCH: Set TSS.RSP0 for user processes before the context switch.
+    /* Set TSS.RSP0 for user processes before the context switch.
        Without this, the first interrupt/syscall in the new user process
        pushes its exception frame onto a stale kernel stack, causing the
        reported fault RIP/CR2 to be garbage. */

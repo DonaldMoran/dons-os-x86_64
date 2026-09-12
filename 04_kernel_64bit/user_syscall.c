@@ -115,25 +115,87 @@ long sys_write(int fd, const void* buf, size_t count) {
     return (long)count;
 }
 
+//~ long sys_read(int fd, void* buf, size_t count) {
+    //~ if (fd == 0) {
+        //~ char c;
+        //~ size_t bytes_read = 0;
+        //~ uint8_t* dest_ptr = (uint8_t*)buf;
+
+        //~ while (bytes_read < count) {
+            //~ __asm__ volatile("sti");
+
+            //~ while (!kbd_buffer_get(&c)) {
+                //~ process_yield();
+            //~ }
+
+            //~ if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
+                //~ bytes_read++;
+            //~ } else {
+                //~ return -1;
+            //~ }
+        //~ }
+        //~ return bytes_read;
+    //~ }
+    //~ return 0;
+//~ }
+
+//~ long sys_read(int fd, void* buf, size_t count) {
+    //~ if (fd == 0) {
+        //~ char c;
+        //~ size_t bytes_read = 0;
+        //~ uint8_t* dest_ptr = (uint8_t*)buf;
+
+        //~ while (bytes_read < count) {
+            //~ __asm__ volatile("sti; hlt");
+
+            //~ if (kbd_buffer_get(&c)) {
+                //~ serial_print("[sys_read] got 0x");
+                //~ serial_print_hex((unsigned char)c);
+                //~ serial_print("\n");
+
+                //~ if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
+                    //~ bytes_read++;
+                //~ } else {
+                    //~ serial_print("[sys_read] copy_to_user FAILED\n");
+                    //~ return -1;
+                //~ }
+            //~ }
+        //~ }
+        //~ return bytes_read;
+    //~ }
+    //~ return 0;
+//~ }
+
 long sys_read(int fd, void* buf, size_t count) {
     if (fd == 0) {
         char c;
         size_t bytes_read = 0;
         uint8_t* dest_ptr = (uint8_t*)buf;
 
+        serial_print("[sys_read] enter fd=0 count=");
+        serial_print_dec(count);
+        serial_print(" user_buf=");
+        serial_print_hex((uint64_t)buf);
+        serial_print("\n");
+
         while (bytes_read < count) {
-            __asm__ volatile("sti");
-
-            while (!kbd_buffer_get(&c)) {
-                process_yield();
-            }
-
-            if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
-                bytes_read++;
-            } else {
-                return -1;
+            __asm__ volatile("sti; hlt");
+            if (kbd_buffer_get(&c)) {
+                serial_print("[sys_read] got 0x");
+                serial_print_hex((unsigned char)c);
+                serial_print("\n");
+                if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
+                    bytes_read++;
+                } else {
+                    serial_print("[sys_read] copy_to_user FAILED\n");
+                    return -1;
+                }
             }
         }
+
+        serial_print("[sys_read] return ");
+        serial_print_dec(bytes_read);
+        serial_print("\n");
         return bytes_read;
     }
     return 0;

@@ -1,6 +1,21 @@
 #include <stdio.h>
 #include <unistd.h>
 
+//~ int main(int argc, char** argv) {
+    //~ (void)argc; (void)argv;
+    //~ setvbuf(stdout, NULL, _IONBF, 0);
+    //~ printf("A\n");
+    //~ printf("B\n");
+    //~ printf("C\n");
+    //~ printf("D\n");
+    //~ printf("E\n");
+    //~ return 0;
+//~ }
+
+
+
+
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
