@@ -129,88 +129,28 @@ VMM: Detected 127 MB usable RAM
 VMM: Highest physical address: 0x7FE0000
 VMM: Physical memory into HHDM is already mapped by bootloader.
 VMM: BootInfo page at phys=17000
-TIMER[2] frame=FFFFFFFF8008FEE0 cs=18 ss=10 rip=FFFFFFFF801052C9 rsp=FFFFFFFF8008FF88 rflags=10246 cur=NULL
 VMM: CR3 = 0x11000
 VMM: NX support available
-VMM: Initialization complete
+VMM: InTIMER[2] frame=FFFFFFFF8008FF30 cs=18 ss=10 rip=FFFFFFFF80105E35 rsp=FFFFFFFF8008FFD0 rflags=10206 cur=NULL
+itialization complete
 HEAP: Initializing...
 HEAP: Extending heap by 1024 KB (256 pages)
 HEAP: Extended to 1024 KB total
 HEAP: Initialized at 0xFFFF900000000000 size=1024 KB
 PROCESS: Initializing...
 PROCESS: Initialization complete. 1 processes ready.
-GDT: Old user code at 0x30 = 0xAFF2000000FFFF
-GDT: Old user data at 0x28 = 0xAFFA000000FFFF
-GDT: New user data at 0x28 = 0xCFF2000000FFFF
-GDT: New user code at 0x30 = 0xAFFA000000FFFF
 GDT: User segments fixed for Ring 3
-=== TSS INIT START ===
-TSS: vmm_get_phys(0x5000) = 0x5000
-TSS: probing 0x5000...
-TSS: read ok
-TSS: write ok
-TSS: tss pointer = 0x5000
-TSS: sizeof(tss_t) = 0x68
-TSS: TSS_TOTAL_SIZE = 0x2069
-TSS: iomap pointer = 0x5068
-TSS: zeroing range [0x5000 .. 0x7069)
-TSS: zeroed 0x400 bytes
-TSS: zeroed 0x800 bytes
-TSS: zeroed 0xC00 bytes
-TSS: zeroed 0x1000 bytes
-TSS: zeroed 0x1400 bytes
-TSS: zeroed 0x1800 bytes
-TTIMER[3] frame=FFFFFFFF8008FF10 cs=18 ss=20 rip=FFFFFFFF80105E40 rsp=FFFFFFFF8008FFB0 rflags=10202 cur=1
-SS: zeroed 0x1C00 bytes
-TSS: zeroed 0x2000 bytes
-TSS: Zeroing loop completed
-TSS: I/O Permission Bitmap terminator set at 0x7068
-TSS: Setting rsp0...
-TSS: rsp0 = 0xFFFFFFFF8026BCA0
-TSS: Setting iopb_base...
-TSS: iopb_base = 0x68
-TSS: Calling gdt_set_tss...
-GDT: Setting TSS in bootloader GDT...
-GDT: Bootloader GDT at 0x1013B (limit: 0x47)
-GDT: TSS descriptor at GDT+0x38
-GDT: TSS base=0x5000 size=0x2068
-GDT: TSS descriptor low=0x890050002068
-GDT: TSS descriptor high=0x0
-GDT: Reading back TSS descriptor...
-  Low: 0x890050002068
-  High: 0x0
-GDT: TSS descriptor set successfully
-TSS: gdt_set_tss completed
-TSS: Loading TR with selector 0x38...
-TSS: about to execute ltr 0x38
-TSS: ltr completed successfully
-TSS: TR loaded
-TSS: TR register = 0x38
-
-=== GDT DEBUG ===
-GDT Base: 0x1013B Limit: 0x47
-GDT+0x0 (selector 0x0): 0x0 [Not Present]
-GDT+0x8 (selector 0x8): 0xCF9A000000FFFF [Code DPL=0]
-GDT+0x10 (selector 0x10): 0xCF93000000FFFF [Data DPL=0]
-GDT+0x18 (selector 0x18): 0xAF9A000000FFFF [Code DPL=0 64-bit]
-GDT+0x20 (selector 0x20): 0xAF93000000FFFF [Data DPL=0 64-bit]
-GDT+0x28 (selector 0x28): 0xCFF2000000FFFF [Data DPL=3 USER]
-GDT+0x30 (selector 0x30): 0xAFFA000000FFFF [Code DPL=3 64-bit USER]
-GDT+0x38 (selector 0x38): 0x8B0050002068 [System DPL=0]
-GDT+0x40 (selector 0x40): 0x0 [Not Present]
-=== END GDT DEBUG ===
-
-TSS: TR loaded correctly!
-=== TSS INIT COMPLETE ===
+TSS: TR loaded correctly (0x38)
 CPU: x86_64 FSGSBASE instructions successfully enabled for Ring 3.
 SYSCALL init done
 Initializing **RING** 3 syscalls...
 SYSCALL init done
 CPU: Native hardware SSE vector extensions safely enabled.
+TIMER[3] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010050F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
 PROCESS: Realignment mapping user stack inside verified code segment: 0x8000100000
 PROCESS: User stack pointer finalized at RSP = 0x80000FFFE0
 VMM: Dynamically mapped HHDM 0x7ED0000 -> 0xFFFF800007ED0000
-ELF: elf_data=FFFFFFFF8010D310 e_phoff=40 e_phnum=2 e_entry=8000000000
+ELF: elf_data=FFFFFFFF8010C670 e_phoff=40 e_phnum=2 e_entry=8000000000
 ELF: PT_LOAD[0] off=1000 vaddr=8000000000 filesz=CE7C memsz=CE7C
 VMM: Dynamically mapped HHDM 0x7ECF000 -> 0xFFFF800007ECF000
 VMM: Dynamically mapped HHDM 0x7ECE000 -> 0xFFFF800007ECE000
@@ -234,9 +174,7 @@ VMM: Dynamically mapped HHDM 0x7EC1000 -> 0xFFFF800007EC1000
 ELF: VERIFY bss_3000 vaddr=8000003000 phys=7ECC000 bytes=83EB1083FB107E644883C01083C214C
 ELF: VERIFY bss_3200 vaddr=8000003200 phys=7ECC200 bytes=561488985D0FEFFFF8995C8FEFFFF83
 ELF: VERIFY main_first16 vaddr=8000000530 phys=7ECF530 bytes=F8C9FFE0F1F400488B5DF8C9C36690
-SCHED: Setting TSS.RSP0 for user pid=2 to 0xFFFFFFFF802747C0
-TSS: Setting rsp0 to 0xFFFFFFFF802747C0
-TSS: rsp0 set successfully to 0xFFFFFFFF802747C0
+SCHED: Setting TSS.RSP0 for user pid=2 to 0xFFFFFFFF80273B20
 
 ========================================
    DonsDOS Native Newlib 4.x User Shell
