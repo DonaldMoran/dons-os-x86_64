@@ -29,13 +29,13 @@ int main(int argc, char** argv) {
     printf("Select option node:\n");
     printf("  1. Print a message via printf\n");
     printf("  2. Exit Runtime Environment\n\n");
-    printf("> ");
+    printf("] ");
 
     char input_char = 0;
     while (1) {
         if (read(0, &input_char, 1) > 0) {
             if (input_char == '1') {
-                printf("\n[SUCCESS] printf works in ring 3!\n> ");
+                printf("\n[SUCCESS] printf works in ring 3!\n] ");
             } else if (input_char == '2') {
                 printf("\nExiting user shell environment...\n");
                 break;

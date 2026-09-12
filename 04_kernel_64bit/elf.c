@@ -77,29 +77,6 @@ void elf_add_page_to_pcb(pcb_t* pcb, uint64_t phys) {
     }
 }
 
-/* ---------------------------------------------------------------------------
- * Diagnostic: dump the first 16 bytes at a given user virtual address
- * --------------------------------------------------------------------------- */
-static void elf_verify_user_bytes(const char *label, uint64_t cr3, uint64_t virt, int n) {
-    uint64_t phys = vmm_get_phys_from_cr3(cr3, virt);
-    serial_print("ELF: VERIFY ");
-    serial_print(label);
-    serial_print(" vaddr=");
-    serial_print_hex(virt);
-    serial_print(" phys=");
-    serial_print_hex(phys);
-    serial_print(" bytes=");
-    if (phys == 0) {
-        serial_print("PAGE-NOT-MAPPED\n");
-        return;
-    }
-    uint8_t* p = (uint8_t*)(HHDM_START + phys);
-    for (int k = 0; k < n; k++) {
-        serial_print_hex(p[k]);
-    }
-    serial_print("\n");
-}
-
 uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data) {
     const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*)elf_data;
 
@@ -107,16 +84,6 @@ uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data) {
         serial_print("ELF: Validation checks failed!\n");
         return 0;
     }
-
-    serial_print("ELF: elf_data=");
-    serial_print_hex((uint64_t)(uintptr_t)elf_data);
-    serial_print(" e_phoff=");
-    serial_print_hex(ehdr->e_phoff);
-    serial_print(" e_phnum=");
-    serial_print_hex(ehdr->e_phnum);
-    serial_print(" e_entry=");
-    serial_print_hex(ehdr->e_entry);
-    serial_print("\n");
 
     const Elf64_Phdr* phdr = (const Elf64_Phdr*)((uintptr_t)elf_data + ehdr->e_phoff);
 
@@ -128,18 +95,6 @@ uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data) {
         uint64_t memsz  = phdr[i].p_memsz;
         uint64_t filesz = phdr[i].p_filesz;
         uint64_t offset = phdr[i].p_offset;
-
-        serial_print("ELF: PT_LOAD[");
-        serial_print_hex((uint64_t)i);
-        serial_print("] off=");
-        serial_print_hex(offset);
-        serial_print(" vaddr=");
-        serial_print_hex(vaddr);
-        serial_print(" filesz=");
-        serial_print_hex(filesz);
-        serial_print(" memsz=");
-        serial_print_hex(memsz);
-        serial_print("\n");
 
         uint64_t start_page = vaddr & ~0xFFFULL;
         uint64_t end_page   = (vaddr + memsz + 0xFFF) & ~0xFFFULL;
@@ -157,14 +112,6 @@ uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data) {
             elf_add_page_to_pcb(pcb, phys);
         }
 
-        /* -------------------------------------------------------------------
-         * Copy file bytes.
-         *
-         * NOTE: vmm_get_phys_from_cr3() returns the PHYSICAL address INCLUDING
-         * the page offset. So `dest = HHDM_START + phys` already points to the
-         * exact byte at `cur_virt`. Do NOT add `page_off` again when indexing
-         * `dest`.
-         * ------------------------------------------------------------------- */
         const uint8_t* src = (const uint8_t*)elf_data + offset;
         if (filesz > 0) {
             uint64_t copied = 0;
@@ -183,17 +130,12 @@ uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data) {
                 if (chunk > page_rem) chunk = page_rem;
                 uint8_t* dest = (uint8_t*)(HHDM_START + phys);
                 for (size_t j = 0; j < chunk; j++) {
-                    dest[j] = src[copied + j];      /* FIX: no + page_off */
+                    dest[j] = src[copied + j];
                 }
                 copied += chunk;
             }
         }
 
-        /* -------------------------------------------------------------------
-         * Zero-fill BSS region.
-         *
-         * Same caveat as above: `dest` already points to the exact byte.
-         * ------------------------------------------------------------------- */
         if (memsz > filesz) {
             uint64_t bss_start = vaddr + filesz;
             uint64_t bss_bytes = memsz - filesz;
@@ -213,24 +155,10 @@ uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data) {
                 if (chunk > page_rem) chunk = page_rem;
                 uint8_t* dest = (uint8_t*)(HHDM_START + phys);
                 for (size_t j = 0; j < chunk; j++) {
-                    dest[j] = 0;                    /* FIX: no + page_off */
+                    dest[j] = 0;
                 }
                 zeroed += chunk;
             }
-        }
-
-        /* ============================================================
-         * POST-COPY VERIFICATION
-         * ============================================================ */
-        if (i == 0) {
-            elf_verify_user_bytes("memset_bytes", pcb->cr3, 0x800000118cULL, 16);
-            elf_verify_user_bytes("__sinit_bytes", pcb->cr3, 0x8000000a50ULL, 16);
-            elf_verify_user_bytes("_start_first8", pcb->cr3, 0x8000000000ULL, 8);
-        }
-        if (i == 1) {
-            elf_verify_user_bytes("bss_3000", pcb->cr3, 0x8000003000ULL, 16);
-            elf_verify_user_bytes("bss_3200", pcb->cr3, 0x8000003200ULL, 16);
-            elf_verify_user_bytes("main_first16", pcb->cr3, 0x8000000530ULL, 16);
         }
     }
 

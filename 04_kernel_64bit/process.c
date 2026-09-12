@@ -6,12 +6,11 @@
 #include "include/scheduler.h"
 #include "include/heap.h"
 #include "include/user_space.h"
-#include "include/elf.h"  // For elf_add_page_to_pcb
+#include "include/elf.h"
 #include <string.h>
 
-#define DBG 0   // 1 ON, 0 OFF
+#define DBG 0
 
-// Static kernel stack pool (already mapped in kernel's page table)
 static uint8_t kernel_stack_pool[MAX_PROCESSES][PROC_STACK_SIZE] __attribute__((aligned(16)));
 
 static pcb_t pcb_pool[MAX_PROCESSES];
@@ -19,15 +18,11 @@ static pcb_t* current_process = NULL;
 static uint64_t next_pid = 1;
 static uint64_t process_count = 0;
 
-// Forward declarations
 static pcb_t* get_free_pcb(void);
 static void process_initialize_pcb(pcb_t* pcb);
 
-// Kernel base address for user/kernel detection
 #define KERNEL_BASE 0xFFFFFFFF80000000ULL
 
-// PATCH: Explicit, clean, non-destructive fallback processing loop for the idle thread context.
-// This prevents uninitialized context frames from throwing supervisor General Protection Faults!
 void kernel_idle_loop(void) {
     for (;;) {
         __asm__ volatile("hlt");
@@ -35,24 +30,18 @@ void kernel_idle_loop(void) {
 }
 
 void process_init(void) {
-    serial_print("PROCESS: Initializing...\n");
-    vga_print("PROCESS: Initializing...\n");
-    
     memset(pcb_pool, 0, sizeof(pcb_pool));
-    
-    // PATCH: Assign the explicit kernel_idle_loop function symbol as entry point coordinate
-    // instead of a raw 0 address value to correctly instantiate a safe supervisor stack backframe.
+
     pcb_t* idle = process_create("idle", (uint64_t)kernel_idle_loop, 0);
     if (idle) {
         idle->state = PROC_STATE_READY;
         current_process = idle;
         scheduler_set_current(idle);
     }
-    
-    serial_print("PROCESS: Initialization complete. ");
+
+    serial_print("PROCESS: init OK, ");
     serial_print_dec(process_count);
-    serial_print(" processes ready.\n");
-    vga_print("PROCESS: Initialization complete.\n");
+    serial_print(" process(es)\n");
 }
 
 static pcb_t* get_free_pcb(void) {
@@ -76,7 +65,7 @@ static void process_initialize_pcb(pcb_t* pcb) {
 
 pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
     (void)flags;
-    
+
     pcb_t* pcb = get_free_pcb();
     if (!pcb) {
         serial_print("PROCESS: Failed to allocate PCB for ");
@@ -85,9 +74,9 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
         serial_print("\n");
         return NULL;
     }
-    
+
     process_initialize_pcb(pcb);
-    
+
     if (name) {
         strncpy(pcb->name, name, PROC_NAME_LEN - 1);
         pcb->name[PROC_NAME_LEN - 1] = '\0';
@@ -107,86 +96,73 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
         }
         pcb->name[pos + len] = '\0';
     }
-    
+
     pcb->entry_point = entry_point;
     pcb->state = PROC_STATE_READY;
-    
+
     uint64_t current_cr3;
     asm volatile("mov %%cr3, %0" : "=r"(current_cr3));
-    pcb->cr3 = vmm_clone_page_table(current_cr3); 
-    
+    pcb->cr3 = vmm_clone_page_table(current_cr3);
+
     if (entry_point != 0 && entry_point < KERNEL_BASE) {
         #define USER_STACK_PAGES 16
         #define USER_STACK_SIZE (USER_STACK_PAGES * 4096)
-        
-        uint64_t stack_top_anchor = 0x8000100000ULL; 
+
+        uint64_t stack_top_anchor = 0x8000100000ULL;
         uint64_t stack_bottom_anchor = stack_top_anchor - USER_STACK_SIZE;
-        
+
         pcb->user_stack_virt = stack_bottom_anchor;
-        
-        serial_print("PROCESS: Realignment mapping user stack inside verified code segment: 0x");
-        serial_print_hex(stack_top_anchor);
-        serial_print("\n");
-        
+
         for (int i = 0; i < USER_STACK_PAGES; i++) {
             uint64_t phys = pmm_alloc_page_for_elf();
             if (!phys) {
                 serial_print("PROCESS: Failed to allocate user stack page\n");
                 return NULL;
             }
-            
+
             uint64_t virt = stack_bottom_anchor + (i * 4096);
             uint64_t map_flags = PT_PRESENT | PT_WRITE | PT_USER;
             map_flags &= ~(0x80ULL | 0x40ULL | 0x200ULL | 0x800ULL);
-            
+
             vmm_map_page_in_cr3(pcb->cr3, virt, phys, map_flags);
-            
+
             void* hhdm = (void*)(HHDM_START + phys);
             for (uint64_t j = 0; j < 4096 / 8; j++) {
                 ((uint64_t*)hhdm)[j] = 0;
             }
-            
+
             elf_add_page_to_pcb(pcb, phys);
 
             if (i == (USER_STACK_PAGES - 1)) {
-                pcb->user_stack_phys = phys; 
+                pcb->user_stack_phys = phys;
             }
         }
-        
+
         pcb->user_stack_top = stack_top_anchor - 32;
-        pcb->user_stack_top &= ~0xFULL; 
-        
-        serial_print("PROCESS: User stack pointer finalized at RSP = 0x");
-        serial_print_hex(pcb->user_stack_top);
-        serial_print("\n");
+        pcb->user_stack_top &= ~0xFULL;
     } else {
         pcb->user_stack_phys = 0;
         pcb->user_stack_virt = 0;
         pcb->user_stack_top = 0;
     }
-    
+
     pcb->kernel_stack_virt = (uint64_t)&kernel_stack_pool[pcb->pid % MAX_PROCESSES];
     pcb->kernel_stack_phys = vmm_get_phys(pcb->kernel_stack_virt);
     pcb->kernel_stack_top = pcb->kernel_stack_virt + PROC_STACK_SIZE;
-    
+
     ensure_hhdm_mapped(pcb->kernel_stack_phys);
     if (pcb->user_stack_phys) {
         ensure_hhdm_mapped(pcb->user_stack_phys);
     }
-    
-    // PATCH: Properly lay out an authentic initial System V AMD64 interrupt execution
-    // frame directly on the task's private kernel stack. This ensures that the first
-    // context switch out from the timer code handles register state pops seamlessly.
+
     uint64_t* stack_ptr = (uint64_t*)pcb->kernel_stack_top;
 
-    // Standard initial IRETQ frame structures for kernel tasks:
-    stack_ptr--; *stack_ptr = 0x20;               // SS = Kernel Data Selector (0x20)
-    stack_ptr--; *stack_ptr = pcb->kernel_stack_top; // RSP = Task stack pointer coordinate
-    stack_ptr--; *stack_ptr = 0x202;              // RFLAGS = Interrupts enabled (IF=1)
-    stack_ptr--; *stack_ptr = 0x18;               // CS = Kernel Code Selector (0x18)
-    stack_ptr--; *stack_ptr = entry_point;        // RIP = Target Execution function address location
+    stack_ptr--; *stack_ptr = 0x20;
+    stack_ptr--; *stack_ptr = pcb->kernel_stack_top;
+    stack_ptr--; *stack_ptr = 0x202;
+    stack_ptr--; *stack_ptr = 0x18;
+    stack_ptr--; *stack_ptr = entry_point;
 
-    // Standard general purpose task registers expected by context_switch.asm:
     stack_ptr--; *stack_ptr = 0; // rax
     stack_ptr--; *stack_ptr = 0; // rbx
     stack_ptr--; *stack_ptr = 0; // rcx
@@ -205,10 +181,10 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
 
     pcb->rsp = (uint64_t)stack_ptr;
     pcb->rip = entry_point;
-    
+
     pcb->next = NULL; pcb->prev = NULL;
     pcb->timeslice_ticks = 0; pcb->total_ticks = 0;
-    
+
     scheduler_ready_queue_add(pcb);
     return pcb;
 }
@@ -238,11 +214,11 @@ void process_dump_all(void) {
     vga_print("=== PROCESS LIST ===\n");
     vga_print("PID  Name                State    Entry       Kernel Stack\n");
     vga_print("---  -------------------  -------  ----------  ----------\n");
-    
+
     for (int i = 0; i < MAX_PROCESSES; i++) {
         pcb_t* p = &pcb_pool[i];
         if (p->state == PROC_STATE_UNUSED) continue;
-        
+
         const char* state_str;
         switch (p->state) {
             case PROC_STATE_READY: state_str = "READY"; break;
@@ -251,7 +227,7 @@ void process_dump_all(void) {
             case PROC_STATE_TERMINATED: state_str = "TERMINATED"; break;
             default: state_str = "UNKNOWN"; break;
         }
-        
+
         serial_print_dec(p->pid); serial_print("  ");
         serial_print(p->name);
         int len = strlen(p->name);
@@ -280,32 +256,32 @@ void process_dump_all(void) {
 void process_test_clone(void) {
     vga_print("\n=== Virtual Memory Manager Page Table Clone Test ===\n");
     serial_print("\n=== Virtual Memory Manager Page Table Clone Test ===\n");
-    
+
     uint64_t current_cr3;
     asm volatile("mov %%cr3, %0" : "=r"(current_cr3));
     uint64_t clean_src_cr3 = current_cr3 & ~0xFFFULL;
-    
+
     vga_print("  1. Source Paging Table Root (CR3) : 0x"); vga_print_hex_cur(clean_src_cr3); vga_print("\n");
     serial_print("  1. Source Paging Table Root (CR3) : 0x"); serial_print_hex(clean_src_cr3); serial_print("\n");
-    
+
     uint64_t new_cr3 = vmm_clone_page_table(current_cr3);
     uint64_t clean_new_cr3 = new_cr3 & ~0xFFFULL;
-    
+
     if (new_cr3 == 0) {
         vga_print("  [ERR] Page Table Cloning routine FAILED to allocate frames!\n");
         serial_print("  [ERR] Page Table Cloning routine FAILED to allocate frames!\n");
         return;
     }
-    
+
     vga_print("  2. Cloned Paging Table Root (CR3) : 0x"); vga_print_hex_cur(clean_new_cr3); vga_print("\n");
     serial_print("  2. Cloned Paging Table Root (CR3) : 0x"); serial_print_hex(clean_new_cr3); serial_print("\n");
-    
+
     uint64_t* new_pml4 = (uint64_t*)ensure_hhdm_mapped(clean_new_cr3);
     uint64_t recursive_entry = new_pml4[RECURSIVE_PML4_INDEX];
-    
+
     vga_print("  3. Probing Cloned PML4 Entry: 0x"); vga_print_hex_cur(recursive_entry); vga_print("\n");
     serial_print("  3. Probing Cloned PML4 Entry: 0x"); serial_print_hex(recursive_entry); serial_print("\n");
-    
+
     if (recursive_entry & PT_PRESENT) {
         uint64_t recursive_phys = recursive_entry & ~0xFFFULL;
         if (recursive_phys == clean_new_cr3) {
@@ -322,7 +298,7 @@ void process_test_clone(void) {
 
     extern void pmm_free_page(uint64_t phys_addr);
     pmm_free_page(clean_new_cr3);
-    
+
     vga_print("  4. Testing sandbox page tables released back to PMM cleanly.\n");
     serial_print("  4. Testing sandbox page tables released back to PMM cleanly.\n");
 }

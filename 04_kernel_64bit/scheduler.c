@@ -2,7 +2,6 @@
 #include "include/serial.h"
 #include "include/vga.h"
 
-// Ready queue head and tail
 static pcb_t* ready_queue_head = NULL;
 static pcb_t* ready_queue_tail = NULL;
 static pcb_t* current_process = NULL;
@@ -13,7 +12,6 @@ static uint64_t yield_count = 0;
 extern void context_switch(pcb_t* prev, pcb_t* next);
 extern void kmain_shell_loop(void);
 
-// NEW SCHEDULER QUEUE UTILITY: Lets the timer interrupt check for waiting work nodes safely
 pcb_t* scheduler_ready_queue_peek_next(void) {
     return ready_queue_head;
 }
@@ -23,10 +21,10 @@ void scheduler_ready_queue_add(pcb_t* process) {
     if (process->state == PROC_STATE_RUNNING) {
         process->state = PROC_STATE_READY;
     }
-    
+
     process->next = NULL;
     process->prev = ready_queue_tail;
-    
+
     if (ready_queue_tail) {
         ready_queue_tail->next = process;
     } else {
@@ -37,26 +35,26 @@ void scheduler_ready_queue_add(pcb_t* process) {
 
 void scheduler_ready_queue_remove(pcb_t* process) {
     if (!process) return;
-    
+
     if (process->prev) {
         process->prev->next = process->next;
     } else {
         ready_queue_head = process->next;
     }
-    
+
     if (process->next) {
         process->next->prev = process->prev;
     } else {
         ready_queue_tail = process->prev;
     }
-    
+
     process->next = NULL;
     process->prev = NULL;
 }
 
 pcb_t* scheduler_ready_queue_next(void) {
     if (!ready_queue_head) return NULL;
-    
+
     pcb_t* next = ready_queue_head;
     ready_queue_head = next->next;
     if (ready_queue_head) {
@@ -86,20 +84,11 @@ void scheduler_set_current(pcb_t* proc) {
 }
 
 void __attribute__((noreturn)) process_exit(void) {
-    serial_print("\n[PROC_EXIT] entered\n");
-
     if (!current_process) {
-        serial_print("[PROC_EXIT] no current process -- halting\n");
         while(1) asm volatile("hlt");
     }
 
     pcb_t* exiting = current_process;
-
-    serial_print("[PROC_EXIT] exiting pid=");
-    serial_print_dec(exiting->pid);
-    serial_print(" state=");
-    serial_print_dec(exiting->state);
-    serial_print("\n");
 
     scheduler_ready_queue_remove(exiting);
     exiting->state = PROC_STATE_TERMINATED;
@@ -108,11 +97,8 @@ void __attribute__((noreturn)) process_exit(void) {
         process_set_current(NULL);
     }
 
-    serial_print("[PROC_EXIT] removed from queue, now selecting next\n");
-
     pcb_t* next = scheduler_ready_queue_next();
     if (!next) {
-        serial_print("[PROC_EXIT] ready queue empty -- resetting to kernel shell\n");
         scheduler_reset();
         __asm__ volatile (
             "mov $0xFFFFFFFF8008FF00, %%rsp\n"
@@ -120,25 +106,16 @@ void __attribute__((noreturn)) process_exit(void) {
             : : "r"(kmain_shell_loop)
             : "memory"
         );
-        serial_print("[PROC_EXIT] UNREACHABLE: jmp kmain_shell_loop returned\n");
         while(1) asm volatile("hlt");
     }
-
-    serial_print("[PROC_EXIT] switching to pid=");
-    serial_print_dec(next->pid);
-    serial_print(" entry=0x");
-    serial_print_hex(next->entry_point);
-    serial_print("\n");
 
     current_process = next;
     process_set_current(next);
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
 
-    serial_print("[PROC_EXIT] calling context_switch(exiting, next)\n");
     context_switch(exiting, next);
 
-    serial_print("[PROC_EXIT] UNREACHABLE: context_switch returned\n");
     while(1) asm volatile("hlt");
 }
 
@@ -146,17 +123,17 @@ void __attribute__((noreturn)) process_exit(void) {
 void scheduler_switch_to(pcb_t* next) {
     if (!next) return;
     if (next == current_process) return;
-    
+
     if (next->pid == 1) {
         return;
     }
-    
+
     pcb_t* prev = current_process;
     current_process = next;
     process_set_current(next);
-    
+
     scheduler_ready_queue_remove(next);
-    
+
     if (prev && prev->state != PROC_STATE_TERMINATED) {
         prev->state = PROC_STATE_READY;
         /* Idle (pid=1) is the fallback process and is already on the
@@ -171,21 +148,12 @@ void scheduler_switch_to(pcb_t* next) {
     }
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
-    
-    /* Set TSS.RSP0 for user processes before the context switch.
-       Without this, the first interrupt/syscall in the new user process
-       pushes its exception frame onto a stale kernel stack, causing the
-       reported fault RIP/CR2 to be garbage. */
+
     if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
         extern void tss_set_kernel_stack(uint64_t stack);
-        serial_print("SCHED: Setting TSS.RSP0 for user pid=");
-        serial_print_dec(next->pid);
-        serial_print(" to 0x");
-        serial_print_hex(next->kernel_stack_top);
-        serial_print("\n");
         tss_set_kernel_stack(next->kernel_stack_top);
     }
-    
+
     context_switch(prev, next);
 }
 
@@ -208,15 +176,15 @@ pcb_t* scheduler_schedule(void) {
 void process_yield(void) {
     if (!current_process) return;
     if (current_process->pid == 1) return;
-    
+
     yield_count++;
-    
+
     if (current_process->state == PROC_STATE_RUNNING) {
         current_process->state = PROC_STATE_READY;
         scheduler_ready_queue_remove(current_process);
         scheduler_ready_queue_add(current_process);
     }
-    
+
     pcb_t* next = scheduler_ready_queue_next();
     if (!next) {
         if (current_process->state == PROC_STATE_READY) {
@@ -226,7 +194,7 @@ void process_yield(void) {
             return;
         }
     }
-    
+
     scheduler_switch_to(next);
 }
 

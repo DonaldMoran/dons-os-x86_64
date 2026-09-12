@@ -11,12 +11,9 @@
 #define RECURSIVE_PML4_INDEX 510
 #define HHDM_START 0xFFFF800000000000ULL
 
-// Cache control flags
-#define PAGE_PCD (1ULL << 4)  // Cache Disable
-#define PAGE_PWT (1ULL << 3)  // Write-Through
-
-// Force Uncacheable for all mappings to avoid coherency issues
-#define PAGE_UNCACHED (PAGE_PCD | PAGE_PWT)  // UC in PAT
+#define PAGE_PCD (1ULL << 4)
+#define PAGE_PWT (1ULL << 3)
+#define PAGE_UNCACHED (PAGE_PCD | PAGE_PWT)
 
 uint64_t vmm_max_physical = 0;
 static BootInfo* vmm_bootinfo = NULL;
@@ -37,20 +34,12 @@ void* ensure_hhdm_mapped(uint64_t phys) {
 
     if (!vmm_is_mapped(virt)) {
         vmm_map_page(virt, phys, PT_PRESENT | PT_WRITE | PAGE_UNCACHED);
-        serial_print("VMM: Dynamically mapped HHDM 0x");
-        serial_print_hex(phys);
-        serial_print(" -> 0x");
-        serial_print_hex(virt);
-        serial_print("\n");
     }
 
     return (void*)virt;
 }
 
 void vmm_init(BootInfo* info) {
-    vga_print("VMM: Initializing...\n");
-    serial_print("VMM: Initializing...\n");
-
     vmm_bootinfo = info;
 
     uint64_t max_phys = 0;
@@ -65,15 +54,8 @@ void vmm_init(BootInfo* info) {
                 total_usable += entries[i].length;
             }
         }
-        serial_print("VMM: Detected ");
-        serial_print_dec(total_usable / (1024 * 1024));
-        serial_print(" MB usable RAM\n");
-        serial_print("VMM: Highest physical address: 0x");
-        serial_print_hex(max_phys);
-        serial_print("\n");
     } else {
         max_phys = 128ULL * 1024 * 1024;
-        serial_print("VMM: No memory map, using fallback 128MB\n");
     }
 
     vmm_max_physical = max_phys;
@@ -82,28 +64,11 @@ void vmm_init(BootInfo* info) {
         vmm_map_page(addr, addr, PT_PRESENT | PT_WRITE | PAGE_UNCACHED);
     }
 
-    serial_print("VMM: Physical memory into HHDM is already mapped by bootloader.\n");
-
-    uint64_t bootinfo_phys = (uint64_t)info;
-    serial_print("VMM: BootInfo page at phys=");
-    serial_print_hex(bootinfo_phys);
+    serial_print("VMM: init OK, ");
+    serial_print_dec(total_usable / (1024 * 1024));
+    serial_print(" MB usable, max phys 0x");
+    serial_print_hex(max_phys);
     serial_print("\n");
-
-    uint64_t cr3;
-    asm volatile("mov %%cr3, %0" : "=r"(cr3));
-
-    vga_print("VMM: CR3 = 0x");
-    vga_print_hex_cur(cr3);
-    vga_print("\n");
-    serial_print("VMM: CR3 = 0x");
-    serial_print_hex(cr3);
-    serial_print("\n");
-
-    vga_print("VMM: NX support available\n");
-    serial_print("VMM: NX support available\n");
-
-    vga_print("VMM: Initialization complete\n");
-    serial_print("VMM: Initialization complete\n");
 }
 
 void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
@@ -244,7 +209,7 @@ void vmm_dump_page_table(uint64_t virt) {
     uint64_t* pd = phys_to_virt(pdpt[pdpt_idx] & ~0xFFFULL);
     if (!(pd[pd_idx] & PT_PRESENT)) return;
     uint64_t* pt = phys_to_virt(pd[pd_idx] & ~0xFFFULL);
-    
+
     serial_print("  PTE Entry Found: 0x");
     serial_print_hex(pt[pt_idx]);
     serial_print("\n");
@@ -289,11 +254,6 @@ uint64_t vmm_get_phys_from_cr3(uint64_t cr3, uint64_t virt) {
     return (pt[pt_idx] & ~0xFFFULL) | (virt & 0xFFFULL);
 }
 
-/* ---------------------------------------------------------------------------
- * ROBUST CROSS-CR3 MAPPING ROUTINE (WITH HIERARCHICAL PERMISSION FIX)
- * This traverses any target process's page table directly via HHDM offsets,
- * keeping the active kernel visible during multi-page segment mapping operations.
- * --------------------------------------------------------------------------- */
 void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags) {
     phys &= ~0xFFFULL;
 
@@ -320,7 +280,6 @@ void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t fl
         pml4[pml4_idx] = new_pdpt_phys | dir_flags;
         pdpt = (uint64_t*)phys_to_virt(new_pdpt_phys);
     } else {
-        /* PATCH: Explicitly enforce hierarchical user privileges on existing entries */
         pml4[pml4_idx] |= (PT_WRITE | PT_USER);
         pdpt = (uint64_t*)phys_to_virt(pml4[pml4_idx] & ~0xFFFULL);
     }
@@ -333,7 +292,6 @@ void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t fl
         pdpt[pdpt_idx] = new_pd_phys | dir_flags;
         pd = (uint64_t*)phys_to_virt(new_pd_phys);
     } else {
-        /* PATCH: Explicitly enforce hierarchical user privileges on existing entries */
         pdpt[pdpt_idx] |= (PT_WRITE | PT_USER);
         pd = (uint64_t*)phys_to_virt(pdpt[pdpt_idx] & ~0xFFFULL);
     }
@@ -346,7 +304,6 @@ void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t fl
         pd[pd_idx] = new_pt_phys | dir_flags;
         pt = (uint64_t*)phys_to_virt(new_pt_phys);
     } else {
-        /* PATCH: Explicitly enforce hierarchical user privileges on existing entries */
         pd[pd_idx] |= (PT_WRITE | PT_USER);
         pt = (uint64_t*)phys_to_virt(pd[pd_idx] & ~0xFFFULL);
     }
@@ -356,7 +313,6 @@ void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t fl
 
     pt[pt_idx] = pte;
 
-    /* Flush the specific TLB entry if this table corresponds to the active CPU context */
     uint64_t active_cr3;
     asm volatile("mov %%cr3, %0" : "=r"(active_cr3));
     if ((active_cr3 & ~0xFFFULL) == (cr3 & ~0xFFFULL)) {

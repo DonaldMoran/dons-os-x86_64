@@ -29,12 +29,6 @@ extern unsigned int test_program_len;
 extern unsigned char build_user_shell_elf[];
 extern unsigned int build_user_shell_elf_len;
 
-// PATCH: Apply volatile to both external definitions. This forces Clang's 
-// optimizer to bypass relative code model assumptions and generate direct, absolute 
-// hardware memory load lookups from RAM, instantly resolving the cross-boundary link truncation.
-//~ extern volatile unsigned char build_user_shell_elf[];
-//~ extern volatile unsigned int build_user_shell_elf_len;
-
 static BootInfo *g_bootinfo = NULL;
 
 // Add this directly into your kernel initialization pipeline inside kmain.c
@@ -83,26 +77,14 @@ void test_process_entry(void) {
     process_exit();
 }
 
-void dump_iretq_frame_serial(void) {
-    uint64_t frame_rsp;
-    __asm__ volatile ("mov %%rsp, %0\nadd $8, %0\n" : "=r"(frame_rsp) :: "memory");
-    uint64_t* rsp = (uint64_t*)frame_rsp;
-    
-    serial_print("\n=== IRETQ FRAME DUMP ===\n");
-    serial_print("SS     : 0x"); serial_print_hex(rsp[5]); serial_print("\n");
-    serial_print("RSP    : 0x"); serial_print_hex(rsp[4]); serial_print("\n");
-    serial_print("RIP    : 0x"); serial_print_hex(rsp[1]); serial_print("\n");
-}
-
 extern void user_syscall_entry(void);
 
 void user_syscall_init(void) {
-    serial_print("Initializing **RING** 3 syscalls...\n");
     uint64_t star = ((uint64_t)0x20 << 48) | ((uint64_t)0x18 << 32);
     wrmsr(0xC0000081, star);
     wrmsr(0xC0000082, (uint64_t)user_syscall_entry);
     wrmsr(0xC0000084, (1ULL << 9));
-    serial_print("SYSCALL init done\n");
+    serial_print("**RING** 3 syscalls Initialized\n");
 }
 
 static int strcmp(const char *s1, const char *s2) {
@@ -241,46 +223,7 @@ static void handle_command(const char *cmd) {
             }
             vga_print("  Usable RAM: "); vga_print_dec_cur(total_usable / (1024 * 1024)); vga_print(" MB\n");
         } else { vga_print("  Memory map not available\n"); }
-        vga_print("> ");
-    //~ } else if (strcmp(cmd, "reboot") == 0) {
-        //~ vga_print("\n=== Hardware System Reboot Sequence Initiated ===\n");
-        //~ serial_print("\n=== Hardware System Reboot Sequence Initiated ===\n");
-
-        //~ vga_print("  Flushing hardware text consoles and issuing processor resets...\n");
-        //~ serial_print("  [REBOOT] Sending CPU hard reset commands...\n");
-
-        //~ __asm__ volatile("cli");
-
-        //~ extern void outb(uint16_t port, uint8_t val);
-        //~ extern uint8_t inb(uint16_t port);
-
-        //~ // Clear the keyboard controller buffer
-        //~ for (int i = 0; i < 1000; i++) {
-            //~ if ((inb(0x64) & 2) == 0) break;
-        //~ }
-        //~ outb(0x64, 0xFE); // PS/2 Reset line pulse
-        //~ outb(0xCF9, 0x06); // PCI Chipset Reset fallback
-
-        //~ for (volatile uint64_t delay = 0; delay < 10000000ULL; delay++) {
-            //~ __asm__ volatile("nop");
-        //~ }
-
-        //~ // Ultimate hard-reset fallback: Intentional Triple Fault
-        //~ serial_print("  [REBOOT] I/O controller timed out. Forcing architectural Triple Fault...\n");
-        //~ volatile uint16_t malformed_idt_struct[5] = {0, 0, 0, 0, 0};
-        //~ __asm__ volatile(
-            //~ "lidt (%0)\n\t"
-            //~ "int $0" 
-            //~ : 
-            //~ : "r"(malformed_idt_struct)
-            //~ : "memory"
-        //~ );
-
-        //~ while (1) {
-            //~ __asm__ volatile("hlt");
-         //~ } 
-    //~ } 
-    
+        vga_print("> ");   
     } else if (strcmp(cmd, "reboot") == 0) {
         vga_print("\nRebooting...\n");
         handle_reboot_sequence();
@@ -822,17 +765,7 @@ static void handle_command(const char *cmd) {
         
         // Print the single clean trailing prompt row for the user
         vga_print("> ");
-    /* ---------------------------------------------------------------------------
-     * RE-ALIGNED SYNCED USER SHELL MOUNT NODE INTERCEPT LINK
-     * --------------------------------------------------------------------------- */
-    /* ---------------------------------------------------------------------------
-     * CLEAN SYNCHRONIZED USER SHELL MOUNT NODE LINK
-     * --------------------------------------------------------------------------- */
-    /* ---------------------------------------------------------------------------
-     * CLEAN SYNCHRONIZED USER SHELL MOUNT NODE LINK (NO CR3 OVERRIDES)
-     * --------------------------------------------------------------------------- */
     } else if (strcmp(cmd, "usershell") == 0) {
-        vga_print("\n=== DonsDOS Newlib Runtime Environment Boot ===\n");
         if (build_user_shell_elf_len == 0) {
             vga_print("Error: Shell image data completely unmapped!\n> ");
             return;
@@ -948,7 +881,8 @@ void kmain(BootInfo *info) {
     serial_print("CPU: Native hardware SSE vector extensions safely enabled.\n");
     vga_print("CPU: Native hardware SSE vector extensions safely enabled.\n");
 
-
     vga_clear();
+    
+    serial_print("Kernel: entering shell loop\n");
     kmain_shell_loop();
 }
