@@ -6,6 +6,9 @@
 .extern __bss_end
 .extern __libc_init_array
 .extern donsdos_newlib_init
+.extern __sinit
+.extern _impure_ptr
+.extern _impure_data
 
 .section .text
 _start:
@@ -27,13 +30,16 @@ _start:
     rep stosb
 
     // Ensure strict System V AMD64 ABI 16-byte stack alignment.
-    // Before each call instruction, RSP must be 16-byte aligned so that
-    // the callee sees RSP = 8 (mod 16) at entry. SSE-vectorized code in
-    // libc.a relies on this for aligned movaps stores.
     mov rbx, rsp
-    and rsp, -16         // RSP = 0 (mod 16)
-    push rbx             // RSP = 8 (mod 16)
-    sub rsp, 8           // RSP = 0 (mod 16), aligned for calls below
+    and rsp, -16
+    push rbx
+    sub rsp, 8
+
+    // ---- NEW: hard-set _impure_ptr before anything else touches newlib ----
+    movabsq rax, offset _impure_data
+    movabsq rbx, offset _impure_ptr
+    mov [rbx], rax
+    // ----------------------------------------------------------------------
 
     // Initialize Newlib's global static constructors array
     call __libc_init_array

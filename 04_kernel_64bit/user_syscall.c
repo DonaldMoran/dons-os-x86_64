@@ -23,7 +23,34 @@ void syscall_pre_sysret_diag(uint64_t user_rip, uint64_t user_rflags) {
 }
 
 // ============================================================
-// SAFE COPY FUNCTIONS
+// SAFE COPY: user -> kernel
+// ============================================================
+static int safe_copy_from_user(void* kernel_dest, const void* user_src, size_t count) {
+    pcb_t* current = process_get_current();
+    if (!current) return -1;
+
+    uint64_t base = (uint64_t)user_src;
+    uint8_t* dst = (uint8_t*)kernel_dest;
+    size_t copied = 0;
+    while (copied < count) {
+        uint64_t cur = base + copied;
+        uint64_t phys_with_offset = vmm_get_phys_from_cr3(current->cr3, cur);
+        if (!phys_with_offset) return -1;
+
+        const uint8_t* src = (const uint8_t*)(HHDM_START + phys_with_offset);
+        size_t chunk = count - copied;
+        uint64_t page_off = cur & 0xFFF;
+        size_t page_rem = 4096 - page_off;
+        if (chunk > page_rem) chunk = page_rem;
+
+        for (size_t i = 0; i < chunk; i++) dst[copied + i] = src[i];
+        copied += chunk;
+    }
+    return 0;
+}
+
+// ============================================================
+// SAFE COPY: kernel -> user
 // ============================================================
 static int safe_copy_to_user(void* user_dest, const void* kernel_src, size_t count) {
     pcb_t* current = process_get_current();
@@ -36,13 +63,13 @@ static int safe_copy_to_user(void* user_dest, const void* kernel_src, size_t cou
         uint64_t cur = base + copied;
         uint64_t phys_with_offset = vmm_get_phys_from_cr3(current->cr3, cur);
         if (!phys_with_offset) return -1;
-        
+
         uint8_t* dst = (uint8_t*)(HHDM_START + phys_with_offset);
         size_t chunk = count - copied;
         uint64_t page_off = cur & 0xFFF;
         size_t page_rem = 4096 - page_off;
         if (chunk > page_rem) chunk = page_rem;
-        
+
         for (size_t i = 0; i < chunk; i++) dst[i] = src[copied + i];
         copied += chunk;
     }
@@ -52,8 +79,39 @@ static int safe_copy_to_user(void* user_dest, const void* kernel_src, size_t cou
 // ============================================================
 // SYSCALL HANDLERS
 // ============================================================
+
+#define WRITE_CHUNK 256
+static char g_write_bounce[WRITE_CHUNK];
+
 long sys_write(int fd, const void* buf, size_t count) {
-    (void)fd; (void)buf; (void)count;
+    if (fd != 1 && fd != 2) {
+        return (long)count;
+    }
+    if (!buf || count == 0) {
+        return 0;
+    }
+
+    size_t remaining = count;
+    const uint8_t* user_ptr = (const uint8_t*)buf;
+
+    while (remaining > 0) {
+        size_t chunk = remaining > WRITE_CHUNK ? WRITE_CHUNK : remaining;
+        if (safe_copy_from_user(g_write_bounce, user_ptr, chunk) != 0) {
+            serial_print("[sys_write] copy_from_user failed at user addr=0x");
+            serial_print_hex((uint64_t)user_ptr);
+            serial_print("\n");
+            return -1;
+        }
+
+        for (size_t i = 0; i < chunk; i++) {
+            char c = g_write_bounce[i];
+            serial_putc(c);
+            vga_putc(c);
+        }
+
+        user_ptr += chunk;
+        remaining -= chunk;
+    }
     return (long)count;
 }
 
@@ -87,28 +145,28 @@ void* sys_brk(long inc) {
 
     static uint64_t heap_base = 0;
     if (heap_base == 0) heap_base = 0x8000200000ULL;
-    
+
     uint64_t old_brk = current->brk_virt;
     if (old_brk == 0) {
         current->brk_virt = heap_base;
         old_brk = heap_base;
     }
     if (inc == 0) return (void*)current->brk_virt;
-    
+
     uint64_t new_brk = old_brk + inc;
     if (inc < 0 && new_brk < heap_base) return (void*)-1;
-    
+
     uint64_t old_page = (old_brk + 0xFFF) & ~0xFFFULL;
     uint64_t new_page = (new_brk + 0xFFF) & ~0xFFFULL;
-    
+
     if (new_page > old_page) {
         for (uint64_t virt = old_page; virt < new_page; virt += 4096) {
             uint64_t phys = pmm_alloc_page_for_elf();
             if (!phys) return (void*)-1;
-            
+
             void* hhdm = (void*)(HHDM_START + phys);
             for (uint64_t j = 0; j < 4096 / 8; j++) ((uint64_t*)hhdm)[j] = 0ULL;
-            
+
             uint64_t map_flags = PT_PRESENT | PT_WRITE | PT_USER | 0x18ULL;
             vmm_map_page_in_cr3(current->cr3, virt, phys, map_flags);
             elf_add_page_to_pcb(current, phys);
@@ -136,9 +194,6 @@ void sys_exit(int status) {
         serial_print("[EXIT] marked TERMINATED\n");
     }
 
-    /* Do NOT call process_yield or context_switch. The timer preempt
-     * handler checks for state == TERMINATED and returns immediately,
-     * so this halt loop is safe and the CPU simply idles forever. */
     serial_print("[EXIT] halting in kernel loop\n");
     while (1) __asm__ volatile("hlt");
 }

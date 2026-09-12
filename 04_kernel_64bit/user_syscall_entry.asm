@@ -15,14 +15,11 @@ extern syscall_pre_sysret_diag
 ; Syscall init: set up EFER, STAR, LSTAR, FMASK
 ; ---------------------------------------------------------------------------
 syscall_init_asm:
-    ; Enable SYSCALL/SYSRET in EFER
     mov ecx, 0xC0000080
     rdmsr
     or eax, 0x1
     wrmsr
 
-    ; Set up STAR (User CS = 0x30 -> STAR[15:0] = 0x20)
-    ; In DonsDOS privilege maps: Kernel CS=0x18, User CS=0x30 (STAR[15:0]=0x20)
     mov ecx, 0xC0000081
     xor edx, edx
     xor eax, eax
@@ -30,124 +27,130 @@ syscall_init_asm:
     mov eax, 0x00200000
     wrmsr
 
-    ; Set up LSTAR (Long Mode System Call Target Address)
     mov ecx, 0xC0000082
     mov rax, user_syscall_entry
     wrmsr
 
-    ; Set up FMASK (Clear Interrupt Flag on syscall entry for atomic transitions)
     mov ecx, 0xC0000084
-    mov eax, 0x00000200    ; Clear IF (bit 9) to temporarily mask interrupts
+    mov eax, 0x00000200
     xor edx, edx
     wrmsr
 
     ret
+
 ; ---------------------------------------------------------------------------
 ; Syscall entry from usermode
+;
+; On entry:
+;   RCX = user RIP
+;   R11 = user RFLAGS
+;   RAX = syscall number
+;   RDI, RSI, RDX, R10, R8, R9 = args
+;
+; We must preserve ALL user-visible callee-saved registers
+; (rbx, rbp, r12, r13, r14, r15) across the call to syscall_dispatch.
+;
+; Additionally, we save the user's RCX and R11 so sysret can restore them.
 ; ---------------------------------------------------------------------------
 user_syscall_entry:
-    ; On raw execution entry:
-    ; RCX = Userland RIP (saved by CPU)
-    ; R11 = Userland RFLAGS (saved by CPU)
-    ; RAX = System Call Identifier Number
-    
-    ; 1. PRESERVE RETURN CONTEXT IMMEDIATELY:
-    ; Copy volatile registers containing user return vectors into safe,
-    ; non-clobbered registers (R12 and R13) before translating arguments.
-    mov r12, rcx                    ; r12 = Saved Userland RIP
-    mov r13, r11                    ; r13 = Saved Userland RFLAGS
-
-    push rsp                        ; Store Userland RSP onto the call stack matrix
-    push rbp                        ; Store Userland RBP
-    push r12                        ; Store Userland RIP safely
-    push r13                        ; Store Userland RFLAGS safely
-
-    ; 2. Preserve all standard System V non-volatile registers
+    ; ---- Save the original callee-saved registers FIRST ----
+    ; We must not clobber any of these before they are saved,
+    ; because the C ABI requires them preserved across the syscall.
     push rbx
+    push rbp
     push r12
     push r13
     push r14
     push r15
 
-    ; 3. Preserve volatile registers R8 and R9 from compiler modifications
+    ; Save the syscall return RIP / RFLAGS that the CPU put in RCX / R11.
+    ; These are the values sysret will use. Store them in the frame.
+    push rcx                        ; user RIP
+    push r11                        ; user RFLAGS
+
+    ; Save user RSP too (syscall does NOT save RSP; it's still the user's).
+    ; We don't strictly need to, because RSP is unchanged, but keeping it
+    ; explicit makes the frame layout symmetric and debuggable.
+    push rsp                        ; user RSP (as-is)
+
+    ; Save volatile registers that syscall_dispatch may clobber but
+    ; which userland might expect to survive? Actually caller-saved regs
+    ; (rax, rdi, rsi, rdx, rcx, r8, r9, r10, r11) are by ABI not preserved
+    ; across syscalls. Only callee-saved (rbx, rbp, r12-r15) must be.
+    ; We've saved those above. Push r8/r9 only so we can use them as args.
     push r8
     push r9
 
-    ; 4. System Call Argument Layout Translation Pass:
-    ; Userland registers passed: rax=num, rdi=arg0, rsi=arg1, rdx=arg2, r10=arg3, r8=arg4, r9=arg5
-    ; C signature expects: syscall_dispatch(num, arg0, arg1, arg2, arg3, arg4, arg5)
-    ; System V ABI expects:   rdi,  rsi,  rdx,  rcx,  r8,   r9,   [stack]
-    
-    push r9                         ; Parameter 7 (arg5) -> Placed on the stack frame
-    mov rbx, rax                    ; Save syscall number in callee-saved rbx
-    mov r9, r8                      ; Parameter 6 (arg4) -> Moves into r9
-    mov r8, r10                     ; Parameter 5 (arg3) -> Moves into r8
-    mov rcx, rdx                    ; Parameter 4 (arg2) -> Moves safely into rcx
-    mov rdx, rsi                    ; Parameter 3 (arg1) -> Moves into rdx
-    mov rsi, rdi                    ; Parameter 2 (arg0) -> Moves into rsi
-    mov rdi, rax                    ; Parameter 1 (num)  -> Moves into rdi
+    ; ---- Argument shuffling ----
+    ; userland: rax=num, rdi=arg0, rsi=arg1, rdx=arg2, r10=arg3, r8=arg4, r9=arg5
+    ; C:        rdi,   rsi,   rdx,   rcx,   r8,   r9,   [stack]
+    push r9                         ; arg5 -> 7th arg (on stack)
+    mov rbx, rax                    ; save syscall number for later
+    mov r9, r8                      ; arg4 -> r9
+    mov r8, r10                     ; arg3 -> r8
+    mov rcx, rdx                    ; arg2 -> rcx
+    mov rdx, rsi                    ; arg1 -> rdx
+    mov rsi, rdi                    ; arg0 -> rsi
+    mov rdi, rax                    ; num  -> rdi
 
     call syscall_dispatch
-    add rsp, 8                      ; Instantly discard stacked Parameter 7
+    add rsp, 8                      ; discard stacked arg5
 
-    ; Check if process called SYS_EXIT (2).
-    ; rbx is callee-saved under System V AMD64 ABI, so syscall_dispatch
-    ; is required to preserve it across the call.
+    ; ---- SYS_EXIT check ----
     cmp rbx, 2
     je .handle_exit
 
-
-    ; 5. Restore registers back to their original userland states
+    ; ---- Restore user-visible state ----
+    ; Discard the r8/r9 slots we pushed (their caller-saved, no need to restore)
     pop r9
     pop r8
-    
+
+    ; Discard user RSP slot (it was never changed)
+    add rsp, 8
+
+    ; Restore user RFLAGS into r11 and user RIP into rcx (for sysret)
+    pop r11                         ; user RFLAGS
+    pop rcx                         ; user RIP
+
+    ; Restore callee-saved registers. ORDER IS REVERSE OF PUSH.
     pop r15
     pop r14
     pop r13
     pop r12
-    pop rbx
-    
-    ; PATCH: Explicitly retain RAX (the return value from syscall_dispatch)
-    ; By skipping a manual POP RAX or overwrite here, RAX holds the exact
-    ; character count or error metrics generated by the C handlers.
-    
-    pop r11                         ; Restore Userland CPU Flags (RFLAGS)
-    pop rcx                         ; Restore Userland Instruction Pointer (RIP)
     pop rbp
-    pop rsp                         ; Restore Userland Stack Pointer (RSP)
+    pop rbx
 
-    ; ============================================================
-    ; DIAGNOSTIC: at this point, RCX = user RIP, R11 = user RFLAGS,
-    ; RSP = user RSP. sysret will use RCX, R11, and RSP.
-    ; Preserve all three across a call to syscall_pre_sysret_diag.
-    ; ============================================================
-    push rsp                        ; save user RSP
-    push rcx                        ; save user RIP
-    push r11                        ; save user RFLAGS
-    mov rdi, rcx                    ; arg0 = user RIP
-    mov rsi, r11                    ; arg1 = user RFLAGS
-    sub rsp, 8                      ; align stack for the call
+    ; At this point, RCX = user RIP, R11 = user RFLAGS, RSP = user RSP.
+    ; All callee-saved registers have their user values.
+
+    ; ---- Optional diagnostic ----
+    push rsp
+    push rcx
+    push r11
+    mov rdi, rcx
+    mov rsi, r11
+    sub rsp, 8
     call syscall_pre_sysret_diag
     add rsp, 8
-    pop r11                         ; restore user RFLAGS
-    pop rcx                         ; restore user RIP
-    pop rsp                         ; restore user RSP
-    
-    o64 sysret                      ; Secure privilege step down to Ring 3
+    pop r11
+    pop rcx
+    pop rsp
+
+    o64 sysret
 
 .handle_exit:
     pop r9
     pop r8
+    add rsp, 8                      ; discard user RSP slot
+    add rsp, 16                     ; discard r11, rcx
     pop r15
     pop r14
     pop r13
     pop r12
-    pop rbx
-    add rsp, 16                     ; Discard saved flags and instruction pointers
     pop rbp
-    add rsp, 8                      ; Discard saved userland RSP
-    
-    push rax                        ; Preserve exit status value
+    pop rbx
+
+    push rax
     mov rdi, exit_msg
     call serial_print
     pop rax
@@ -156,9 +159,9 @@ user_syscall_entry:
     mov rdi, newline
     call serial_print
     pop rax
-    
-    mov rdi, rax                    ; Forward exit status to cleanup routine
-    jmp process_exit                ; Control branch handover (never returns)
+
+    mov rdi, rax
+    jmp process_exit
 
 section .data
 exit_msg: db "SYS_EXIT: status=", 0

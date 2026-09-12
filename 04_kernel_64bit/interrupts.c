@@ -60,267 +60,7 @@ volatile uint64_t g_ticks = 0;
 static int g_shift = 0;
 static int g_caps  = 0;
 
-//~ uint64_t timer_preempt_handler(uint64_t stack_pointer) {
-    //~ g_ticks++;
-    //~ #define SCHED_QUANTUM 2
 
-    //~ pcb_t* current = process_get_current();
-    //~ preempt_frame_t* frame = (preempt_frame_t*)stack_pointer;
-
-    //~ if (!current || current->state == PROC_STATE_TERMINATED) {
-        //~ return stack_pointer; 
-    //~ }
-
-    //~ current->total_ticks++;
-    //~ current->timeslice_ticks++;
-
-    //~ // =======================================================================
-    //~ // CRITICAL CORE FIX: PRIVILEGE FENCE GUARD
-    //~ // =======================================================================
-    //~ // If the interrupted code selector belongs to Ring 0 (Kernel/Syscall path),
-    //~ // we MUST immediately return without modifying thread states or executing
-    //~ // context switches. This keeps the kernel stack safe from nested drift!
-    //~ if ((frame->cs & 3) == 0) {
-        //~ return stack_pointer;
-    //~ }
-
-    //~ if ((frame->cs & 3) == 3) {
-        //~ uint64_t active_cr3;
-        //~ __asm__ volatile("mov %%cr3, %0" : "=r"(active_cr3));
-        //~ uint64_t resolved_pid = current->pid;
-        
-        //~ for (int idx = 0; idx < MAX_PROCESSES; idx++) {
-            //~ extern pcb_t* process_find_by_pid(uint64_t pid);
-            //~ pcb_t* p = process_find_by_pid(idx);
-            //~ if (p && p->state != PROC_STATE_UNUSED && p->cr3 == active_cr3) {
-                //~ resolved_pid = p->pid;
-                //~ break;
-            //~ }
-        //~ }
-        //~ current->timeslice_ticks = SCHED_QUANTUM;
-    //~ }
-
-    //~ if (current->timeslice_ticks >= SCHED_QUANTUM) {
-        //~ current->timeslice_ticks = 0;
-
-        //~ if (current->pid == 1) {
-            //~ extern pcb_t* scheduler_ready_queue_peek_next(void);
-            //~ pcb_t* next = scheduler_ready_queue_peek_next();
-            //~ if (next && next->pid != 1) {
-                //~ extern pcb_t* scheduler_ready_queue_next(void);
-                //~ next = scheduler_ready_queue_next();
-                //~ current->state = PROC_STATE_READY;
-                //~ next->state = PROC_STATE_RUNNING;
-                //~ scheduler_set_current(next);
-                
-                //~ if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
-                    //~ extern void tss_set_kernel_stack(uint64_t stack);
-                    //~ tss_set_kernel_stack(next->kernel_stack_top);
-                //~ }
-                //~ __asm__ volatile("mov %0, %%cr3" : : "r"(next->cr3));
-                //~ return next->rsp;
-            //~ }
-            //~ return stack_pointer;
-        //~ }
-
-        //~ extern pcb_t* scheduler_ready_queue_peek_next(void);
-        //~ pcb_t* check_next = scheduler_ready_queue_peek_next();
-        //~ if (!check_next || check_next == current) {
-            //~ return stack_pointer;
-        //~ }
-
-        //~ current->r15 = frame->r15; current->r14 = frame->r14; current->r13 = frame->r13;
-        //~ current->r12 = frame->r12; current->r11 = frame->r11; current->r10 = frame->r10;
-        //~ current->r9  = frame->r9;  current->r8  = frame->r8;
-        //~ current->rbp = frame->rbp; current->rdi = frame->rdi; current->rsi = frame->rsi;
-        //~ current->rdx = frame->rdx; current->rcx = frame->rcx; current->rbx = frame->rbx;
-        //~ current->rax = frame->rax;
-        
-        //~ current->rip = frame->rip;
-        //~ current->rsp = stack_pointer; 
-
-        //~ current->state = PROC_STATE_READY;
-        //~ scheduler_ready_queue_add(current);
-
-        //~ extern pcb_t* scheduler_ready_queue_next(void);
-        //~ pcb_t* next = scheduler_ready_queue_next();
-        //~ if (!next) {
-            //~ next = process_find_by_pid(1);
-        //~ }
-
-        //~ next->state = PROC_STATE_RUNNING;
-        //~ scheduler_set_current(next);
-
-        //~ if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
-            //~ extern void tss_set_kernel_stack(uint64_t stack);
-            //~ tss_set_kernel_stack(next->kernel_stack_top);
-        //~ }
-
-        //~ __asm__ volatile("mov %0, %%cr3" : : "r"(next->cr3));
-        //~ return next->rsp; 
-    //~ }
-
-    //~ return stack_pointer;
-//~ }
-//~ uint64_t timer_preempt_handler(uint64_t stack_pointer) {
-    //~ g_ticks++;
-    //~ #define SCHED_QUANTUM 2
-
-    //~ pcb_t* current = process_get_current();
-    //~ preempt_frame_t* frame = (preempt_frame_t*)stack_pointer;
-
-    //~ /* ============================================================
-     //~ * DIAGNOSTIC: dump the interrupt frame for the first 20 ticks.
-     //~ * This tells us:
-     //~ *   - Whether the CPU was in user mode (cs=0x33) or kernel mode (cs=0x18)
-     //~ *   - What RIP/RSP/SS the CPU pushed
-     //~ *   - Whether the frame pointer is sane
-     //~ * ============================================================ */
-    //~ if (g_ticks <= 20) {
-        //~ serial_print("TIMER[");
-        //~ serial_print_dec(g_ticks);
-        //~ serial_print("] frame=");
-        //~ serial_print_hex(stack_pointer);
-        //~ serial_print(" cs=");
-        //~ serial_print_hex(frame->cs);
-        //~ serial_print(" ss=");
-        //~ serial_print_hex(frame->ss);
-        //~ serial_print(" rip=");
-        //~ serial_print_hex(frame->rip);
-        //~ serial_print(" rsp=");
-        //~ serial_print_hex(frame->rsp);
-        //~ serial_print(" rflags=");
-        //~ serial_print_hex(frame->rflags);
-        //~ serial_print(" cur=");
-        //~ if (current) {
-            //~ serial_print_dec(current->pid);
-        //~ } else {
-            //~ serial_print("NULL");
-        //~ }
-        //~ serial_print("\n");
-    //~ }
-
-    //~ if (!current || current->state == PROC_STATE_TERMINATED) {
-        //~ if (g_ticks <= 20) serial_print("TIMER: no/terminated current, no switch\n");
-        //~ return stack_pointer; 
-    //~ }
-
-    //~ current->total_ticks++;
-    //~ current->timeslice_ticks++;
-
-    //~ // =======================================================================
-    //~ // CRITICAL CORE FIX: PRIVILEGE FENCE GUARD
-    //~ // =======================================================================
-    //~ // If the interrupted code selector belongs to Ring 0 (Kernel/Syscall path),
-    //~ // we MUST immediately return without modifying thread states or executing
-    //~ // context switches. This keeps the kernel stack safe from nested drift!
-    //~ if ((frame->cs & 3) == 0) {
-        //~ if (g_ticks <= 20) serial_print("TIMER: kernel mode, return no switch\n");
-        //~ return stack_pointer;
-    //~ }
-
-    //~ if ((frame->cs & 3) == 3) {
-        //~ uint64_t active_cr3;
-        //~ __asm__ volatile("mov %%cr3, %0" : "=r"(active_cr3));
-        //~ uint64_t resolved_pid = current->pid;
-        
-        //~ for (int idx = 0; idx < MAX_PROCESSES; idx++) {
-            //~ extern pcb_t* process_find_by_pid(uint64_t pid);
-            //~ pcb_t* p = process_find_by_pid(idx);
-            //~ if (p && p->state != PROC_STATE_UNUSED && p->cr3 == active_cr3) {
-                //~ resolved_pid = p->pid;
-                //~ break;
-            //~ }
-        //~ }
-        //~ current->timeslice_ticks = SCHED_QUANTUM;
-        //~ if (g_ticks <= 20) serial_print("TIMER: user mode, forcing quantum\n");
-    //~ }
-
-    //~ if (current->timeslice_ticks >= SCHED_QUANTUM) {
-        //~ if (g_ticks <= 20) serial_print("TIMER: quantum reached, considering switch\n");
-        //~ current->timeslice_ticks = 0;
-
-        //~ if (current->pid == 1) {
-            //~ extern pcb_t* scheduler_ready_queue_peek_next(void);
-            //~ pcb_t* next = scheduler_ready_queue_peek_next();
-            //~ if (next && next->pid != 1) {
-                //~ extern pcb_t* scheduler_ready_queue_next(void);
-                //~ next = scheduler_ready_queue_next();
-                //~ current->state = PROC_STATE_READY;
-                //~ next->state = PROC_STATE_RUNNING;
-                //~ scheduler_set_current(next);
-                
-                //~ if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
-                    //~ extern void tss_set_kernel_stack(uint64_t stack);
-                    //~ tss_set_kernel_stack(next->kernel_stack_top);
-                //~ }
-                //~ __asm__ volatile("mov %0, %%cr3" : : "r"(next->cr3));
-                //~ if (g_ticks <= 20) {
-                    //~ serial_print("TIMER: switching from idle to pid=");
-                    //~ serial_print_dec(next->pid);
-                    //~ serial_print(" rsp=");
-                    //~ serial_print_hex(next->rsp);
-                    //~ serial_print("\n");
-                //~ }
-                //~ return next->rsp;
-            //~ }
-            //~ return stack_pointer;
-        //~ }
-
-        //~ extern pcb_t* scheduler_ready_queue_peek_next(void);
-        //~ pcb_t* check_next = scheduler_ready_queue_peek_next();
-        //~ if (!check_next || check_next == current) {
-            //~ if (g_ticks <= 20) serial_print("TIMER: no next or next==current\n");
-            //~ return stack_pointer;
-        //~ }
-
-        //~ current->r15 = frame->r15; current->r14 = frame->r14; current->r13 = frame->r13;
-        //~ current->r12 = frame->r12; current->r11 = frame->r11; current->r10 = frame->r10;
-        //~ current->r9  = frame->r9;  current->r8  = frame->r8;
-        //~ current->rbp = frame->rbp; current->rdi = frame->rdi; current->rsi = frame->rsi;
-        //~ current->rdx = frame->rdx; current->rcx = frame->rcx; current->rbx = frame->rbx;
-        //~ current->rax = frame->rax;
-        
-        //~ current->rip = frame->rip;
-        //~ current->rsp = stack_pointer; 
-
-        //~ current->state = PROC_STATE_READY;
-        //~ scheduler_ready_queue_add(current);
-
-        //~ extern pcb_t* scheduler_ready_queue_next(void);
-        //~ pcb_t* next = scheduler_ready_queue_next();
-        //~ if (!next) {
-            //~ next = process_find_by_pid(1);
-        //~ }
-
-        //~ next->state = PROC_STATE_RUNNING;
-        //~ scheduler_set_current(next);
-
-        //~ if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
-            //~ extern void tss_set_kernel_stack(uint64_t stack);
-            //~ tss_set_kernel_stack(next->kernel_stack_top);
-        //~ }
-
-        //~ __asm__ volatile("mov %0, %%cr3" : : "r"(next->cr3));
-
-        //~ if (g_ticks <= 20) {
-            //~ serial_print("TIMER: saving cur pid=");
-            //~ serial_print_dec(current->pid);
-            //~ serial_print(" rsp=");
-            //~ serial_print_hex(current->rsp);
-            //~ serial_print(" -> next pid=");
-            //~ serial_print_dec(next->pid);
-            //~ serial_print(" rsp=");
-            //~ serial_print_hex(next->rsp);
-            //~ serial_print("\n");
-        //~ }
-
-        //~ return next->rsp; 
-    //~ }
-
-    //~ if (g_ticks <= 20) serial_print("TIMER: no quantum reached, return\n");
-    //~ return stack_pointer;
-//~ }
 uint64_t timer_preempt_handler(uint64_t stack_pointer) {
     g_ticks++;
     #define SCHED_QUANTUM 2
@@ -328,13 +68,6 @@ uint64_t timer_preempt_handler(uint64_t stack_pointer) {
     pcb_t* current = process_get_current();
     preempt_frame_t* frame = (preempt_frame_t*)stack_pointer;
 
-    /* ============================================================
-     * DIAGNOSTIC: dump the interrupt frame.
-     *
-     * - For the first 20 ticks, dump EVERYTHING (to see boot sequence).
-     * - After that, dump ONLY when the interrupted CS is user mode (0x33).
-     *   This tells us whether the timer is actually interrupting user code.
-     * ============================================================ */
     int is_user = ((frame->cs & 3) == 3);
     if (g_ticks <= 20 || is_user) {
         serial_print("TIMER[");
@@ -352,111 +85,113 @@ uint64_t timer_preempt_handler(uint64_t stack_pointer) {
         serial_print(" rflags=");
         serial_print_hex(frame->rflags);
         serial_print(" cur=");
-        if (current) {
-            serial_print_dec(current->pid);
-        } else {
-            serial_print("NULL");
-        }
+        if (current) serial_print_dec(current->pid);
+        else serial_print("NULL");
         serial_print("\n");
     }
 
     if (!current || current->state == PROC_STATE_TERMINATED) {
         if (g_ticks <= 20) serial_print("TIMER: no/terminated current, no switch\n");
-        return stack_pointer; 
+        return stack_pointer;
     }
 
     current->total_ticks++;
     current->timeslice_ticks++;
 
     // =======================================================================
-    // PRIVILEGE FENCE GUARD
+    // KERNEL-MODE INTERRUPT
     // =======================================================================
-    // If the interrupted code selector belongs to Ring 0 (Kernel/Syscall path),
-    // we MUST immediately return without modifying thread states or executing
-    // context switches. This keeps the kernel stack safe from nested drift!
+    // If we interrupted a kernel task, we normally return immediately. But
+    // idle (pid=1) is special: it only runs when no user task is running,
+    // and we need to hand control back to the scheduler when a user task
+    // becomes ready. So for idle, we save its full interrupt frame and
+    // force its timeslice to expire, letting the quantum block below
+    // perform the actual switch.
+    // =======================================================================
     if ((frame->cs & 3) == 0) {
-        if (g_ticks <= 20) serial_print("TIMER: kernel mode, return no switch\n");
-        return stack_pointer;
+        if (current->pid != 1) {
+            if (g_ticks <= 20) serial_print("TIMER: kernel mode (non-idle), return\n");
+            return stack_pointer;
+        }
+
+        // Idle: check if there's a user task waiting.
+        extern pcb_t* scheduler_ready_queue_peek_next(void);
+        pcb_t* peek = scheduler_ready_queue_peek_next();
+        if (!peek || peek->pid == 1) {
+            if (g_ticks <= 20) serial_print("TIMER: idle, no user ready\n");
+            return stack_pointer;
+        }
+
+        // Save idle's interrupt frame into its PCB so it can be resumed.
+        current->r15 = frame->r15; current->r14 = frame->r14;
+        current->r13 = frame->r13; current->r12 = frame->r12;
+        current->r11 = frame->r11; current->r10 = frame->r10;
+        current->r9  = frame->r9;  current->r8  = frame->r8;
+        current->rbp = frame->rbp; current->rdi = frame->rdi;
+        current->rsi = frame->rsi; current->rdx = frame->rdx;
+        current->rcx = frame->rcx; current->rbx = frame->rbx;
+        current->rax = frame->rax;
+        current->rip = frame->rip;
+        current->rsp = stack_pointer;  // points at frame->r15 slot
+
+        // Force the quantum block to run.
+        current->timeslice_ticks = SCHED_QUANTUM;
     }
 
     if ((frame->cs & 3) == 3) {
-        uint64_t active_cr3;
-        __asm__ volatile("mov %%cr3, %0" : "=r"(active_cr3));
-        uint64_t resolved_pid = current->pid;
-        
-        for (int idx = 0; idx < MAX_PROCESSES; idx++) {
-            extern pcb_t* process_find_by_pid(uint64_t pid);
-            pcb_t* p = process_find_by_pid(idx);
-            if (p && p->state != PROC_STATE_UNUSED && p->cr3 == active_cr3) {
-                resolved_pid = p->pid;
-                break;
-            }
-        }
+        // User-mode interrupt: user tasks are always preemptible.
         current->timeslice_ticks = SCHED_QUANTUM;
-        serial_print("TIMER[USER] cur=");
-        serial_print_dec(current->pid);
-        serial_print(" resolved=");
-        serial_print_dec(resolved_pid);
-        serial_print(" rip=");
-        serial_print_hex(frame->rip);
-        serial_print(" rsp=");
-        serial_print_hex(frame->rsp);
-        serial_print("\n");
     }
 
     if (current->timeslice_ticks >= SCHED_QUANTUM) {
-        if (g_ticks <= 20) serial_print("TIMER: quantum reached, considering switch\n");
+        if (g_ticks <= 20) serial_print("TIMER: quantum reached\n");
         current->timeslice_ticks = 0;
 
-        if (current->pid == 1) {
-            extern pcb_t* scheduler_ready_queue_peek_next(void);
-            pcb_t* next = scheduler_ready_queue_peek_next();
-            if (next && next->pid != 1) {
-                extern pcb_t* scheduler_ready_queue_next(void);
-                next = scheduler_ready_queue_next();
-                current->state = PROC_STATE_READY;
-                next->state = PROC_STATE_RUNNING;
-                scheduler_set_current(next);
-                
-                if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
-                    extern void tss_set_kernel_stack(uint64_t stack);
-                    tss_set_kernel_stack(next->kernel_stack_top);
-                }
-                __asm__ volatile("mov %0, %%cr3" : : "r"(next->cr3));
-                serial_print("TIMER: switching from idle to pid=");
-                serial_print_dec(next->pid);
-                serial_print(" rsp=");
-                serial_print_hex(next->rsp);
-                serial_print("\n");
-                return next->rsp;
-            }
-            return stack_pointer;
+        // -----------------------------------------------------------------
+        // Common switch path (works for both user and idle):
+        //   - save current's full frame (we already did for idle above;
+        //     for user, we do it now)
+        //   - pick next from ready queue (skip idle if current is user)
+        //   - update TSS.RSP0 if next is user
+        //   - switch CR3
+        //   - return next->rsp
+        // -----------------------------------------------------------------
+
+        // For user-mode current, save its frame now.
+        if ((frame->cs & 3) == 3) {
+            current->r15 = frame->r15; current->r14 = frame->r14;
+            current->r13 = frame->r13; current->r12 = frame->r12;
+            current->r11 = frame->r11; current->r10 = frame->r10;
+            current->r9  = frame->r9;  current->r8  = frame->r8;
+            current->rbp = frame->rbp; current->rdi = frame->rdi;
+            current->rsi = frame->rsi; current->rdx = frame->rdx;
+            current->rcx = frame->rcx; current->rbx = frame->rbx;
+            current->rax = frame->rax;
+            current->rip = frame->rip;
+            current->rsp = stack_pointer;
         }
 
-        extern pcb_t* scheduler_ready_queue_peek_next(void);
-        pcb_t* check_next = scheduler_ready_queue_peek_next();
-        if (!check_next || check_next == current) {
-            if (g_ticks <= 20) serial_print("TIMER: no next or next==current\n");
-            return stack_pointer;
-        }
-
-        current->r15 = frame->r15; current->r14 = frame->r14; current->r13 = frame->r13;
-        current->r12 = frame->r12; current->r11 = frame->r11; current->r10 = frame->r10;
-        current->r9  = frame->r9;  current->r8  = frame->r8;
-        current->rbp = frame->rbp; current->rdi = frame->rdi; current->rsi = frame->rsi;
-        current->rdx = frame->rdx; current->rcx = frame->rcx; current->rbx = frame->rbx;
-        current->rax = frame->rax;
-        
-        current->rip = frame->rip;
-        current->rsp = stack_pointer; 
-
-        current->state = PROC_STATE_READY;
-        scheduler_ready_queue_add(current);
-
+        // Pick next task.
         extern pcb_t* scheduler_ready_queue_next(void);
         pcb_t* next = scheduler_ready_queue_next();
         if (!next) {
+            // Nothing else ready. If current is idle, stay. Otherwise,
+            // fall back to idle.
+            if (current->pid == 1) {
+                current->timeslice_ticks = 0;
+                return stack_pointer;
+            }
             next = process_find_by_pid(1);
+            if (!next) {
+                return stack_pointer;
+            }
+        }
+
+        // If we're switching from a user task back to idle, put current
+        // back on the ready queue so it can run again.
+        if (current->pid != 1 && current->state != PROC_STATE_TERMINATED) {
+            current->state = PROC_STATE_READY;
+            scheduler_ready_queue_add(current);
         }
 
         next->state = PROC_STATE_RUNNING;
@@ -469,7 +204,7 @@ uint64_t timer_preempt_handler(uint64_t stack_pointer) {
 
         __asm__ volatile("mov %0, %%cr3" : : "r"(next->cr3));
 
-        serial_print("TIMER: saving cur pid=");
+        serial_print("TIMER: cur pid=");
         serial_print_dec(current->pid);
         serial_print(" rsp=");
         serial_print_hex(current->rsp);
@@ -479,13 +214,11 @@ uint64_t timer_preempt_handler(uint64_t stack_pointer) {
         serial_print_hex(next->rsp);
         serial_print("\n");
 
-        return next->rsp; 
+        return next->rsp;
     }
 
-    if (g_ticks <= 20) serial_print("TIMER: no quantum reached, return\n");
     return stack_pointer;
 }
-
 
 
 

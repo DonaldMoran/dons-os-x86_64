@@ -8,26 +8,13 @@ global context_switch
 ;   cr3              = 0x30
 ;   entry_point      = 0x38
 ;   user_stack_top   = 0x68
-;   r15              = 0x90
-;   r14              = 0x98
-;   r13              = 0xa0
-;   r12              = 0xa8
-;   r11              = 0xb0
-;   r10              = 0xb8
-;   r9               = 0xc0
-;   r8               = 0xc8
-;   rbp              = 0xd0
-;   rdi              = 0xd8
-;   rsi              = 0xe0
-;   rdx              = 0xe8
-;   rcx              = 0xf0
-;   rbx              = 0xf8
-;   rax              = 0x100
-;   rsp              = 0x108
-;   rip              = 0x110
+;   r15 = 0x90, r14 = 0x98, r13 = 0xa0, r12 = 0xa8
+;   r11 = 0xb0, r10 = 0xb8, r9  = 0xc0, r8  = 0xc8
+;   rbp = 0xd0, rdi = 0xd8, rsi = 0xe0, rdx = 0xe8
+;   rcx = 0xf0, rbx = 0xf8, rax = 0x100
+;   rsp = 0x108, rip = 0x110
 
 ; void context_switch(pcb_t* prev, pcb_t* next)
-; prev in RDI, next in RSI
 context_switch:
     push rbp
     push rbx
@@ -38,43 +25,53 @@ context_switch:
 
     mov r12, rsi            ; r12 = next
 
-    ; Save previous process's registers (if prev != NULL)
     test rdi, rdi
     jz .skip_save
 
-    mov [rdi + 0x100], rax
-    mov [rdi + 0x0F8], rbx
-    mov [rdi + 0x0F0], rcx
-    mov [rdi + 0x0E8], rdx
-    mov [rdi + 0x0E0], rsi
-    mov [rdi + 0x0D8], rdi
-    mov [rdi + 0x0D0], rbp
-    mov [rdi + 0x0C8], r8
-    mov [rdi + 0x0C0], r9
-    mov [rdi + 0x0B8], r10
-    mov [rdi + 0x0B0], r11
-    mov [rdi + 0x0A8], r12
-    mov [rdi + 0x0A0], r13
-    mov [rdi + 0x098], r14
-    mov [rdi + 0x090], r15
+    ; r15 = prev (scratch; real r15 value is reloaded from PCB slot).
+    mov r15, rdi
 
-    mov [rdi + 0x108], rsp   ; save current RSP
-    mov rax, [rsp]
-    mov [rdi + 0x110], rax   ; save current RIP (return address)
+    ; --- Build a timer-compatible frame for prev on the current stack ---
+    ; iretq portion (SS, RSP, RFLAGS, CS, RIP)
+    push qword 0x20                     ; SS
+    push qword [r15 + 0x108]            ; RSP (prev's last saved kernel RSP; may be 0 for first save)
+    push qword 0x202                    ; RFLAGS
+    push qword 0x18                     ; CS
+    mov rax, [r15 + 0x110]              ; prev->rip
+    test rax, rax
+    jnz .have_rip
+    mov rax, [r15 + 0x38]               ; fall back to entry_point
+.have_rip:
+    push rax                            ; RIP
 
-    ; Save current CR3 into prev->cr3
+    ; 15 GPRs in irq0_stub order
+    push qword [r15 + 0x090]
+    push qword [r15 + 0x098]
+    push qword [r15 + 0x0A0]
+    push qword [r15 + 0x0A8]
+    push qword [r15 + 0x0B0]
+    push qword [r15 + 0x0B8]
+    push qword [r15 + 0x0C0]
+    push qword [r15 + 0x0C8]
+    push qword [r15 + 0x0D0]
+    push qword [r15 + 0x0D8]
+    push qword [r15 + 0x0E0]
+    push qword [r15 + 0x0E8]
+    push qword [r15 + 0x0F0]
+    push qword [r15 + 0x0F8]
+    push qword [r15 + 0x100]
+
+    mov [r15 + 0x108], rsp              ; prev->rsp = frame base
+
     mov rax, cr3
-    mov [rdi + 0x30], rax
+    mov [r15 + 0x30], rax
 
 .skip_save:
     test r12, r12
     jz .restore_and_return
 
-    ; Load the next process's CR3
-    mov rax, [r12 + 0x30]   ; pcb->cr3
+    mov rax, [r12 + 0x30]
     mov cr3, rax
-
-    ; Flush TLB (double reload)
     mov rax, cr3
     mov cr3, rax
     nop
@@ -82,19 +79,16 @@ context_switch:
     nop
     mov cr3, rax
 
-    ; Determine if it's a user process (entry_point < KERNEL_BASE)
-    mov rax, [r12 + 0x38]   ; entry_point
+    mov rax, [r12 + 0x38]
     cmp rax, 0xFFFFFFFF80000000
-    jae .kernel_task        ; if >= KERNEL_BASE → kernel task
+    jae .kernel_task
 
-    ; ---- User process: use iretq with user selectors ----
-    ; Invalidate user addresses
-    mov rcx, [r12 + 0x38]   ; entry point
+    ; --- User process path ---
+    mov rcx, [r12 + 0x38]
     invlpg [rcx]
-    mov rcx, [r12 + 0x68]   ; user_stack_top
+    mov rcx, [r12 + 0x68]
     invlpg [rcx]
 
-    ; Restore general registers (except RSP, which will be set by iret)
     mov rax, [r12 + 0x100]
     mov rbx, [r12 + 0x0F8]
     mov rcx, [r12 + 0x0F0]
@@ -110,38 +104,34 @@ context_switch:
     mov rdi, [r12 + 0x0D8]
     mov rsi, [r12 + 0x0E0]
 
-    ; Build iretq frame for ring 3
-    push qword 0x2B         ; SS
-    push qword [r12 + 0x68] ; RSP (user stack top)
-    push qword 0x3202       ; RFLAGS
-    push qword 0x33         ; CS
-    push qword [r12 + 0x38] ; RIP (entry point)
+    push qword 0x2B
+    push qword [r12 + 0x68]
+    push qword 0x3202
+    push qword 0x33
+    push qword [r12 + 0x38]
 
-    ; Clear r12 last
     mov r12, [r12 + 0x0A8]
-
     iretq
 
 .kernel_task:
-    ; ---- Kernel task (idle, etc.): just switch stack and return ----
-    mov rax, [r12 + 0x100]
-    mov rbx, [r12 + 0x0F8]
-    mov rcx, [r12 + 0x0F0]
-    mov rdx, [r12 + 0x0E8]
-    mov rbp, [r12 + 0x0D0]
-    mov r8,  [r12 + 0x0C8]
-    mov r9,  [r12 + 0x0C0]
-    mov r10, [r12 + 0x0B8]
-    mov r11, [r12 + 0x0B0]
-    mov r13, [r12 + 0x0A0]
-    mov r14, [r12 + 0x098]
-    mov r15, [r12 + 0x090]
-    mov rdi, [r12 + 0x0D8]
-    mov rsi, [r12 + 0x0E0]
-
+    ; --- Kernel task: resume the frame that was saved (or pre-built). ---
     mov rsp, [r12 + 0x108]
-    mov rax, [r12 + 0x110]
-    jmp rax
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    iretq
 
 .restore_and_return:
     pop r15

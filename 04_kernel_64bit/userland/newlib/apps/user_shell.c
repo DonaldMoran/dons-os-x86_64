@@ -50,27 +50,60 @@ int main(int argc, char** argv) {
     extern struct _reent *_impure_ptr;
     extern struct _reent _impure_data;
 
-    /* ============================================================
-     * MAIN ISOLATION TEST
-     * Each line is a distinct, short write so we can see exactly
-     * which one lands and which does not.
-     * ============================================================ */
-
     direct_serial_write("M1\n");
     direct_serial_write("M2\n");
     direct_serial_write("M3\n");
+    direct_serial_write("P1\n");
 
-    /* Now the pointer diagnostics, in a stable order. */
+    /* ---- EXPERIMENT: fixed-value call to print_hex_label ---- */
+    direct_serial_write("Q1\n");
+    print_hex_label("test", 0x1122334455667788UL);
+    direct_serial_write("Q2\n");
+    /* ------------------------------------------------------- */
+
     print_hex_label("imp_ptr",  (unsigned long)_impure_ptr);
+    direct_serial_write("P2\n");
     print_hex_label("imp_data", (unsigned long)&_impure_data);
+    direct_serial_write("P3\n");
     print_hex_label("sf0",      (unsigned long)&__sf[0]);
+    direct_serial_write("P4\n");
     print_hex_label("sf1",      (unsigned long)&__sf[1]);
-
+    direct_serial_write("P5\n");
     direct_serial_write("MAIN_DONE\n");
-
-    /* Do not loop; exit cleanly so the kernel logs its exit path. */
     return 0;
 }
+
+
+
+
+//~ int main(int argc, char** argv) {
+    //~ (void)argc;
+    //~ (void)argv;
+
+    //~ extern struct _reent *_impure_ptr;
+    //~ extern struct _reent _impure_data;
+
+    //~ /* ============================================================
+     //~ * MAIN ISOLATION TEST
+     //~ * Each line is a distinct, short write so we can see exactly
+     //~ * which one lands and which does not.
+     //~ * ============================================================ */
+
+    //~ direct_serial_write("M1\n");
+    //~ direct_serial_write("M2\n");
+    //~ direct_serial_write("M3\n");
+
+    //~ /* Now the pointer diagnostics, in a stable order. */
+    //~ print_hex_label("imp_ptr",  (unsigned long)_impure_ptr);
+    //~ print_hex_label("imp_data", (unsigned long)&_impure_data);
+    //~ print_hex_label("sf0",      (unsigned long)&__sf[0]);
+    //~ print_hex_label("sf1",      (unsigned long)&__sf[1]);
+
+    //~ direct_serial_write("MAIN_DONE\n");
+
+    //~ /* Do not loop; exit cleanly so the kernel logs its exit path. */
+    //~ return 0;
+//~ }
 
 
 

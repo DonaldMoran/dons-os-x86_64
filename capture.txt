@@ -115,7 +115,7 @@ make -C 05_boot_kernel64 run
 make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/05_boot_kernel64'
 qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -monitor none
 BootInfo validated successfully
-TIMER[1] frame=FFFFFFFF8008FF30 cs=18 ss=10 rip=FFFFFFFF80104D9E rsp=FFFFFFFF8008FFD0 rflags=10207 cur=NULL
+TIMER[1] frame=FFFFFFFF8008FF30 cs=18 ss=10 rip=FFFFFFFF80104D8E rsp=FFFFFFFF8008FFD0 rflags=10207 cur=NULL
 TIMER: no/terminated current, no switch
 PMM: Initializing with page type system...
 PMM: Zones computed:
@@ -131,12 +131,12 @@ VMM: Highest physical address: 0x7FE0000
 VMM: Physical memory into HHDM is already mapped by bootloader.
 VMM: BootInfo page at phys=17000
 VMM: CR3 = 0x11000
-VTIMER[2] frame=FFFFFFFF8008FF00 cs=18 ss=10 rip=FFFFFFFF80106055 rsp=FFFFFFFF8008FFA0 rflags=10206 cur=NULL
-TIMER: no/terminated current, no switch
-MM: NX support available
+VMM: NX support available
 VMM: Initialization complete
 HEAP: Initializing...
 HEAP: Extending heap by 1024 KB (256 pages)
+TIMER[2] frame=FFFFFFFF8008FEE0 cs=18 ss=10 rip=FFFFFFFF80103FC4 rsp=FFFFFFFF8008FF80 rflags=10206 cur=NULL
+TIMER: no/terminated current, no switch
 HEAP: Extended to 1024 KB total
 HEAP: Initialized at 0xFFFF900000000000 size=1024 KB
 PROCESS: Initializing...
@@ -167,7 +167,7 @@ TSS: zeroed 0x2000 bytes
 TSS: Zeroing loop completed
 TSS: I/O Permission Bitmap terminator set at 0x7068
 TSS: Setting rsp0...
-TSS: rsp0 = 0xFFFFFFFF8025FB20
+TSS: rsp0 = 0xFFFFFFFF8025FE10
 TSS: Setting iopb_base...
 TSS: iopb_base = 0x68
 TSS: Calling gdt_set_tss...
@@ -184,9 +184,7 @@ GDT: TSS descriptor set successfully
 TSS: gdt_set_tss completed
 TSS: Loading TR with selector 0x38...
 TSS: about to execute ltr 0x38
-TSS: ltr comTIMER[3] frame=FFFFFFFF8008FF10 cs=18 ss=20 rip=FFFFFFFF80106055 rsp=FFFFFFFF8008FFB0 rflags=10202 cur=1
-TIMER: kernel mode, return no switch
-pleted successfully
+TSS: ltr completed successfully
 TSS: TR loaded
 TSS: TR register = 0x38
 
@@ -199,7 +197,9 @@ GDT+0x18 (selector 0x18): 0xAF9A000000FFFF [Code DPL=0 64-bit]
 GDT+0x20 (selector 0x20): 0xAF93000000FFFF [Data DPL=0 64-bit]
 GDT+0x28 (selector 0x28): 0xCFF2000000FFFF [Data DPL=3 USER]
 GDT+0x30 (selector 0x30): 0xAFFA000000FFFF [Code DPL=3 64-bit USER]
-GDT+0x38 (selector 0x38): 0x8B0050002068 [System DPL=0]
+GDT+0x38 (seTIMER[3] frame=FFFFFFFF8008FEC0 cs=18 ss=20 rip=FFFFFFFF80106045 rsp=FFFFFFFF8008FF60 rflags=10206 cur=1
+TIMER: idle, no user ready
+lector 0x38): 0x8B0050002068 [System DPL=0]
 GDT+0x40 (selector 0x40): 0x0 [Not Present]
 === END GDT DEBUG ===
 
@@ -211,68 +211,103 @@ Initializing **RING** 3 syscalls...
 SYSCALL init done
 CPU: Native hardware SSE vector extensions safely enabled.
 TIMER[4] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[5] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[6] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[7] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[8] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[9] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[10] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[11] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[12] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[13] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[14] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[15] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[16] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[17] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[18] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[19] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 TIMER[20] frame=FFFFFFFF8008FE90 cs=18 ss=20 rip=FFFFFFFF801004F1 rsp=FFFFFFFF8008FF30 rflags=10246 cur=1
-TIMER: kernel mode, return no switch
+TIMER: idle, no user ready
 PROCESS: Realignment mapping user stack inside verified code segment: 0x8000100000
 PROCESS: User stack pointer finalized at RSP = 0x80000FFFE0
 VMM: Dynamically mapped HHDM 0x7ED0000 -> 0xFFFF800007ED0000
-ELF: elf_data=FFFFFFFF8010D5F0 e_phoff=40 e_phnum=2 e_entry=8000000000
-ELF: PT_LOAD[0] off=1000 vaddr=8000000000 filesz=1BC8 memsz=1BC8
+ELF: elf_data=FFFFFFFF8010D730 e_phoff=40 e_phnum=2 e_entry=8000000000
+ELF: PT_LOAD[0] off=1000 vaddr=8000000000 filesz=1C48 memsz=1C48
 VMM: Dynamically mapped HHDM 0x7ECF000 -> 0xFFFF800007ECF000
 VMM: Dynamically mapped HHDM 0x7ECE000 -> 0xFFFF800007ECE000
-ELF: VERIFY memset_bytes vaddr=800000118C phys=7ECE18C bytes=48C7C180004C29C14829CAF3AA48
-ELF: VERIFY __sinit_bytes vaddr=8000000A50 phys=7ECFA50 bytes=48837F400749C3F1F8400000
+ELF: VERIFY memset_bytes vaddr=800000118C phys=7ECE18C bytes=C1FC39041FF54DD04883C314C39E3
+ELF: VERIFY __sinit_bytes vaddr=8000000A50 phys=7ECFA50 bytes=48894DE8BED82004C89F748B8E014
 ELF: VERIFY _start_first8 vaddr=8000000000 phys=7ECF000 bytes=4831ED66B82B08E
-ELF: PT_LOAD[1] off=3000 vaddr=8000002000 filesz=190 memsz=1250
+ELF: PT_LOAD[1] off=3000 vaddr=8000002000 filesz=1B0 memsz=1250
 VMM: Dynamically mapped HHDM 0x7ECD000 -> 0xFFFF800007ECD000
 VMM: Dynamically mapped HHDM 0x7ECC000 -> 0xFFFF800007ECC000
 ELF: VERIFY bss_3000 vaddr=8000003000 phys=7ECC000 bytes=0000000000000000
 ELF: VERIFY bss_3200 vaddr=8000003200 phys=7ECC200 bytes=0000000000000000
-ELF: VERIFY main_first16 vaddr=8000000530 phys=7ECF530 bytes=48BF34200080000554889E54154
-KM: pre-switch _impure_ptr phys=0x7ECD0E0 bytes=0210080000
-KM: pre-switch _impure_data phys=0x7ECD100 bytes=00000000
-SCHED: Setting TSS.RSP0 for user pid=2 to 0xFFFFFFFF80268540
-TSS: Setting rsp0 to 0xFFFFFFFF80268540
-TSS: rsp0 set successfully to 0xFFFFFFFF80268540
-PRE-SYSRET rcx(rip)=8000000347 r11(rflags)=3202
-TIMER[303] frame=FFFFFFFF802684A0 cs=33 ss=2B rip=8000000347 rsp=80000FFFB0 rflags=13202 cur=2
-TIMER[USER] cur=2 resolved=2 rip=8000000347 rsp=80000FFFB0
-TIMER: saving cur pid=2 rsp=FFFFFFFF802684A0 -> next pid=1 rsp=FFFFFFFF8008FEA8
+ELF: VERIFY main_first16 vaddr=8000000530 phys=7ECF530 bytes=B82040080000FFD0C9C389C6EB
+KM: pre-switch _impure_ptr phys=0x7ECD0E0 bytes=00000000
+KM: pre-switch _impure_data phys=0x7ECD100 bytes=20210080000
+SCHED: Setting TSS.RSP0 for user pid=2 to 0xFFFFFFFF80268930
+TSS: Setting rsp0 to 0xFFFFFFFF80268930
+TSS: rsp0 set successfully to 0xFFFFFFFF80268930
+HELLO_FROM_REENT_INIT
+PRE-SYSRET rcx(rip)=8000000367 r11(rflags)=3202
+PRE-SYSRET rcx(rip)=800000037D r11(rflags)=3202
+PRE-SYSRET rcx(rip)=800000038E r11(rflags)=3202
+PRE-SYSRET rcx(rip)=800000039F r11(rflags)=3202
+PRE-SYSRET rcx(rip)=80000003C8 r11(rflags)=3202
+PRE-SYSRET rcx(rip)=80000003DE r11(rflags)=3202
+SINIT_DONE
+PRE-SYSRET rcx(rip)=8000000412 r11(rflags)=3206
+M1
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3202
+M2
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3202
+M3
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3202
+P1
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3202
+Q1
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3202
+test=0x1122334455667788
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3216
+Q2
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3202
+imp_ptr=0x0000008000002120
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3212
+P2
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3202
+imp_data=0x0000008000002120
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3216
+P3
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3202
+sf0=0x0000008000003020
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3202
+P4
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3202
+sf1=0x00000080000030d0
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3202
+P5
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3202
+MAIN_DONE
+PRE-SYSRET rcx(rip)=8000000454 r11(rflags)=3216
 
-=== GENERAL PROTECTION FAULT (#GP) ===
-  Faulting RIP : 0xFFFFFFFF801050BF
-  Code Seg (CS): 0x18
-  Stack (RSP)  : 0xFFFFFFFF8008FF20
-  Error Code   : 0x53C
+[EXIT] sys_exit, pid=2, state=2
+[EXIT] marked TERMINATED
+[EXIT] halting in kernel loop
 make[1]: Leaving directory '/home/noneya/code/dons-os-x86_64/05_boot_kernel64'
