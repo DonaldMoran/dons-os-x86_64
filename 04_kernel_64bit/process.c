@@ -39,10 +39,19 @@ void process_init(void) {
         scheduler_set_current(idle);
 
         /* Seed the syscall entry stack top with idle's kernel stack.
-           tss_init() runs later in kmain and only touches tss->rsp0;
-           this global is what user_syscall_entry.asm reads. */
+           tss_init() has already run and set rsp0 to the boot kernel
+           stack; this global is what user_syscall_entry.asm reads on
+           every syscall. */
         extern void tss_set_syscall_stack(uint64_t stack);
         tss_set_syscall_stack(idle->kernel_stack_top);
+
+        /* Keep TSS.RSP0 in lockstep with g_syscall_stack_top. From
+           here on, idle is the current process, and TSS.RSP0 must
+           point at idle's kernel stack top, not the boot kernel
+           stack tss_init set it to. The scheduler updates both
+           whenever it switches to a different process. */
+        extern void tss_set_kernel_stack(uint64_t stack);
+        tss_set_kernel_stack(idle->kernel_stack_top);
 
         /* Remove idle from the ready queue. Idle is the fallback
            process that process_find_by_pid(1) returns when nothing

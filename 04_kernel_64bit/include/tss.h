@@ -45,5 +45,6 @@ extern uint64_t g_syscall_stack_top;
 void tss_init(void);
 void tss_set_kernel_stack(uint64_t stack);
 void tss_set_syscall_stack(uint64_t stack);
+void tss_dump(void);
 
 #endif // TSS_H

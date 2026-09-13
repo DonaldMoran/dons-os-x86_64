@@ -93,3 +93,77 @@ void gdt_fix_user_segments(void) {
 
     serial_print("GDT: User segments fixed for Ring 3\n");
 }
+
+/* Decode and print the current GDT on demand. Called from the kernel
+   shell's gdtdump command. Prints to both serial and VGA. */
+void gdt_dump(void) {
+    struct {
+        uint16_t limit;
+        uint64_t base __attribute__((packed));
+    } gdt_ptr;
+
+    __asm__ volatile ("sgdt %0" : "=m"(gdt_ptr) : : "memory");
+
+    uint64_t* gdt = (uint64_t*)gdt_ptr.base;
+    int max_entries = (gdt_ptr.limit + 1) / 8;
+
+    serial_print("\n=== GDT DUMP ===\n");
+    vga_print("=== GDT DUMP ===\n");
+
+    serial_print("GDT base=0x"); serial_print_hex(gdt_ptr.base);
+    serial_print(" limit=0x"); serial_print_hex(gdt_ptr.limit);
+    serial_print(" entries="); serial_print_dec(max_entries);
+    serial_print("\n");
+    vga_print("GDT base=0x"); vga_print_hex_cur(gdt_ptr.base);
+    vga_print(" limit=0x"); vga_print_hex_cur(gdt_ptr.limit);
+    vga_print("\n");
+
+    for (int i = 0; i < max_entries; i++) {
+        uint64_t desc = gdt[i];
+        uint8_t access  = (desc >> 40) & 0xFF;
+        uint8_t flags   = (desc >> 52) & 0xF;
+        uint8_t dpl     = (access >> 5) & 0x3;
+        uint8_t type    = (access >> 1) & 0x7;
+        bool present    = (access >> 7) & 0x1;
+        bool is_system  = !((access >> 4) & 0x1);
+        bool is_code    = (access >> 3) & 0x1;
+        bool is_64bit   = (flags & 0x2) ? true : false;
+
+        serial_print("["); serial_print_dec(i); serial_print("] 0x");
+        serial_print_hex(i * 8);
+        serial_print(" = 0x"); serial_print_hex(desc);
+        serial_print("  ");
+        vga_print("["); vga_print_dec_cur(i); vga_print("] 0x");
+        vga_print_hex_cur(i * 8);
+        vga_print(" = 0x"); vga_print_hex_cur(desc);
+        vga_print("  ");
+
+        const char* kind;
+        if (!present) {
+            kind = "NotPresent";
+        } else if (is_system) {
+            kind = (type == 9) ? "TSS" : "System";
+        } else if (is_code) {
+            kind = "Code";
+        } else {
+            kind = "Data";
+        }
+
+        serial_print(kind);
+        vga_print(kind);
+
+        if (present) {
+            serial_print(" DPL="); serial_print_dec(dpl);
+            vga_print(" DPL="); vga_print_dec_cur(dpl);
+            if (is_64bit) {
+                serial_print(" 64-bit");
+                vga_print(" 64-bit");
+            }
+        }
+        serial_print("\n");
+        vga_print("\n");
+    }
+
+    serial_print("=== END GDT DUMP ===\n\n");
+    vga_print("=== END GDT DUMP ===\n");
+}

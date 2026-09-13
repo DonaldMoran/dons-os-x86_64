@@ -77,3 +77,66 @@ tss_set_kernel_stack(uint64_t stack) {
 void tss_set_syscall_stack(uint64_t stack) {
     g_syscall_stack_top = stack;
 }
+
+/* Print the current TSS fields on demand. Called from the kernel
+   shell's tssdump command. Prints to both serial and VGA. */
+void tss_dump(void) {
+    serial_print("\n=== TSS DUMP ===\n");
+    vga_print("=== TSS DUMP ===\n");
+
+    serial_print("TSS base=0x"); serial_print_hex((uint64_t)tss);
+    serial_print(" iomap=0x"); serial_print_hex((uint64_t)iomap);
+    serial_print(" size=0x"); serial_print_hex((uint64_t)sizeof(tss_t));
+    serial_print("\n");
+    vga_print("TSS base=0x"); vga_print_hex_cur((uint64_t)tss);
+    vga_print(" size=0x"); vga_print_hex_cur((uint64_t)sizeof(tss_t));
+    vga_print("\n");
+
+    serial_print("  rsp0 = 0x"); serial_print_hex(tss->rsp0);
+    serial_print("\n");
+    vga_print("  rsp0 = 0x"); vga_print_hex_cur(tss->rsp0);
+    vga_print("\n");
+
+    serial_print("  rsp1 = 0x"); serial_print_hex(tss->rsp1);
+    serial_print(" rsp2 = 0x"); serial_print_hex(tss->rsp2);
+    serial_print("\n");
+
+    serial_print("  ist1 = 0x"); serial_print_hex(tss->ist1);
+    serial_print(" ist2 = 0x"); serial_print_hex(tss->ist2);
+    serial_print("\n");
+    serial_print("  ist3 = 0x"); serial_print_hex(tss->ist3);
+    serial_print(" ist4 = 0x"); serial_print_hex(tss->ist4);
+    serial_print("\n");
+    serial_print("  ist5 = 0x"); serial_print_hex(tss->ist5);
+    serial_print(" ist6 = 0x"); serial_print_hex(tss->ist6);
+    serial_print("\n");
+    serial_print("  ist7 = 0x"); serial_print_hex(tss->ist7);
+    serial_print("\n");
+
+    serial_print("  iopb_base = 0x"); serial_print_hex(tss->iopb_base);
+    serial_print("\n");
+    vga_print("  iopb_base = 0x"); vga_print_hex_cur(tss->iopb_base);
+    vga_print("\n");
+
+    /* Current TR, for sanity. */
+    uint16_t tr;
+    __asm__ volatile ("str %0" : "=r"(tr));
+    serial_print("  TR = 0x"); serial_print_hex(tr);
+    serial_print("\n");
+    vga_print("  TR = 0x"); vga_print_hex_cur(tr);
+    vga_print("\n");
+
+    /* Cross-check: g_syscall_stack_top should equal rsp0 for the
+       current process once the scheduler has run, or idle's kernel
+       stack top before that. */
+    extern uint64_t g_syscall_stack_top;
+    serial_print("  g_syscall_stack_top = 0x");
+    serial_print_hex(g_syscall_stack_top);
+    serial_print("\n");
+    vga_print("  g_syscall_stack_top = 0x");
+    vga_print_hex_cur(g_syscall_stack_top);
+    vga_print("\n");
+
+    serial_print("=== END TSS DUMP ===\n\n");
+    vga_print("=== END TSS DUMP ===\n");
+}

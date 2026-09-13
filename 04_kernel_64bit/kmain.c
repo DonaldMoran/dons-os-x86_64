@@ -173,14 +173,15 @@ static void handle_command(const char *cmd) {
         "pmmtest", "info", "mem", "test", 
         "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", 
         "nxtest", "syscall", "elfload", "proclist" , "proccreate" , "vmmclone", 
-        "runproc", "schstat", "testyield", "usershell"
+        "runproc", "schstat", "testyield", "usershell",
+        "gdtdump", "tssdump"
     };
     // FIX 2: Corrected division metrics to scale array item thresholds accurately
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
     (void)num_commands;
 
     if (strcmp(cmd, "help") == 0) {
-        vga_print("\nAvailable commands:\n  help, clear, version, reboot, pmmtest, info, mem, test,\n  vmmtest, serialtest, heapstat, maptest, testrec, heaptest,\n  nxtest, syscall, elfload, proclist, proccreate, vmmclone,\n  runproc, schstat, testyield, usershell\n> ");
+        vga_print("\nAvailable commands:\n  help, clear, version, reboot, pmmtest, info, mem, test,\n  vmmtest, serialtest, heapstat, maptest, testrec, heaptest,\n  nxtest, syscall, elfload, proclist, proccreate, vmmclone,\n  runproc, schstat, testyield, usershell, gdtdump, tssdump\n> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear(); vga_print("DonsDOS v0.4.6\nType 'help'\n> ");
     } else if (strcmp(cmd, "version") == 0) {
@@ -799,6 +800,12 @@ static void handle_command(const char *cmd) {
             vga_print("Error: Process Control Block allocation denied!\n");
         }
         vga_print("> ");
+    } else if (strcmp(cmd, "gdtdump") == 0) {
+        gdt_dump();
+        vga_print("> ");
+    } else if (strcmp(cmd, "tssdump") == 0) {
+        tss_dump();
+        vga_print("> ");
     } else {
         vga_print("\nUnknown command. Type 'help'\n> ");
     }
@@ -852,12 +859,11 @@ void kmain(BootInfo *info) {
     heap_init(HEAP_START, HEAP_INITIAL_SIZE);
     
     scheduler_init();
-    process_init();
-    
-    gdt_fix_user_segments(); 
+    gdt_fix_user_segments();
     tss_init();
+    process_init();
     keyboard_init();
-    
+
     enable_user_fsgsbase();
     
     syscall_init();
@@ -881,41 +887,6 @@ void kmain(BootInfo *info) {
     serial_print("CPU: Native hardware SSE vector extensions safely enabled.\n");
     vga_print("CPU: Native hardware SSE vector extensions safely enabled.\n");
 
-    //~ vga_clear();
-
-    //~ serial_print("Kernel: launching user shell\n");
-
-    //~ /* Post-boot: the only interactive console is the user shell. The
-       //~ kernel shell (kmain_shell_loop) is a boot-time diagnostic and
-       //~ must not be reachable after boot. Create the user shell process
-       //~ and drop into idle; the scheduler will run the shell. If the
-       //~ shell exits, process_exit halts the CPU — there is no fallback
-       //~ to kernel-mode input. */
-
-    //~ if (build_user_shell_elf_len == 0) {
-        //~ serial_print("PANIC: no user shell image embedded\n");
-        //~ while (1) __asm__ volatile("hlt");
-    //~ }
-
-    //~ pcb_t* shell = process_create("usershell", 0x8000000000ULL, 0);
-    //~ if (!shell) {
-        //~ serial_print("PANIC: could not create user shell process\n");
-        //~ while (1) __asm__ volatile("hlt");
-    //~ }
-
-    //~ extern uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data);
-    //~ uint64_t shell_entry = elf_load_into_process(shell, build_user_shell_elf);
-    //~ if (shell_entry == 0) {
-        //~ serial_print("PANIC: user shell ELF load failed\n");
-        //~ while (1) __asm__ volatile("hlt");
-    //~ }
-    //~ shell->entry_point = shell_entry;
-
-    //~ /* shell is already on the ready queue (process_create added it).
-       //~ Fall into the idle loop; the timer will pick the shell up. */
-    //~ kernel_idle_loop();
-    //~ /* not reached */
-//~ }
     vga_clear();
 
     /* Boot-time choice: give the operator a brief window to opt into
