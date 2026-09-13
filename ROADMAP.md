@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield**
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield**, **usershell**, **gdtdump**, **tssdump**
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -112,12 +112,11 @@ Boot chain is complete and stable.
 
 ### ✔ 3.5 — User Mode (Ring 3)
 - GDT with user segments (DPL=3)
-- User code (0x30) and user data (0x28) segments
+- User code (0x33) and user data (0x2B) segments
 - TSS initialization for stack switching
 - `iretq` transition from kernel to user mode
 - User memory mapped with PT_USER flag
 - `create_user_process()` for launching user code
-- Test commands: **user**, **user2** (placeholders for future usermode tests)
 
 ### ✔ 3.6 — NX Bit Support
 - NX bit enabled via PT_NX flag
@@ -131,10 +130,12 @@ Boot chain is complete and stable.
 - System call handler with register preservation
 - SYS_WRITE (syscall #1)
 - SYS_EXIT (syscall #2)
+- SYS_READ (syscall #3)
+- SYS_BRK (syscall #10)
 - Syscall dispatcher with x86_64 ABI
 - `syscall` test command
 - SYSRET returns to user mode
-- **Safe user‑space memory access** via `safe_copy_from_user()` using HHDM
+- **Safe user‑space memory access** via `safe_copy_from_user()` and `safe_copy_to_user()` using HHDM
 
 ### ✔ 3.8 — ELF Loader ⭐ FINALIZED
 - Parses ELF64 headers and program headers
@@ -156,7 +157,7 @@ Boot chain is complete and stable.
 - **`vmmclone` command** for testing page table isolation
 - Ready queue infrastructure (foundation for scheduler)
 
-### ✔ 3.10 — Process Stack Setup ⭐ NEW
+### ✔ 3.10 — Process Stack Setup
 - Static kernel stack pool for processes
 - Process creation with dedicated user and kernel stacks
 - Process execution via direct function call (kernel mode)
@@ -165,7 +166,7 @@ Boot chain is complete and stable.
 - Shell returns properly after process execution
 - All previous features remain fully functional
 
-### ✔ 3.11 — Cooperative Scheduler ⭐ NEW
+### ✔ 3.11 — Cooperative Scheduler
 - Ready queue with round‑robin scheduling
 - `process_yield()` for voluntary context switching
 - `process_exit()` for clean process termination
@@ -174,6 +175,47 @@ Boot chain is complete and stable.
 - **`schstat` command** for scheduler statistics
 - `runproc` now uses the scheduler
 - All previous features remain fully functional
+
+### ✔ 3.12 — Preemptive Scheduler
+- PIT timer (IRQ0, 100 Hz) preempts user-mode and kernel-mode processes
+- Quantum-based task slicing (`SCHED_QUANTUM = 2`)
+- Timer saves the interrupted frame into the PCB and resumes via `irq0_stub`
+- Kernel-mode preemption: a process blocked in `sys_read` does not hold the CPU
+- **`testyield` now alternates cleanly** between both test processes
+
+### ✔ 3.13 — Userland C Library (newlib 4.x) ⭐ NEW
+- newlib 4.x statically linked into user programs (`libc.a`, `libm.a`)
+- `crt0.S`, `syscalls.c`, `reent.c` provide startup, syscall shims, and reentrancy
+- **`_impure_ptr = &_impure_data`** in `reent.c` — without this, the first `printf` faults
+- `printf`, `malloc`/`free`, `memcpy`, `str*`, `setvbuf`, `errno` all work from Ring 3
+- User programs written in ordinary C, compiled with `x86_64-elf-gcc`
+- Loaded as ELF64 binaries embedded in the kernel image
+
+### ✔ 3.14 — Blocking I/O ⭐ NEW
+- `sys_read` on fd 0 no longer spins the CPU
+- Blocked process sets `PROC_STATE_BLOCKED`, executes `sti; hlt`
+- Timer skips blocked processes (narrowed re-add condition to `state == RUNNING`)
+- `irq1_handler` wakes all blocked processes on a key
+- Timer resumes the process via its saved kernel frame
+- Multiple processes can be blocked; whichever wakes first consumes the byte
+
+### ✔ 3.15 — Boot-Time Shell Choice ⭐ NEW
+- 2-second window at boot: `k` → kernel shell, any other key or timeout → user shell
+- Kernel shell is a diagnostic console (not reachable after user shell starts)
+- User shell is the default interactive console
+- `sys_exit` on a user process halts the CPU; kernel diagnostics return to the kernel shell
+- `gdtdump` and `tssdump` added as on-demand kernel shell diagnostics
+
+### ✔ 3.16 — Process Yield Queue Fix ⭐ NEW
+- `process_yield` no longer corrupts the ready queue by calling
+  `scheduler_ready_queue_remove(current_process)` on an off-queue process
+- Defensive check added to `scheduler_ready_queue_remove` for off-queue processes
+- `testyield` demonstrably alternates between both test processes
+
+### ✔ 3.17 — TSS.RSP0 / `g_syscall_stack_top` Sync ⭐ NEW
+- `process_init` runs after `tss_init` in `kmain`
+- `process_init` calls `tss_set_kernel_stack(idle->kernel_stack_top)` alongside `tss_set_syscall_stack`
+- `tssdump` on a fresh boot shows `rsp0` and `g_syscall_stack_top` as the same address
 
 ---
 
@@ -247,6 +289,45 @@ Boot chain is complete and stable.
 
 ---
 
+## ⭐ v0.4.6 — Preemptive Scheduler & Unlocked Core (August 2026)
+
+**What was accomplished:**
+- Multi-Pass Segment Reader: `stage2.asm` pulls kernel blocks in safe 128-sector chunks, advancing segment offsets dynamically to defeat the 64 KB real-mode wrap limit
+- Kernel disk read threshold lifted to 256 sectors (128 KB)
+- `SYS_REBOOT` (syscall #25) added; Ring 3 user shell option 4 reboots via a Ring 0 triple-fault
+- Preemptive core integration: PIT clock (`IRQ0` at 100 Hz) enforces quantum-based task slicing across ready queues
+
+**Key learnings:**
+- Real-mode segment arithmetic matters for large kernels
+- A userland reboot needs a controlled, tested path back to ring 0
+- Preemptive slicing is stable when the timer path saves and restores per-process kernel frames
+
+---
+
+## ⭐ v0.4.7 — newlib, Blocking I/O, Boot Choice (September 2026)
+
+**What was accomplished:**
+- **newlib 4.x in userland**: `printf`, `malloc`/`free`, `memcpy`, `str*` work in Ring 3, statically linked against `libc.a`/`libm.a`
+- **Kernel-stack-on-syscall-entry**: syscall path runs on a per-process kernel stack (from A2, tag `20260912I`)
+- **Blocking `sys_read`**: reads no longer spin the CPU; blocked processes yield via the timer and are woken by `irq1`
+- **Boot-time shell choice**: 2-second window, `k` for kernel shell, any other key (or timeout) for the user shell
+- **User shell is the terminal console**: kernel shell is not reachable after boot without a reboot
+- **Kernel diagnostics return to the kernel shell** on exit
+- **Userland heap test**: user shell menu option 3 exercises `malloc`/`free` over `sys_brk`
+- **`gdtdump` and `tssdump`** kernel shell commands
+- **`testyield` fix**: `process_yield` no longer corrupts the ready queue
+- **TSS.RSP0 / `g_syscall_stack_top` in lockstep** from boot
+
+**Key learnings:**
+- Kernel code must run on a kernel stack, not the user stack; the earlier `sti; hlt` spin in `sys_read` blocked the whole scheduler
+- The timer path already does everything a cooperative switch needs; use it
+- A second context-switch primitive (or fabricating iretq frames from PCB slots) causes more bugs than it solves
+- `process_yield` must not remove the current process from the ready queue if it is not on it — remove on an off-queue process corrupts the queue
+- Newlib reentrancy requires `_impure_ptr = &_impure_data` at startup
+- `sys_brk` must `invlpg` after mapping, or the first user write faults
+
+---
+
 ## 4. User‑Facing Features
 
 ### ☐ 4.1 — Framebuffer Graphics
@@ -256,14 +337,24 @@ Boot chain is complete and stable.
 
 ### ☐ 4.2 — File System
 - Virtual File System (VFS) layer  
-- FAT32 or ext2 support  
+- FAT32 support (starting with FAT via FatFs)
 - File operations (open, read, write, close)
+- Load user programs from disk rather than embedding them
 
 ### ☐ 4.3 — Device Drivers
 - Serial/COM port (working)
 - PCI enumeration
 - AHCI disk driver
 - PS/2 mouse
+
+### ☐ 4.4 — Kernel-Shell Re-Entry
+- A way to reach the kernel shell after boot without a full reboot (serial console or a gated debug flag)
+
+### ☐ 4.5 — Process Cleanup on Exit
+- Reclaim PCBs in `process_exit` so diagnostics don't leak
+
+### ☐ 4.6 — Per-Process tty / Console Focus
+- Prerequisite for multiple concurrent shells
 
 ---
 
@@ -317,9 +408,17 @@ Boot chain is complete and stable.
 | **Cooperative Scheduler** | **✔ Complete ⭐ v0.4.5** |
 | **Context Switching** | **✔ Complete ⭐ v0.4.5** |
 | **Process Yield/Exit** | **✔ Complete ⭐ v0.4.5** |
-| **Preemptive Scheduler** | **☐ Planned (Next) ⭐ v0.4.6** |
+| **Preemptive Scheduler** | **✔ Complete ⭐ v0.4.6** |
+| **Segment-Shifting Bootloader** | **✔ Complete ⭐ v0.4.6** |
+| **Userland Syscall Reboot** | **✔ Complete ⭐ v0.4.6** |
+| **Kernel-Stack-on-Syscall-Entry** | **✔ Complete ⭐ v0.4.7** |
+| **newlib 4.x in userland** | **✔ Complete ⭐ v0.4.7** |
+| **Blocking sys_read** | **✔ Complete ⭐ v0.4.7** |
+| **Boot-Time Shell Choice** | **✔ Complete ⭐ v0.4.7** |
+| **Userland Heap via sys_brk** | **✔ Complete ⭐ v0.4.7** |
+| **gdtdump / tssdump** | **✔ Complete ⭐ v0.4.7** |
 | Framebuffer Graphics | ☐ Planned |
-| File System | ☐ Planned |
+| File System (FAT via FatFs) | ☐ Planned |
 
 ---
 

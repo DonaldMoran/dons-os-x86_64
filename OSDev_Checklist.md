@@ -22,7 +22,7 @@
 
 ---
 
-## 2. Core Kernel Features (22/22 Complete)
+## 2. Core Kernel Features (26/26 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
@@ -31,22 +31,29 @@
 | 8 | **PIT Timer** | ✅ Complete | IRQ0 tick counter, scheduling foundation |
 | 9 | **Keyboard Driver** | ✅ Complete | IRQ1, scancode set 1, shift/caps, input buffer |
 | 10 | **VGA Console Upgrade** | ✅ Complete | Scrolling, cursor control, shell‑ready console |
-| 11 | **Shell** | ✅ Complete | Command interpreter: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, **user**, **user2**, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield**, **usershell** |
+| 11 | **Kernel Shell** | ✅ Complete | Diagnostic console reached via `k` at boot. Commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, elfload, proclist, proccreate, vmmclone, runproc, schstat, testyield, usershell, gdtdump, tssdump |
 | 12 | **E820 Memory Map** | ✅ Complete | Memory detection, BootInfo struct passed to kernel |
 | 13 | **Physical Memory Manager** | ✅ Complete | Bitmap allocator, page alloc/free, reserved region marking |
-| 14 | **Virtual Memory Manager** | ✅ Complete | Recursive paging implemented at PML4[510]. VMM can read/write PML4 from higher-half kernel. HHDM mapping at PML4[256]. Dynamic page table allocation (PDPT, PD, PT) working. No GP faults when accessing page tables. `vmmtest` command verifies functionality. User-space page mapping with PT_USER flag working. **NX (No Execute) bit support via PT_NX flag.** **Dynamic HHDM mapping via `ensure_hhdm_mapped()`.** **Page table cloning via `vmm_clone_page_table()`.** |
+| 14 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510]. HHDM mapping at PML4[256]. Dynamic page table allocation. User-space page mapping with PT_USER. **NX bit support via PT_NX.** **Dynamic HHDM mapping via `ensure_hhdm_mapped()`.** **Page table cloning via `vmm_clone_page_table()`.** |
 | 15 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging alongside VGA |
-| 16 | **Heap Allocator** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. `heapstat` command for debugging. `heaptest` command for verification. 64MB initial heap with automatic expansion. Memory reuse verified. **WRITE bit fix for heap pages.** |
-| 17 | **User Mode (Ring 3)** | ✅ Complete | GDT with user segments (0x30 code, 0x28 data). TSS configured for stack switching. `iretq`-based transition from kernel to user mode. User code executes at CPL=3 with page protection. `create_user_process()` for launching user code. Test commands: **user**, **user2** (placeholders for future usermode tests). |
-| 18 | **NX (No Execute) Bit Support** | ✅ Complete | PT_NX flag added to vmm.h (bit 63). NX flag handling in `vmm_map_page()` on final PTE. `nxtest` command for verifying NX functionality. NX status displayed in `vmmtest` output. **8KB .bss padding** to prevent keyboard buffer corruption. **`keyboard_init()` moved after memory management initialization.** |
-| 19 | **System Calls** | ✅ Complete | SYSCALL/SYSRET instruction interface via MSRs (IA32_STAR, IA32_LSTAR, IA32_FMASK). SYS_WRITE (syscall #1) and SYS_EXIT (syscall #2) implemented. Syscall dispatcher with proper x86_64 ABI. `syscall` test command for verification. Proper register preservation across syscalls. **Safe user‑space memory access via `safe_copy_from_user()` using HHDM.** |
-| 20 | **ELF Loader** | ✅ Complete ⭐ FINALIZED | Parses ELF64 headers and program headers. Maps LOAD segments with correct permissions (Read, Write, Execute, User). Allocates and maps user stack pages. Transitions to user mode via IRETQ with proper selectors (CS=0x33, SS=0x2B). Sets IOPL=3 for user I/O access. Page table execute permissions at all levels (PML4 → PDPT → PD → PT). **`elfload` command** to load and run embedded ELF programs. **Works reliably on first boot** (handles bootloader identity‑mapping conflict). **Safe HHDM‑based copying** of program segments and stack. Tested with "Hello from Userland!" via serial. |
-| 21 | **Process Foundation** | ✅ Complete | Process Control Block (PCB) structure. Process creation (`process_create`). Process listing (`proclist`). Page table cloning (`vmm_clone_page_table`). **`vmmclone` command** for testing page table isolation. Ready queue infrastructure (foundation for scheduler). |
-| 22 | **BootInfo Fix** | ✅ Complete | Fixed BootInfo structure alignment between bootloader and kernel. Added magic number and version validation. Proper memory map detection from BIOS E820. |
-| 23 | **Process Stack Setup** | ✅ Complete | Static kernel stack pool for processes. Process creation with dedicated user and kernel stacks. Process execution via direct function call (kernel mode). Process cleanup with `process_destroy()` (frees user stack, marks PCB unused). **`runproc` command** to create and execute a test process. Shell returns properly after process execution. |
-| 24 | **Preemptive Scheduler** | ✅ Complete ⭐ NEW | Ready queue with round‑robin scheduling. `process_yield()` for voluntary context switching. `process_exit()` for clean process termination. Assembly‑level context switching (`context_switch.asm`). **`testyield` command** for testing cooperative scheduling. **`schstat` command** for scheduler statistics. `runproc` now uses the scheduler. Timer interrupt integration via IRQ0 hook channels. Forceful quantum thread slicing context rotation. Assembly register frame saving/restoration via `timer_preempt_handler`. All previous features remain fully functional. |
-| 25 | **Segment-Shifting Bootloader** | ✅ Complete ⭐ NEW | Re-engineered `stage2.asm` to read kernel sectors in isolated 128-sector chunks, incrementing segment registers dynamically to permanently break through the 64 KB wrap boundary and expand the loader ceiling safely to 128 KB. |
-| 26 | **Userland Syscall Reboot** | ✅ Complete ⭐ NEW | Implemented `SYS_REBOOT` (syscall #25) to map the unprivileged Ring 3 Userland Shell option 4 directly back into a Ring 0 hardware triple-fault motherboard reset path. |
+| 16 | **Kernel Heap Allocator** | ✅ Complete | `kmalloc()`/`kfree()` with free list, `heapstat`/`heaptest`. 64MB initial heap with automatic expansion. |
+| 17 | **User Mode (Ring 3)** | ✅ Complete | GDT with user segments (0x33 code, 0x2B data). TSS configured for stack switching. `iretq` transition. CPL=3 with page protection. |
+| 18 | **NX (No Execute) Bit Support** | ✅ Complete | PT_NX flag in `vmm.h` (bit 63). NX handling in `vmm_map_page()`. `nxtest` and `vmmtest` verify. |
+| 19 | **System Calls** | ✅ Complete | SYSCALL/SYSRET via MSRs. SYS_WRITE (#1), SYS_EXIT (#2), SYS_READ (#3), SYS_BRK (#10). `syscall` test command. **Safe user-space access via `safe_copy_from_user()`/`safe_copy_to_user()`.** |
+| 20 | **ELF Loader** | ✅ Complete ⭐ FINALIZED | Parses ELF64, maps LOAD segments with permissions, allocates user stack, transitions to Ring 3 via IRETQ, `elfload` command. Works on first boot. |
+| 21 | **Process Foundation** | ✅ Complete | PCB structure, `process_create`, `proclist`, `vmmclone`. Ready-queue infrastructure. |
+| 22 | **BootInfo Fix** | ✅ Complete | Fixed BootInfo alignment between bootloader and kernel. Magic number and version validation. |
+| 23 | **Process Stack Setup** | ✅ Complete | Static kernel stack pool. Dedicated user/kernel stacks. `process_destroy()`. `runproc` command. |
+| 24 | **Cooperative Scheduler** | ✅ Complete | Ready queue, round-robin. `process_yield()`, `process_exit()`. `context_switch.asm`. `testyield`, `schstat`. |
+| 25 | **Preemptive Scheduler** | ✅ Complete | PIT timer (100 Hz) preempts user and kernel mode. Quantum-based slicing. Timer saves/restores per-process kernel frames. |
+| 26 | **Segment-Shifting Bootloader** | ✅ Complete | `stage2.asm` reads in 128-sector chunks, advancing segment offsets. Kernel size ceiling lifted to 128 KB. |
+| 27 | **Userland Syscall Reboot** | ✅ Complete | `SYS_REBOOT` (syscall #25) maps Ring 3 shell option 4 to a Ring 0 triple-fault reboot. |
+| 28 | **Kernel-Stack-on-Syscall-Entry** | ✅ Complete ⭐ v0.4.7 | Syscall path runs on a per-process kernel stack. `g_syscall_stack_top` maintained by scheduler in lockstep with `TSS.RSP0`. |
+| 29 | **newlib 4.x Userland C Library** | ✅ Complete ⭐ v0.4.7 | `libc.a`/`libm.a` statically linked. `printf`, `malloc`/`free`, `memcpy`, `str*`, `setvbuf`, `errno`. Reentrancy initialized via `_impure_ptr = &_impure_data`. |
+| 30 | **Blocking `sys_read`** | ✅ Complete ⭐ v0.4.7 | Reads no longer spin the CPU. Process marks BLOCKED, yields via timer, woken by `irq1`. Timer skips blocked processes. |
+| 31 | **Boot-Time Shell Choice** | ✅ Complete ⭐ v0.4.7 | 2-second window at boot. `k` → kernel shell, else → user shell. Kernel shell not reachable after boot. |
+| 32 | **Userland Heap via `sys_brk`** | ✅ Complete ⭐ v0.4.7 | newlib `malloc`/`free` over `sys_brk` → page mapping. Exercised by user shell menu option 3. |
+| 33 | **`gdtdump` / `tssdump`** | ✅ Complete ⭐ v0.4.7 | On-demand kernel shell commands to inspect the GDT and TSS. |
 
 ---
 
@@ -54,26 +61,31 @@
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 27 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
-| 28 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510], HHDM mapping at PML4[256], dynamic page table allocation, `vmmtest` working, **NX bit support**, **dynamic HHDM mapping**, **page table cloning** |
-| 29 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging, integrated with QEMU |
-| 30 | **Kernel Heap** | ✅ Complete | `kmalloc()` and `kfree()` working with free list. Memory reuse verified via `heaptest`. **WRITE bit fix for heap pages.** |
-| 31 | **User Memory Mapping** | ✅ Complete | Pages mapped with PT_USER flag for user/kernel isolation |
-| 32 | **NX (No Execute) Bit** | ✅ Complete | PT_NX flag in VMM, `nxtest` command, NX status in `vmmtest`, **8KB .bss padding**, **keyboard_init() moved after memory management** |
-| 33 | **HHDM Dynamic Mapping** | ✅ Complete | `ensure_hhdm_mapped()` for on‑demand physical memory access. All physical memory mapped into HHDM region. Used by ELF loader and page table cloning. |
+| 34 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
+| 35 | **Virtual Memory Manager** | ✅ Complete | Recursive paging, HHDM, dynamic page tables, NX, dynamic HHDM mapping, page table cloning |
+| 36 | **Serial Debug Output** | ✅ Complete | COM1 serial output, integrated with QEMU |
+| 37 | **Kernel Heap** | ✅ Complete | `kmalloc()`/`kfree()` with free list. Memory reuse verified. |
+| 38 | **User Memory Mapping** | ✅ Complete | Pages mapped with PT_USER for user/kernel isolation |
+| 39 | **NX (No Execute) Bit** | ✅ Complete | PT_NX flag, `nxtest`, NX status in `vmmtest` |
+| 40 | **HHDM Dynamic Mapping** | ✅ Complete | `ensure_hhdm_mapped()` for on-demand physical memory access. Used by ELF loader and page table cloning. |
+| 41 | **`sys_brk` Heap Growth** | ✅ Complete ⭐ v0.4.7 | Per-process heap state in `current->brk_virt`. Pages mapped with `invlpg` after map. |
+
 ---
 
-## 4. User Space & Advanced Features (7/8 Complete)
+## 4. User Space & Advanced Features (9/10 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 34 | **System Calls** | ✅ Complete | SYSCALL/SYSRET with SYS_WRITE and SYS_EXIT, MSR configuration, `syscall` test command, **safe user‑space memory access** |
-| 35 | **ELF Loader** | ✅ Complete ⭐ FINALIZED | Parse and load ELF64 files, map user code and stack, transition to user mode, `elfload` command, "Hello from Userland!" tested, **works on first boot** |
-| 36 | **Process Foundation** | ✅ Complete | PCB, process creation, process listing, page table cloning, `vmmclone` command |
-| 37 | **Process Stack Setup** | ✅ Complete | Static kernel stack pool, user/kernel stack allocation, process execution, `runproc` command, process cleanup |
-| 38 | **Preemptive Scheduler** | ✅ Complete ⭐ NEW | Ready queue, round‑robin scheduling, `process_yield()`, `process_exit()`, `testyield` command, `schstat` command, PIT timer tick preemption with safe user/kernel stack boundary checks. |
-| 39 | **User-Mode Processes** | 🚧 In Progress | Page table per process, context switching running securely within Ring 3 unprivileged isolated spaces. |
-| 40 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
+| 42 | **System Calls** | ✅ Complete | SYS_WRITE, SYS_EXIT, SYS_READ, SYS_BRK, SYS_REBOOT. Safe user-space access. |
+| 43 | **ELF Loader** | ✅ Complete ⭐ FINALIZED | ELF64 parsing, user-mode transition, `elfload`. Works on first boot. |
+| 44 | **Process Foundation** | ✅ Complete | PCB, `process_create`, `proclist`, `vmmclone` |
+| 45 | **Process Stack Setup** | ✅ Complete | Static kernel stack pool, user/kernel stacks, `runproc`, `process_destroy` |
+| 46 | **Cooperative Scheduler** | ✅ Complete | Ready queue, `process_yield()`, `process_exit()`, `testyield`, `schstat` |
+| 47 | **Preemptive Scheduler** | ✅ Complete | PIT timer preemption, quantum slicing, timer-driven kernel-mode preemption |
+| 48 | **newlib Userland C Library** | ✅ Complete ⭐ v0.4.7 | Full newlib 4.x linked into user programs. Standard C available in Ring 3. |
+| 49 | **Blocking I/O** | ✅ Complete ⭐ v0.4.7 | `sys_read` on fd 0 blocks via BLOCKED + `hlt`, woken by `irq1`. |
+| 50 | **User-Mode Processes** | 🚧 In Progress | Page table per process, context switching running securely within Ring 3. Multi-process coordination (tty, focus) not yet done. |
+| 51 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
 
 ---
 
@@ -82,110 +94,109 @@
 | Phase | Completed | Total | Progress |
 |-------|-----------|-------|----------|
 | Boot & System Init | 5 | 5 | **100%** ✅ |
-| Core Kernel | 22 | 22 | **100%** ✅ |
-| Memory Management | 7 | 7 | **100%** ✅ |
-| User Space | 7 | 8 | **87%** 🚧 |
-| **Overall** | **41** | **42** | **97%** |
+| Core Kernel | 26 | 26 | **100%** ✅ |
+| Memory Management | 8 | 8 | **100%** ✅ |
+| User Space | 9 | 10 | **90%** 🚧 |
+| **Overall** | **48** | **49** | **98%** |
 
 ---
 
-## Recent Milestone Achievements (Chronological Order - Newest First)
+## Recent Milestone Achievements (Chronological Order — Newest First)
 
-### v0.4.6 — Preemptive & Unlocked Core Milestone ⭐ NEW
-- Move **Preemptive Scheduler** to 100% Complete status across all tracking layers.
-- Multi-pass segment register incrementing integrated into `stage2.asm` to expand loader boundaries to 256 sectors (128 KB kernel size capacity).
-- Added `SYS_REBOOT` (syscall #25) linking Ring 3 Userland Shell option 4 directly to safe Ring 0 triple-fault restarts.
-- Fixed string alignment layout anomalies inside `kmain.c` to bulletproof embedded `.userelf` sections.
+### v0.4.7 — newlib, Blocking I/O, Boot Choice ⭐ NEW
+- **newlib 4.x in userland**: `printf`, `malloc`/`free`, `memcpy`, `str*` work in Ring 3, statically linked against `libc.a`/`libm.a`. Reentrancy initialized via `_impure_ptr = &_impure_data`.
+- **Kernel-stack-on-syscall-entry**: syscall path runs on a per-process kernel stack (from A2, tag `20260912I`).
+- **Blocking `sys_read`**: reads no longer spin the CPU. Process marks BLOCKED, yields via timer, woken by `irq1`.
+- **Boot-time shell choice**: 2-second window, `k` for kernel shell, any other key (or timeout) for user shell.
+- **User shell is the terminal console**: kernel shell not reachable after boot.
+- **Kernel diagnostics return to the kernel shell** on exit.
+- **Userland heap test**: user shell menu option 3 exercises `malloc`/`free` over `sys_brk`.
+- **`gdtdump` / `tssdump`** kernel shell commands.
+- **`testyield` fix**: `process_yield` no longer corrupts the ready queue.
+- **TSS.RSP0 / `g_syscall_stack_top` in lockstep** from boot.
+
+### v0.4.6 — Preemptive & Unlocked Core Milestone
+- Preemptive Scheduler 100% complete.
+- Multi-pass segment register incrementing integrated into `stage2.asm` (256 sectors / 128 KB kernel size).
+- `SYS_REBOOT` (syscall #25) links Ring 3 user shell option 4 to a safe Ring 0 triple-fault restart.
+- String alignment layout anomalies inside `kmain.c` fixed for embedded `.userelf` sections.
 
 ### v0.4.5 — Cooperative Scheduler
-- Ready queue with round‑robin scheduling
-- `process_yield()` for voluntary context switching
-- `process_exit()` for clean process termination
-- Assembly‑level context switching (`context_switch.asm`)
-- **`testyield` command** to test cooperative scheduling
-- **`schstat` command** to show scheduler statistics
-- `runproc` now uses the scheduler
-- All previous features (`proclist`, `proccreate`, `vmmclone`, `elfload`) remain fully functional
-- Known limitation: All processes run in kernel mode (ring0)
+- Ready queue with round-robin scheduling.
+- `process_yield()` for voluntary context switching.
+- `process_exit()` for clean process termination.
+- Assembly-level context switching (`context_switch.asm`).
+- **`testyield` command** to test cooperative scheduling.
+- **`schstat` command** for scheduler statistics.
+- `runproc` now uses the scheduler.
+- Known limitation: All processes ran in kernel mode (Ring 0) at this stage.
 
 ### v0.4.4 — Process Stack Setup
-- Static kernel stack pool for processes (eliminates PMM corruption)
-- Process creation with dedicated user and kernel stacks
-- Process execution via direct function call (kernel mode)
-- Process cleanup with `process_destroy()` (frees user stack, marks PCB unused)
-- **`runproc` command** to create and execute a test process
-- Shell returns properly after process execution
-- All previous features (`proclist`, `proccreate`, `vmmclone`, `elfload`) remain fully functional
+- Static kernel stack pool for processes (eliminates PMM corruption).
+- Process creation with dedicated user and kernel stacks.
+- Process execution via direct function call (kernel mode).
+- Process cleanup with `process_destroy()` (frees user stack, marks PCB unused).
+- **`runproc` command** to create and execute a test process.
 
 ### v0.4.3 — ELF Loader Stabilized + Process Foundation
-- ELF loader works on **first boot** (no more "run twice" bug)
-- Bootloader identity‑mapping conflict resolved (detect and replace with proper user‑mode PTEs)
-- Safe HHDM‑based user‑space memory access in syscall handler (`safe_copy_from_user`)
-- **Process Foundation:** PCB, `process_create()`, `proclist`, `proccreate`, `vmmclone` (page table cloning)
-- **Dynamic HHDM mapping:** `ensure_hhdm_mapped()`
-- **BootInfo validation:** Magic number and version checking
-- Removed redundant `simple` command
-- All existing commands remain fully functional
+- ELF loader works on **first boot** (no more "run twice" bug).
+- Bootloader identity-mapping conflict resolved.
+- Safe HHDM-based user-space memory access in syscall handler (`safe_copy_from_user`).
+- **Process Foundation:** PCB, `process_create()`, `proclist`, `proccreate`, `vmmclone`.
+- **Dynamic HHDM mapping:** `ensure_hhdm_mapped()`.
+- **BootInfo validation:** magic number and version checking.
 
 ### v0.4.2 — STAR MSR Fix
-- Fixed IA32_STAR MSR configuration for SYSCALL/SYSRET
-- User CS = 0x30 → STAR[15:0] = 0x20
-- Enabled clean SYSRET return path
+- Fixed IA32_STAR MSR configuration for SYSCALL/SYSRET.
+- User CS = 0x30 → STAR[15:0] = 0x20.
+- Enabled clean SYSRET return path.
 
 ### v0.4.1 — Syscall Stack Stability
-- Unified kernel stack model  
-- Correct SYSRET return path  
-- Clean user → kernel → shell transitions  
-- Verified ELF loader return path  
-- Removed `simple` command (redundant)  
-- `user` and `user2` retained as placeholders  
+- Unified kernel stack model.
+- Correct SYSRET return path.
+- Clean user → kernel → shell transitions.
+- Verified ELF loader return path.
 
 ### v0.4.0 — ELF Loader
-- Fully functional ELF64 loader  
-- Correct user permissions  
-- User stack allocation  
-- IRETQ transition  
-- `elfload` command  
-- "Hello from Userland!" verified  
-- Page table execute permissions at all levels  
-- Serial output verified  
+- Fully functional ELF64 loader.
+- Correct user permissions.
+- User stack allocation.
+- IRETQ transition.
+- `elfload` command.
+- "Hello from Userland!" verified.
 
 ### v0.3.2 — System Calls
-- SYSCALL/SYSRET MSR setup  
-- SYS_WRITE + SYS_EXIT  
-- Full x86_64 syscall ABI  
-- Register preservation  
-- `syscall` test command  
+- SYSCALL/SYSRET MSR setup.
+- SYS_WRITE + SYS_EXIT.
+- Full x86_64 syscall ABI.
+- Register preservation.
+- `syscall` test command.
 
 ### v0.3.1 — NX Bit Support
-- PT_NX flag  
-- NX handling in VMM  
-- `nxtest` command  
-- Heap WRITE bit fix  
-- Keyboard buffer corruption resolved  
+- PT_NX flag.
+- NX handling in VMM.
+- `nxtest` command.
+- Heap WRITE bit fix.
+- Keyboard buffer corruption resolved.
 
 ### v0.3.0 — User Mode (Ring 3)
-- GDT user segments  
-- TSS stack switching  
-- IRETQ transition  
-- PT_USER mapping  
-- `create_user_process()`  
-- Test commands: simple, user, user2 (historical)
-
----
-
-### Previous Tags
-*(unchanged — historical accuracy preserved)*
+- GDT user segments.
+- TSS stack switching.
+- IRETQ transition.
+- PT_USER mapping.
+- `create_user_process()`.
 
 ---
 
 ## Next Steps (Recommended Order)
 
-1. **Permanent Storage Layer** — FatFs source inclusion, IDE/ATA PIO disk sector read/write hooks
-2. **User-Mode Processes** — Run processes in ring3 with full privilege separation
-3. **Ring0 Kernel Threads** — Kernel daemons, system services
-4. **Framebuffer Graphics** — Move from VGA text mode to graphics
-5. **File System** — Virtual File System (VFS) layer
+1. **Permanent Storage Layer** — FatFs source inclusion, IDE/ATA PIO disk sector read/write hooks.
+2. **User-Mode Processes (full)** — Run processes in Ring 3 with full privilege separation and per-process tty / focus so multiple shells can coexist.
+3. **Kernel-Shell Re-Entry** — a way to reach the kernel shell after boot without a full reboot (serial console or a gated debug flag).
+4. **Process Cleanup on Exit** — reclaim PCBs in `process_exit` so diagnostics don't leak.
+5. **Ring0 Kernel Threads** — Kernel daemons, system services.
+6. **Framebuffer Graphics** — Move from VGA text mode to graphics.
+7. **File System** — VFS layer, starting with FAT.
 
 ---
 
