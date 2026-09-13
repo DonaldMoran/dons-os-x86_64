@@ -2,6 +2,10 @@
 #include "include/serial.h"
 #include "include/vga.h"
 
+#define KERNEL_BASE 0xFFFFFFFF80000000ULL
+
+extern void kmain_shell_loop(void);
+
 static pcb_t* ready_queue_head = NULL;
 static pcb_t* ready_queue_tail = NULL;
 static pcb_t* current_process = NULL;
@@ -98,13 +102,27 @@ void __attribute__((noreturn)) process_exit(void) {
 
     pcb_t* next = scheduler_ready_queue_next();
     if (!next) {
-        /* No runnable process. In a real OS this is the "init died"
-           condition: the system has nothing left to do. Halt the CPU.
-           There is deliberately no fallback to a kernel-mode shell —
-           the kernel console must not be reachable after boot. */
+        /* Nothing else runnable. Two cases:
+           - exiting is a kernel process (diagnostic like runproc or
+             testyield): return to the kernel shell so the operator
+             can run more diagnostics.
+           - exiting is a user process (the user shell): halt. The
+             user shell is the terminal interactive console; there is
+             no kernel shell to fall back to by design. */
         scheduler_reset();
         extern void tss_set_syscall_stack(uint64_t stack);
         tss_set_syscall_stack(0);
+
+        if (exiting->entry_point >= KERNEL_BASE) {
+            __asm__ volatile(
+                "mov $0xFFFFFFFF8008FF00, %%rsp\n"
+                "jmp *%0\n"
+                : : "r"(kmain_shell_loop)
+                : "memory"
+            );
+            /* not reached */
+        }
+
         serial_print("process_exit: no runnable process, halting\n");
         __asm__ volatile("cli");
         while (1) __asm__ volatile("hlt");
@@ -115,7 +133,7 @@ void __attribute__((noreturn)) process_exit(void) {
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
 
-    if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
+    if (next->entry_point != 0 && next->entry_point < KERNEL_BASE) {
         extern void tss_set_kernel_stack(uint64_t stack);
         extern void tss_set_syscall_stack(uint64_t stack);
         tss_set_kernel_stack(next->kernel_stack_top);
@@ -154,7 +172,7 @@ void scheduler_switch_to(pcb_t* next) {
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
 
-    if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
+    if (next->entry_point != 0 && next->entry_point < KERNEL_BASE) {
         extern void tss_set_kernel_stack(uint64_t stack);
         extern void tss_set_syscall_stack(uint64_t stack);
         tss_set_kernel_stack(next->kernel_stack_top);
