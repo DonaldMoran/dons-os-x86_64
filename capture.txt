@@ -115,11 +115,10 @@ make -C 05_boot_kernel64 run
 make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/05_boot_kernel64'
 qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -monitor none
 BootInfo validated successfully
-TIMER[1] frame=FFFFFFFF8008FF20 cs=18 ss=10 rip=FFFFFFFF8010486E rsp=FFFFFFFF8008FFC0 rflags=10207 cur=NULL
+TIMER[1] frame=FFFFFFFF8008FF20 cs=18 ss=10 rip=FFFFFFFF8010488E rsp=FFFFFFFF8008FFC0 rflags=10207 cur=NULL
 PMM: init OK, free=32448 pages (126 MB)
 VMM: init OK, 127 MB usable, max phys 0x7FE0000
-HEAP: init OK, TIMER[2] frame=FFFFFFFF8008FF10 cs=18 ss=10 rip=FFFFFFFF80103C0A rsp=FFFFFFFF8008FFB0 rflags=10246 cur=NULL
-1024 KB
+HEAP: init OK, 1024 KB
 PROCESS: init OK, 1 process(es)
 GDT: User segments fixed for Ring 3
 TSS: TR loaded correctly (0x38)
@@ -127,21 +126,49 @@ CPU: x86_64 FSGSBASE instructions successfully enabled for Ring 3.
 SYSCALL init done
 **RING** 3 syscalls Initialized
 CPU: Native hardware SSE vector extensions safely enabled.
+TIMER[2] frame=FFFFFFFF8008FF00 cs=18 ss=20 rip=FFFFFFFF80104FD9 rsp=FFFFFFFF8008FFA8 rflags=10246 cur=1
 Kernel: boot choice (k=kernel shell, else user shell)
-TIMER[3] frame=FFFFFFFF8008FF30 cs=18 ss=20 rip=FFFFFFFF80101F4D rsp=FFFFFFFF8008FFD0 rflags=10246 cur=1
+TIMER[3] frame=FFFFFFFF8008FF30 cs=18 ss=20 rip=FFFFFFFF80101F6D rsp=FFFFFFFF8008FFD0 rflags=10246 cur=1
 Kernel: entering kernel shell (debug)
-Hello from process!
- 
 
 --- Cooperative Task Yield Test ---
   1. Spawning thread: test1...
   2. Spawning thread: test2...
   3. Switching context execution...
+SWITCH prev=1 next=2 next->rsp=0xFFFFFFFF80279280 next->rip=0xFFFFFFFF801000D0 next->entry=0xFFFFFFFF801000D0
+PROC1 entered
 Process 1: iteration 0
+PYIELD pid=2 state=2
+SWITCH prev=2 next=3 next->rsp=0xFFFFFFFF8027D280 next->rip=0xFFFFFFFF80100250 next->entry=0xFFFFFFFF80100250
+PROC2 entered
+Process 2: iteration 0
+PYIELD pid=3 state=2
+SWITCH prev=3 next=2 next->rsp=0xFFFFFFFF80279230 next->rip=0xFFFFFFFF801000D0 next->entry=0xFFFFFFFF801000D0
 Process 1: iteration 1
+PYIELD pid=2 state=2
+SWITCH prev=2 next=3 next->rsp=0xFFFFFFFF8027D230 next->rip=0xFFFFFFFF80100250 next->entry=0xFFFFFFFF80100250
+Process 2: iteration 1
+PYIELD pid=3 state=2
+SWITCH prev=3 next=2 next->rsp=0xFFFFFFFF80279230 next->rip=0xFFFFFFFF801000D0 next->entry=0xFFFFFFFF801000D0
 Process 1: iteration 2
+PYIELD pid=2 state=2
+SWITCH prev=2 next=3 next->rsp=0xFFFFFFFF8027D230 next->rip=0xFFFFFFFF80100250 next->entry=0xFFFFFFFF80100250
+Process 2: iteration 2
+PYIELD pid=3 state=2
+SWITCH prev=3 next=2 next->rsp=0xFFFFFFFF80279230 next->rip=0xFFFFFFFF801000D0 next->entry=0xFFFFFFFF801000D0
 Process 1: iteration 3
+PYIELD pid=2 state=2
+SWITCH prev=2 next=3 next->rsp=0xFFFFFFFF8027D230 next->rip=0xFFFFFFFF80100250 next->entry=0xFFFFFFFF80100250
+Process 2: iteration 3
+PYIELD pid=3 state=2
+SWITCH prev=3 next=2 next->rsp=0xFFFFFFFF80279230 next->rip=0xFFFFFFFF801000D0 next->entry=0xFFFFFFFF801000D0
 Process 1: iteration 4
+PYIELD pid=2 state=2
+SWITCH prev=2 next=3 next->rsp=0xFFFFFFFF8027D230 next->rip=0xFFFFFFFF80100250 next->entry=0xFFFFFFFF80100250
+Process 2: iteration 4
+PYIELD pid=3 state=2
+SWITCH prev=3 next=2 next->rsp=0xFFFFFFFF80279230 next->rip=0xFFFFFFFF801000D0 next->entry=0xFFFFFFFF801000D0
+SWITCH prev=NULL next=4 next->rsp=0xFFFFFFFF80281280 next->rip=0x8000000000 next->entry=0x8000000000
 
 ========================================
    DonsDOS Native Newlib 4.x User Shell
@@ -151,8 +178,6 @@ Select option node:
   1. Print a message via printf
   2. Exit Runtime Environment
 
-] 
-[SUCCESS] printf works in ring 3!
 ] 
 [SUCCESS] printf works in ring 3!
 ] 

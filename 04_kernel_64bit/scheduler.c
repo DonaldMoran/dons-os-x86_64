@@ -39,6 +39,14 @@ void scheduler_ready_queue_add(pcb_t* process) {
 void scheduler_ready_queue_remove(pcb_t* process) {
     if (!process) return;
 
+    /* Defensive: if the process has no prev and no next and is not
+       the head, it is not on the queue. Removing it would set
+       ready_queue_head = process->next = NULL and corrupt the
+       queue. */
+    if (!process->prev && !process->next && ready_queue_head != process) {
+        return;
+    }
+
     if (process->prev) {
         process->prev->next = process->next;
     } else {
@@ -178,7 +186,7 @@ void scheduler_switch_to(pcb_t* next) {
         tss_set_kernel_stack(next->kernel_stack_top);
         tss_set_syscall_stack(next->kernel_stack_top);
     }
-
+    
     context_switch(prev, next);
 }
 
@@ -205,8 +213,13 @@ void process_yield(void) {
     yield_count++;
 
     if (current_process->state == PROC_STATE_RUNNING) {
+        /* The current process is RUNNING, so it is NOT on the ready
+           queue (scheduler_switch_to removed it when it switched to
+           it). Do not call scheduler_ready_queue_remove: on an
+           off-queue process, its prev/next links are NULL, so remove
+           would set ready_queue_head = NULL and corrupt the queue.
+           Just add it to the tail. */
         current_process->state = PROC_STATE_READY;
-        scheduler_ready_queue_remove(current_process);
         scheduler_ready_queue_add(current_process);
     }
 
