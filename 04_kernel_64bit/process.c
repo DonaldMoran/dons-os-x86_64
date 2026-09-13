@@ -244,12 +244,8 @@ pcb_t* process_find_by_pid(uint64_t pid) {
 
 void process_wake_all_blocked(void) {
     /* Move every BLOCKED process back to READY and onto the ready
-       queue. Intended to be called from irq1_handler when a key
-       arrives. Does not switch; the timer picks the woken process
-       up on the next tick.
-
-       Currently unused: nothing sets PROC_STATE_BLOCKED yet. When
-       sys_read starts blocking, this is the wake path. */
+       queue. Called from irq1_handler when a key arrives. Does not
+       switch; the timer picks the woken process up on the next tick. */
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (pcb_pool[i].state == PROC_STATE_BLOCKED) {
             pcb_pool[i].state = PROC_STATE_READY;
@@ -369,6 +365,32 @@ void process_cleanup_elf_pages(pcb_t* pcb) {
     kfree(pcb->elf_page_list);
     pcb->elf_page_list = NULL;
     pcb->elf_num_pages = 0;
+}
+
+/* Reclaim an exited process's resources so its PCB slot can be
+   reused. Called from process_exit in scheduler.c, in the context of
+   the exiting process, before the scheduler switches away.
+
+   Frees the process's ELF segment pages and user stack pages, and
+   the elf_page_list array itself. Does NOT free the page tables
+   (cr3); that teardown is deferred, because it requires walking the
+   page tables and freeing the user-space portion without touching
+   shared kernel mappings. The page-table leak is a few pages per
+   process; the PCB slot is the resource that actually runs out
+   (32 total).
+
+   Does not remove the process from the ready queue or clear
+   current_process; the caller (process_exit) already did those
+   before calling here. */
+void process_reclaim(pcb_t* pcb) {
+    if (!pcb) return;
+    if (pcb->state == PROC_STATE_UNUSED) return;
+
+    process_cleanup_elf_pages(pcb);
+    pcb->user_stack_phys = 0;
+    pcb->state = PROC_STATE_UNUSED;
+    pcb->pid = 0;
+    process_count--;
 }
 
 void process_destroy(pcb_t* pcb) {

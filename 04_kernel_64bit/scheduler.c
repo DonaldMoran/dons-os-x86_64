@@ -99,14 +99,45 @@ void __attribute__((noreturn)) process_exit(void) {
         while(1) asm volatile("hlt");
     }
 
+    /* Disable interrupts for the entire exit sequence. The timer
+       must not fire between the first state mutation and the
+       context_switch:
+
+         - Between scheduler_ready_queue_remove and setting state to
+           TERMINATED, the timer's early check
+           (current->state == PROC_STATE_TERMINATED) would not fire,
+           and the timer could re-add the exiting process to the
+           ready queue.
+
+         - After current_process = next but before context_switch
+           switches stacks, the timer would see current = next and
+           save the *current* stack frame (which is still on the
+           exiting process's stack) into next->rsp. That corrupts
+           next's resume frame with a pointer into a stack that may
+           soon be reused.
+
+       Interrupts are re-enabled by the iretq in context_switch,
+       which restores RFLAGS (IF=1) from the resumed process's
+       frame. In the no-runnable-process fallback, we explicitly
+       sti before jumping to the kernel shell, since the shell
+       expects to run with interrupts on. */
+    __asm__ volatile("cli");
+
     pcb_t* exiting = current_process;
 
-    scheduler_ready_queue_remove(exiting);
     exiting->state = PROC_STATE_TERMINATED;
+    scheduler_ready_queue_remove(exiting);
 
     if (process_get_current() == exiting) {
         process_set_current(NULL);
     }
+
+    /* Reclaim the exiting process's resources so its PCB slot can be
+       reused by a future process_create. This must happen before we
+       switch away, while the exiting process's context is still
+       current. Page tables (cr3) are not freed here; that teardown
+       is deferred. */
+    process_reclaim(exiting);
 
     pcb_t* next = scheduler_ready_queue_next();
     if (!next) {
@@ -123,6 +154,7 @@ void __attribute__((noreturn)) process_exit(void) {
 
         if (exiting->entry_point >= KERNEL_BASE) {
             __asm__ volatile(
+                "sti\n"
                 "mov $0xFFFFFFFF8008FF00, %%rsp\n"
                 "jmp *%0\n"
                 : : "r"(kmain_shell_loop)
