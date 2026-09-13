@@ -882,7 +882,37 @@ void kmain(BootInfo *info) {
     vga_print("CPU: Native hardware SSE vector extensions safely enabled.\n");
 
     vga_clear();
-    
-    serial_print("Kernel: entering shell loop\n");
-    kmain_shell_loop();
+
+    serial_print("Kernel: launching user shell\n");
+
+    /* Post-boot: the only interactive console is the user shell. The
+       kernel shell (kmain_shell_loop) is a boot-time diagnostic and
+       must not be reachable after boot. Create the user shell process
+       and drop into idle; the scheduler will run the shell. If the
+       shell exits, process_exit halts the CPU — there is no fallback
+       to kernel-mode input. */
+
+    if (build_user_shell_elf_len == 0) {
+        serial_print("PANIC: no user shell image embedded\n");
+        while (1) __asm__ volatile("hlt");
+    }
+
+    pcb_t* shell = process_create("usershell", 0x8000000000ULL, 0);
+    if (!shell) {
+        serial_print("PANIC: could not create user shell process\n");
+        while (1) __asm__ volatile("hlt");
+    }
+
+    extern uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data);
+    uint64_t shell_entry = elf_load_into_process(shell, build_user_shell_elf);
+    if (shell_entry == 0) {
+        serial_print("PANIC: user shell ELF load failed\n");
+        while (1) __asm__ volatile("hlt");
+    }
+    shell->entry_point = shell_entry;
+
+    /* shell is already on the ready queue (process_create added it).
+       Fall into the idle loop; the timer will pick the shell up. */
+    kernel_idle_loop();
+    /* not reached */
 }

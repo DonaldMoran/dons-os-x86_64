@@ -10,7 +10,6 @@ static uint64_t schedule_count = 0;
 static uint64_t yield_count = 0;
 
 extern void context_switch(pcb_t* prev, pcb_t* next);
-extern void kmain_shell_loop(void);
 
 pcb_t* scheduler_ready_queue_peek_next(void) {
     return ready_queue_head;
@@ -99,17 +98,16 @@ void __attribute__((noreturn)) process_exit(void) {
 
     pcb_t* next = scheduler_ready_queue_next();
     if (!next) {
+        /* No runnable process. In a real OS this is the "init died"
+           condition: the system has nothing left to do. Halt the CPU.
+           There is deliberately no fallback to a kernel-mode shell —
+           the kernel console must not be reachable after boot. */
         scheduler_reset();
         extern void tss_set_syscall_stack(uint64_t stack);
         tss_set_syscall_stack(0);
-
-        __asm__ volatile (
-            "mov $0xFFFFFFFF8008FF00, %%rsp\n"
-            "jmp *%0\n"
-            : : "r"(kmain_shell_loop)
-            : "memory"
-        );
-        while(1) asm volatile("hlt");
+        serial_print("process_exit: no runnable process, halting\n");
+        __asm__ volatile("cli");
+        while (1) __asm__ volatile("hlt");
     }
 
     current_process = next;
@@ -128,7 +126,6 @@ void __attribute__((noreturn)) process_exit(void) {
 
     while(1) asm volatile("hlt");
 }
-
 
 void scheduler_switch_to(pcb_t* next) {
     if (!next) return;

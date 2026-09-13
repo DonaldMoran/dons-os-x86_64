@@ -82,5 +82,6 @@ void process_start(pcb_t* process);
 void process_destroy(pcb_t* process);
 void process_cleanup_elf_pages(pcb_t* pcb);
 void process_exit(void) __attribute__((noreturn));
+void kernel_idle_loop(void);
 
 #endif

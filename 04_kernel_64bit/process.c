@@ -43,6 +43,13 @@ void process_init(void) {
            this global is what user_syscall_entry.asm reads. */
         extern void tss_set_syscall_stack(uint64_t stack);
         tss_set_syscall_stack(idle->kernel_stack_top);
+
+        /* Remove idle from the ready queue. Idle is the fallback
+           process that process_find_by_pid(1) returns when nothing
+           else is runnable. If it stayed on the queue, it would sit
+           at the head and prevent any other process from being
+           scheduled. */
+        scheduler_ready_queue_remove(idle);
     }
 
     serial_print("PROCESS: init OK, ");
@@ -161,13 +168,29 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
         ensure_hhdm_mapped(pcb->user_stack_phys);
     }
 
+    /* Build the initial resume frame at kernel_stack_top, in the same
+       low -> high order irq0_stub / .kernel_task pop:
+           r15 r14 r13 r12 r11 r10 r9 r8 rbp rdi rsi rdx rcx rbx rax
+           rip cs rflags rsp ss
+       Mode determines CS/SS/RSP: a kernel process (idle) uses kernel
+       selectors and its kernel stack; a user process uses user
+       selectors and user_stack_top. This frame is what irq0_stub
+       iretqs through when the timer first picks the process up, so it
+       must already be the frame for the mode the process will run in. */
     uint64_t* stack_ptr = (uint64_t*)pcb->kernel_stack_top;
+    int is_user = (entry_point != 0 && entry_point < KERNEL_BASE);
 
-    stack_ptr--; *stack_ptr = 0x20;
-    stack_ptr--; *stack_ptr = pcb->kernel_stack_top;
-    stack_ptr--; *stack_ptr = 0x202;
-    stack_ptr--; *stack_ptr = 0x18;
-    stack_ptr--; *stack_ptr = entry_point;
+    uint64_t frame_ss    = is_user ? 0x2BULL : 0x20ULL;
+    uint64_t frame_rsp   = is_user ? pcb->user_stack_top : pcb->kernel_stack_top;
+    uint64_t frame_flags = 0x202ULL;
+    uint64_t frame_cs    = is_user ? 0x33ULL : 0x18ULL;
+    uint64_t frame_rip   = entry_point;
+
+    stack_ptr--; *stack_ptr = frame_ss;
+    stack_ptr--; *stack_ptr = frame_rsp;
+    stack_ptr--; *stack_ptr = frame_flags;
+    stack_ptr--; *stack_ptr = frame_cs;
+    stack_ptr--; *stack_ptr = frame_rip;
 
     stack_ptr--; *stack_ptr = 0; // rax
     stack_ptr--; *stack_ptr = 0; // rbx

@@ -417,3 +417,9 @@ Ground rules that worked
   address the timer is about to consume, and compare against the
   expected layout. That single diagnostic ended several rounds of
   guessing in the previous session.
+
+
+---
+
+git reset --hard 20260913A
+git clean -fdX
