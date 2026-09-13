@@ -100,10 +100,6 @@ void __attribute__((noreturn)) process_exit(void) {
     pcb_t* next = scheduler_ready_queue_next();
     if (!next) {
         scheduler_reset();
-        /* No runnable process. Clear the syscall stack top so a stray
-           syscall would fault loudly instead of silently using a stale
-           stack. The shell loop is entered via a raw jump below; it is
-           a kernel thread and does not go through user_syscall_entry. */
         extern void tss_set_syscall_stack(uint64_t stack);
         tss_set_syscall_stack(0);
 
@@ -121,8 +117,6 @@ void __attribute__((noreturn)) process_exit(void) {
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
 
-    /* Keep TSS.RSP0 and the syscall entry stack top in lockstep. Both
-       must point at the incoming process's kernel stack. */
     if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
         extern void tss_set_kernel_stack(uint64_t stack);
         extern void tss_set_syscall_stack(uint64_t stack);
@@ -140,7 +134,8 @@ void scheduler_switch_to(pcb_t* next) {
     if (!next) return;
     if (next == current_process) return;
 
-    if (next->pid == 1) {
+    if (next->pid == 1 && current_process &&
+        current_process->state == PROC_STATE_RUNNING) {
         return;
     }
 
@@ -148,25 +143,20 @@ void scheduler_switch_to(pcb_t* next) {
     current_process = next;
     process_set_current(next);
 
-    scheduler_ready_queue_remove(next);
+    if (next->pid != 1) {
+        scheduler_ready_queue_remove(next);
+    }
 
-    if (prev && prev->state != PROC_STATE_TERMINATED) {
+    if (prev && prev->state == PROC_STATE_RUNNING) {
         prev->state = PROC_STATE_READY;
-        /* Idle (pid=1) is the fallback process and is already on the
-           ready queue (it was placed there by process_create at boot).
-           Re-adding it here would create a self-cycle in the doubly-linked
-           list, corrupting the queue and orphaning every other task.
-           Skip the add for idle; the timer path already follows this
-           convention with its own `current->pid != 1` check. */
         if (prev->pid != 1) {
             scheduler_ready_queue_add(prev);
         }
     }
+
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
 
-    /* Keep TSS.RSP0 and the syscall entry stack top in lockstep. Both
-       must point at the incoming process's kernel stack. */
     if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
         extern void tss_set_kernel_stack(uint64_t stack);
         extern void tss_set_syscall_stack(uint64_t stack);
@@ -211,7 +201,8 @@ void process_yield(void) {
             scheduler_ready_queue_add(current_process);
             next = current_process;
         } else {
-            return;
+            next = process_find_by_pid(1);
+            if (!next) return;
         }
     }
 

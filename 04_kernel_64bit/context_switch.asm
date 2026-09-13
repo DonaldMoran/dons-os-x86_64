@@ -13,6 +13,9 @@ global context_switch
 ;   rbp = 0xd0, rdi = 0xd8, rsi = 0xe0, rdx = 0xe8
 ;   rcx = 0xf0, rbx = 0xf8, rax = 0x100
 ;   rsp = 0x108, rip = 0x110
+;   block_kind       = 0x150
+
+%define KERNEL_BASE 0xFFFFFFFF80000000
 
 ; void context_switch(pcb_t* prev, pcb_t* next)
 context_switch:
@@ -31,40 +34,86 @@ context_switch:
     ; r15 = prev (scratch; real r15 value is reloaded from PCB slot).
     mov r15, rdi
 
-    ; --- Build a timer-compatible frame for prev on the current stack ---
-    ; iretq portion (SS, RSP, RFLAGS, CS, RIP)
-    push qword 0x20                     ; SS
-    push qword [r15 + 0x108]            ; RSP (prev's last saved kernel RSP; may be 0 for first save)
-    push qword 0x202                    ; RFLAGS
-    push qword 0x18                     ; CS
+    ; Decide which save path: ring-0 or user.
+    ; Primary signal: prev->block_kind. A blocking syscall sets this
+    ; before yielding, because prev->rip still holds the process's last
+    ; user-mode RIP at that point and cannot distinguish "blocked in
+    ; kernel" from "preempted from user mode".
+    ; Secondary signal (block_kind == 0): prev->rip >= KERNEL_BASE.
+    mov rax, [r15 + 0x150]              ; prev->block_kind
+    test rax, rax
+    jnz .ring0_save
+
+    mov rax, [r15 + 0x110]              ; prev->rip
+    cmp rax, KERNEL_BASE
+    jae .ring0_save
+
+    ; --- USER-PREEMPTED SAVE PATH ---
+    push qword 0x20                     ; SS       [0x98]
+    push qword [r15 + 0x108]            ; RSP      [0x90]
+    push qword 0x202                    ; RFLAGS   [0x88]
+    push qword 0x18                     ; CS       [0x80]
     mov rax, [r15 + 0x110]              ; prev->rip
     test rax, rax
     jnz .have_rip
     mov rax, [r15 + 0x38]               ; fall back to entry_point
 .have_rip:
-    push rax                            ; RIP
+    push rax                            ; RIP      [0x78]
 
-    ; 15 GPRs in irq0_stub order
-    push qword [r15 + 0x090]
-    push qword [r15 + 0x098]
-    push qword [r15 + 0x0A0]
-    push qword [r15 + 0x0A8]
-    push qword [r15 + 0x0B0]
-    push qword [r15 + 0x0B8]
-    push qword [r15 + 0x0C0]
-    push qword [r15 + 0x0C8]
-    push qword [r15 + 0x0D0]
-    push qword [r15 + 0x0D8]
-    push qword [r15 + 0x0E0]
-    push qword [r15 + 0x0E8]
-    push qword [r15 + 0x0F0]
-    push qword [r15 + 0x0F8]
-    push qword [r15 + 0x100]
+    push qword [r15 + 0x100]            ; rax      [0x70]
+    push qword [r15 + 0x0F8]            ; rbx      [0x68]
+    push qword [r15 + 0x0F0]            ; rcx      [0x60]
+    push qword [r15 + 0x0E8]            ; rdx      [0x58]
+    push qword [r15 + 0x0E0]            ; rsi      [0x50]
+    push qword [r15 + 0x0D8]            ; rdi      [0x48]
+    push qword [r15 + 0x0D0]            ; rbp      [0x40]
+    push qword [r15 + 0x0C8]            ; r8       [0x38]
+    push qword [r15 + 0x0C0]            ; r9       [0x30]
+    push qword [r15 + 0x0B8]            ; r10      [0x28]
+    push qword [r15 + 0x0B0]            ; r11      [0x20]
+    push qword [r15 + 0x0A8]            ; r12      [0x18]
+    push qword [r15 + 0x0A0]            ; r13      [0x10]
+    push qword [r15 + 0x098]            ; r14      [0x08]
+    push qword [r15 + 0x090]            ; r15      [0x00]
 
     mov [r15 + 0x108], rsp              ; prev->rsp = frame base
-
     mov rax, cr3
     mov [r15 + 0x30], rax
+    jmp .skip_save
+
+    ; --- RING-0 SAVE PATH ---
+.ring0_save:
+    mov rax, [rsp + 48]                 ; caller's return address = kernel RIP
+    push rax                            ; temp0 (RIP)  @ [rsp+0]
+    lea rax, [rsp + 64]                 ; caller's RSP = orig_rsp + 56
+    push rax                            ; temp1 (RSP)  @ [rsp+0], temp0 @ [rsp+8]
+
+    push qword 0x20                     ; SS       [0x98]
+    push qword [rsp + 8]                ; RSP      [0x90]  <- temp1
+    push qword 0x202                    ; RFLAGS   [0x88]
+    push qword 0x18                     ; CS       [0x80]
+    push qword [rsp + 40]               ; RIP      [0x78]  <- temp0
+
+    push qword [r15 + 0x100]            ; rax      [0x70]
+    push qword [r15 + 0x0F8]            ; rbx      [0x68]
+    push qword [r15 + 0x0F0]            ; rcx      [0x60]
+    push qword [r15 + 0x0E8]            ; rdx      [0x58]
+    push qword [r15 + 0x0E0]            ; rsi      [0x50]
+    push qword [r15 + 0x0D8]            ; rdi      [0x48]
+    push qword [r15 + 0x0D0]            ; rbp      [0x40]
+    push qword [r15 + 0x0C8]            ; r8       [0x38]
+    push qword [r15 + 0x0C0]            ; r9       [0x30]
+    push qword [r15 + 0x0B8]            ; r10      [0x28]
+    push qword [r15 + 0x0B0]            ; r11      [0x20]
+    push qword [r15 + 0x0A8]            ; r12      [0x18]
+    push qword [r15 + 0x0A0]            ; r13      [0x10]
+    push qword [r15 + 0x098]            ; r14      [0x08]
+    push qword [r15 + 0x090]            ; r15      [0x00]
+
+    mov [r15 + 0x108], rsp              ; prev->rsp = frame base
+    mov rax, cr3
+    mov [r15 + 0x30], rax
+    ; fall through to .skip_save
 
 .skip_save:
     test r12, r12
@@ -114,7 +163,6 @@ context_switch:
     iretq
 
 .kernel_task:
-    ; --- Kernel task: resume the frame that was saved (or pre-built). ---
     mov rsp, [r12 + 0x108]
     pop r15
     pop r14

@@ -217,3 +217,203 @@ Tell me (the new session's assistant):
 If you want to start with A (kernel-stack-on-syscall-entry), paste: user_syscall_entry.asm, interrupts.c, isr.asm, process.c, include/process.h, tss.c, tss.h, scheduler.c, user_syscall.c.
 
 If you want to start with B (malloc from userland), paste: userland/newlib/arc2/syscalls.c, userland/newlib/apps/user_shell.c, user_syscall.c (kernel side), and any userland/newlib/user_newlib_linker.ld if allocation addresses matter.
+
+
+
+
+
+
+
+
+
+
+
+** **************************************************************************
+
+I think i did A and now working on C not sure???
+
+Handoff: DonsDOS — blocking reads and multi-shell support
+
+Resume from tag 20260912I. The working tree is clean and checked out
+at that tag. Do not assume anything from any prior session; this
+document is the only context you need.
+
+Repository layout
+
+    Kernel: 04_kernel_64bit/
+    Userland (newlib): 04_kernel_64bit/userland/newlib/
+    Boot chain: 01_boot_16bit/, 02_boot_32bit/, 03_boot_64bit/,
+                05_boot_kernel64/
+    Kernel builds with clang (-mcmodel=kernel -fno-pic -mno-red-zone
+    -mno-sse -mno-sse2 -mno-avx -mno-mmx)
+    Userland builds with gcc (-mcmodel=large -mno-red-zone ...)
+
+What the tag 20260912I contains
+
+Boot to interactive kernel shell, preemptive multitasking, ring 3
+userland via usershell, newlib reentrancy, all kernel shell commands,
+clean usershell operation. sys_read blocks the CPU via sti; hlt when
+the kbd buffer is empty. That is the limitation this session is here
+to fix.
+
+The requirement
+
+DonsDOS must support multiple concurrent user shells, each running
+as an ordinary user process. A shell blocked in read() waiting for
+keyboard input must not prevent any other process from running, and
+must not prevent idle from halting the CPU. When a key arrives, the
+blocked shell wakes and consumes the byte. This must work for N
+shells, not just one.
+
+Falling out of that:
+  - A shell can exit. When it does, it is terminated and its
+    resources reclaimed. The machine keeps running because idle is
+    always runnable.
+  - Any user process, not just a shell, can block in read() and be
+    resumed when input arrives.
+  - The scheduler's choice of what to run next is unaffected by
+    whether some process is blocked.
+
+Recommended design
+
+Do not build a separate cooperative context-switch primitive for
+the block/wake path. That approach was attempted in a previous
+session and failed in ways that were never fully explained (frame
+layout mismatches, a same-privilege iretq behaving like a
+cross-privilege one, and a timer path that resumed a cooperative
+frame). Each fix revealed a new bug. The design has too many moving
+parts.
+
+Instead, use the timer path for everything. The key insight: the
+timer path already does what a blocking read needs, if you let it
+preempt kernel-mode processes.
+
+1. sys_read blocks by marking the process BLOCKED and then yielding
+   to the scheduler. Use the existing context_switch, not a new
+   primitive. Pseudocode:
+
+       while (bytes_read < count) {
+           cli;
+           if (kbd_buffer_get(&c)) {
+               sti;
+               copy c to user;
+               bytes_read++;
+               continue;
+           }
+           self = process_get_current();
+           if (!self || self->pid == 1) { sti; return bytes_read; }
+           self->waiting_on = WAIT_KBD;
+           self->state = PROC_STATE_BLOCKED;
+           sti;
+           process_yield();   /* existing context_switch */
+       }
+
+   The catch: context_switch's save path fabricates a 20-qword
+   frame from prev->rip and prev->rsp, and for a process that blocks
+   inside a syscall those PCB fields are stale (they hold the last
+   user-preemption values, not the current kernel RIP/RSP). So
+   context_switch's save path needs to correctly record the current
+   ring-0 kernel context when prev is being saved from ring 0.
+   That is the one real change to context_switch.asm this design
+   needs. Derive the layout from llvm-objdump, not from first
+   principles; the previous session lost many rounds to guessing.
+
+2. irq1_handler wakes the blocked process by moving it to READY
+   and putting it on the ready queue. The timer picks it up on the
+   next tick and resumes it through context_switch's .kernel_task
+   path. Because the process was saved by context_switch's ring-0
+   save path, its frame is an 18-qword ring-0 frame, and the
+   timer's pop 15; iretq handles it correctly.
+
+3. The timer must be able to preempt a kernel-mode current. Today,
+   timer_preempt_handler declines to preempt a kernel-mode process
+   other than idle:
+
+       if ((frame->cs & 3) == 0) {
+           if (current->pid != 1) {
+               return stack_pointer;   /* prevents blocking from working */
+           }
+           ...
+       }
+
+   That branch is what makes sys_read's sti; hlt loop monopolize
+   the scheduler. Remove that restriction (except for idle) and the
+   scheduler runs normally while a process is blocked in a syscall.
+   The process's kernel context is saved by the timer into
+   current->r15..rsp, and it is resumed by the iretq like any other
+   task. This is the single most important change.
+
+4. The keyboard wake path does not need to switch. irq1_handler
+   moves the waiter to READY and adds it to the ready queue. The
+   timer picks it. Idle is the fallback if nothing else is READY.
+
+Why this design
+
+- Uses the existing context_switch for everything. No second
+  primitive, no frame-kind ambiguity.
+- Ring-0 frames are 18-qword frames, exactly what irq0_stub and
+  context_switch.kernel_task already handle. No new frame shapes.
+- The blocked process is off the ready queue, so it doesn't get
+  scheduled. When woken, it's back on the queue, and the timer
+  picks it. This is the "system still runs" property: idle always
+  runs, other processes run, the blocked one sleeps.
+- Multiple shells work because each is an ordinary user process
+  that blocks independently. The keyboard buffer is shared;
+  whichever shell wakes first consumes the byte.
+- No iretq crosses a privilege boundary in the block/wake path.
+
+What not to do
+
+- Do not build a second context-switch primitive. The previous
+  session tried context_switch_coop and context_save_and_switch_kernel
+  and each introduced a new class of bug.
+- Do not fabricate iretq frames from PCB slots for cooperative
+  switches. The PCB slots are stale for ring-0 saves.
+- Do not have kbd_wake_all perform the switch. Move the process
+  to READY and let the timer do it.
+- Do not use sti; hlt in sys_read. Mark BLOCKED and yield.
+
+Files that matter most
+
+    04_kernel_64bit/user_syscall_entry.asm   syscall entry (A2 refactor)
+    04_kernel_64bit/user_syscall.c           sys_read, sys_write, ...
+    04_kernel_64bit/interrupts.c             timer_preempt_handler,
+                                             irq1_handler
+    04_kernel_64bit/isr.asm                  irq0_stub, irq1_stub
+    04_kernel_64bit/context_switch.asm       the switch primitive
+    04_kernel_64bit/scheduler.c              scheduler_switch_to,
+                                             process_yield, process_exit
+    04_kernel_64bit/process.c                process_create,
+                                             kernel_idle_loop, PCB layout
+    04_kernel_64bit/include/process.h        pcb_t
+    04_kernel_64bit/tss.c, tss.h             TSS.RSP0 and
+                                             g_syscall_stack_top
+    04_kernel_64bit/keyboard.c, keyboard.h   kbd_buffer_get/put
+
+Verification
+
+- Boot to kernel shell.
+- usershell -> menu appears, shell blocks in read.
+- Launch a second usershell. Both shells should have independent
+  prompts.
+- Type in one shell. The byte goes to whichever shell consumes it
+  first. Both shells stay alive.
+- Close both shells. Machine returns to idle, no hang.
+- At no point should a blocked shell prevent the other shell or
+  idle from running.
+
+Ground rules that worked
+
+- Paste the actual source before proposing a patch. Don't reason
+  from memory.
+- When a fault appears, get the exact fault signature (CR2, RIP,
+  CS, error code), the address-to-symbol mapping
+  (llvm-addr2line -e kernel.elf -f -C 0xADDR), and the
+  disassembly window around the faulting RIP.
+- Change one thing at a time. Build, run, verify.
+- Tag before experimenting. Roll back immediately when something
+  breaks. Don't fix forward on a broken tree.
+- If a #GP at an iretq appears, dump the frame contents at the
+  address the timer is about to consume, and compare against the
+  expected layout. That single diagnostic ended several rounds of
+  guessing in the previous session.

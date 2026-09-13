@@ -161,16 +161,7 @@ void* sys_brk(long inc) {
 
 void sys_exit(int status) {
     (void)status;
-
-    pcb_t* current = process_get_current();
-
-    if (current && current->pid != 1) {
-        current->state = PROC_STATE_TERMINATED;
-        extern void scheduler_ready_queue_remove(pcb_t* pcb);
-        scheduler_ready_queue_remove(current);
-    }
-
-    while (1) __asm__ volatile("hlt");
+    process_exit();
 }
 
 void sys_arch_set_fs(void* base) {

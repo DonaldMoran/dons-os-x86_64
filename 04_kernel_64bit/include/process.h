@@ -61,6 +61,13 @@ typedef struct pcb {
     
     // Heap management (per-process)
     uint64_t brk_virt;  // Current break position for sbrk()
+    
+    // Set by a blocking syscall (e.g. sys_read) immediately before it
+    // calls process_yield, and cleared by the syscall loop on resume.
+    // context_switch reads this to force the ring-0 save path.
+    //   0 = no pending block (use rip heuristic)
+    //   1 = blocking in a syscall (force ring-0 save)
+    uint64_t block_kind;
 } pcb_t;
 
 // Function prototypes
