@@ -128,18 +128,25 @@ timer_preempt_handler(uint64_t stack_pointer) {
     // KERNEL-MODE INTERRUPT
     // =======================================================================
     if ((frame->cs & 3) == 0) {
-        if (current->pid != 1) {
-            return stack_pointer;
-        }
+        /* Any kernel-mode current is subject to the same logic idle
+           has always used. For idle, the peek below usually finds a
+           READY user task and forces a switch. For a non-idle
+           kernel-mode process (e.g. a user shell sitting in
+           sys_read's sti; hlt), the peek does the same thing: if
+           something is READY, save this process's frame, force its
+           quantum to expire, and let the quantum block below switch
+           away. */
 
-        // Idle: check if there's a user task waiting.
+        // Check if there's a user task waiting.
         extern pcb_t* scheduler_ready_queue_peek_next(void);
         pcb_t* peek = scheduler_ready_queue_peek_next();
         if (!peek || peek->pid == 1) {
             return stack_pointer;
         }
 
-        // Save idle's interrupt frame into its PCB so it can be resumed.
+        // Save the interrupt frame into the PCB so this process can
+        // be resumed later, whether it's idle or a user process in
+        // a syscall.
         current->r15 = frame->r15; current->r14 = frame->r14;
         current->r13 = frame->r13; current->r12 = frame->r12;
         current->r11 = frame->r11; current->r10 = frame->r10;
