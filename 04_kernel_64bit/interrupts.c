@@ -237,6 +237,12 @@ void irq1_handler(void) {
     char c = scancode_to_ascii(sc, g_shift, g_caps);
     if (c) {
         kbd_buffer_put(c);
+        /* Wake any process blocked in sys_read. Currently a no-op:
+           nothing sets PROC_STATE_BLOCKED yet. The call is wired so
+           that when sys_read starts blocking, the wake path is in
+           place. Do NOT context-switch here — the timer picks the
+           woken process up on the next tick. */
+        process_wake_all_blocked();
     }
     outb(PIC1_CMD, PIC_EOI);
 }
