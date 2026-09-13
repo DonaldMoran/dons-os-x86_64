@@ -85,7 +85,7 @@
 | 48 | **newlib Userland C Library** | ✅ Complete ⭐ v0.4.7 | Full newlib 4.x linked into user programs. Standard C available in Ring 3. |
 | 49 | **Blocking I/O** | ✅ Complete ⭐ v0.4.7 | `sys_read` on fd 0 blocks via BLOCKED + `hlt`, woken by `irq1`. |
 | 50 | **User-Mode Processes** | 🚧 In Progress | ... |
-| 51 | **Process Cleanup on Exit** | ☐ Not Started | Reclaim PCBs in `process_exit` so diagnostics don't leak. Recommended next. |
+| 51 | **Process Cleanup on Exit** | ✅ Complete ⭐ v0.4.8 | `process_reclaim` frees ELF pages and user stack pages, marks PCB UNUSED, resets pid, decrements count. `process_exit` runs with interrupts disabled. Page-table teardown deferred. |
 | 52 | **Permanent Storage Layer** | ☐ Not Started | ATA PIO block device + FatFs integration. Follows cleanup. |
 | 53 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
 
@@ -98,12 +98,18 @@
 | Boot & System Init | 5 | 5 | **100%** ✅ |
 | Core Kernel | 26 | 26 | **100%** ✅ |
 | Memory Management | 8 | 8 | **100%** ✅ |
-| User Space | 10 | 13 | **77%** 🚧 |
-| **Overall** | **49** | **52** | **94%** |
+| User Space | 11 | 12 | **92%** 🚧 |
+| **Overall** | **50** | **52** | **96%** |
 
 ---
 
 ## Recent Milestone Achievements (Chronological Order — Newest First)
+
+### v0.4.8 — Process Cleanup on Exit ⭐ NEW
+- **PCB reclaim.** `process_reclaim(pcb_t*)` in `process.c`, called from `process_exit`. Frees ELF segment pages and user stack pages, sets `PROC_STATE_UNUSED`, resets `pid = 0`, decrements `process_count`. Repeated `testyield` and `runproc` no longer exhaust the 32-slot pool.
+- **`process_exit` timer race closed.** Interrupts are disabled for the entire critical section (state transition + queue removal + reclaim + context switch). The timer cannot re-add the exiting process or save the current stack frame into `next->rsp`. Interrupts re-enabled by `iretq`, or by explicit `sti` before the kernel-shell jump in the no-runnable fallback.
+- **Page-table teardown deferred.** A few pages per process.
+- Verified: 19 consecutive `testyield` runs and 5 `runproc` runs in one boot, only idle in the process table afterward, no fault.
 
 ### v0.4.7 — newlib, Blocking I/O, Boot Choice ⭐ NEW
 - **newlib 4.x in userland**: `printf`, `malloc`/`free`, `memcpy`, `str*` work in Ring 3, statically linked against `libc.a`/`libm.a`. Reentrancy initialized via `_impure_ptr = &_impure_data`.
@@ -192,12 +198,11 @@
 
 ## Next Steps (Recommended Order)
 
-1. **Process Cleanup on Exit (Option A)** — reclaim the exiting process's PCB slot; free ELF pages and user stack pages; mark PCB `PROC_STATE_UNUSED`. Page-table teardown deferred. Prerequisite for FAT testing.
-2. **Permanent Storage Layer** — ATA PIO block device driver (read/write sectors from long mode), then FatFs integration (FAT12/FAT16/FAT32).
-3. **User-Mode Processes (full)** — per-process tty / focus so multiple shells can coexist.
-4. **Serial Console Debug Access** — kernel shell over COM1 (the right shape for runtime kernel-shell access; the magic-key-combo approach was tried and abandoned).
-5. **Framebuffer Graphics** — Move from VGA text mode to graphics.
-6. **File System (VFS)** — VFS layer above FatFs.
+1. **Permanent Storage Layer** — ATA PIO block device driver (read/write sectors from long mode), then FatFs integration (FAT12/FAT16/FAT32).
+2. **User-Mode Processes (full)** — per-process tty / focus so multiple shells can coexist.
+3. **Serial Console Debug Access** — kernel shell over COM1 (the right shape for runtime kernel-shell access; the magic-key-combo approach was tried and abandoned).
+4. **Framebuffer Graphics** — Move from VGA text mode to graphics.
+5. **File System (VFS)** — VFS layer above FatFs.
 
 ---
 

@@ -155,7 +155,7 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 |---------|-------------|
 | `help` | Show available commands |
 | `clear` | Clear the screen |
-| `version` | Show version information (`DonsDOS v0.4.7`) |
+| `version` | Show version information (`DonsDOS v0.4.8`) |
 | `info` | Display system information (PML4, kernel addresses, E820 entries) |
 | `mem` | Display memory information (usable/reserved RAM) |
 | `reboot` | Reboot the system (Ring 0 supervisor sequence) |
@@ -183,7 +183,7 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 Example session:
 
 ```text
-DonsDOS v0.4.7
+DonsDOS v0.4.8
 Type 'help'
 > help
 
@@ -382,7 +382,10 @@ This project is designed to be:
   - **`testyield` fix**: `process_yield` no longer corrupts the ready queue by calling `scheduler_ready_queue_remove` on an off-queue process. Both test processes now alternate cleanly.
   - **TSS.RSP0 and `g_syscall_stack_top` in lockstep from boot**: `process_init` runs after `tss_init` and sets `rsp0` to idle's kernel stack top.
   - All prior commands and features remain functional.
-
+- `v0.4.8-process-cleanup` ⭐ NEW — **Process cleanup on exit; `process_exit` race closed.**
+  - **PCB reclaim.** `process_exit` now calls `process_reclaim`, which frees the exiting process's ELF segment pages and user stack pages, sets `state = PROC_STATE_UNUSED`, resets `pid = 0`, and decrements `process_count`. The PCB slot can be reused by a future `process_create`. Running `testyield` or `runproc` many times in one boot no longer exhausts the 32-slot pool.
+  - **`process_exit` timer race closed.** Interrupts are disabled for the entire critical section — from the first state mutation through the `context_switch` call — so the timer cannot re-add the exiting process to the ready queue after `scheduler_ready_queue_remove`, nor save the current stack frame into `next->rsp` before `context_switch` switches stacks. Interrupts are re-enabled by the `iretq` in `context_switch`, or by an explicit `sti` before the jump to the kernel shell in the no-runnable-process fallback.
+  - **Page-table teardown deferred.** The process's `cr3` page tables still leak (a few pages per process). The teardown requires walking the page tables and freeing only the user-space portion without touching shared kernel mappings; it is a follow-up.
 ---
 
 ## 📌 Project Status (as of September 2026)
@@ -521,7 +524,7 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 
 ## ⚠️ Known Limitations
 
-- **`runproc` and `testyield` leak PCB slots.** Their cleanup code after `scheduler_switch_to` is unreachable, because `scheduler_switch_to` never returns to its caller when the switched-to process exits. Running these diagnostics many times in one boot will exhaust the 32-slot PCB pool. A proper fix would have `process_exit` reclaim the exiting process's PCB instead of leaving it `TERMINATED`.
+- **Page tables are not freed on process exit.** `process_exit` reclaims the process's PCB slot and its ELF/user-stack pages, but the process's page tables (cr3) leak. This is a few pages per process. The teardown is deferred; it requires walking the page tables and freeing the user-space portion without touching shared kernel mappings.
 - **`testyield` is timing-sensitive.** If the timer preempts during `testyield`'s setup (between the `process_create` calls and the initial `scheduler_switch_to`), the ready queue state at the first yield can differ. On a fresh boot it works reliably; after a sequence of other process-creating commands in the same boot it may misbehave. Reboot to reset.
 - **The keyboard buffer is shared.** Multiple shells reading from fd 0 will compete for bytes. Each keystroke goes to whichever blocked process the scheduler picks first. A per-process tty or a console-focus mechanism would be required to make multiple shells usable side by side.
 - **`sys_brk`'s `heap_base` is a single constant.** Each process's heap starts at the same *virtual* address (`0x8000200000`) and grows in its own address space (different `cr3`), so there is no address conflict. The shared constant is a code-cleanliness issue, not a functional one.
@@ -540,7 +543,7 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - ~~Blocking reads~~ ✅
 - ~~Userland heap via sys_brk (newlib malloc)~~ ✅
 - ~~newlib 4.x linked into user programs~~ ✅
-- **Process cleanup on exit (PCB reclaim)** — free the exiting process's ELF pages and user stack pages, mark the PCB `PROC_STATE_UNUSED` so `get_free_pcb` can reuse it. Page-table teardown is deferred; the PCB slot is the resource that actually runs out. This is the prerequisite for FAT testing: without it, every process launch leaks a PCB slot and FAT testing hits the 32-slot ceiling.
+- ~~Process cleanup on exit (PCB reclaim)~~ ✅
 - **Permanent storage layer** — ATA PIO block device driver, then FatFs integration
 
 ### Medium-term

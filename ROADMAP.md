@@ -217,6 +217,14 @@ Boot chain is complete and stable.
 - `process_init` calls `tss_set_kernel_stack(idle->kernel_stack_top)` alongside `tss_set_syscall_stack`
 - `tssdump` on a fresh boot shows `rsp0` and `g_syscall_stack_top` as the same address
 
+### ✔ 3.18 — Process Cleanup on Exit ⭐ v0.4.8
+- `process_reclaim(pcb_t*)` in `process.c`, called from `process_exit`
+- Frees ELF segment pages and user stack pages via `process_cleanup_elf_pages`
+- Sets PCB `PROC_STATE_UNUSED`, resets `pid = 0`, decrements `process_count`
+- PCB slot can be reused by a future `process_create`; repeated `testyield` and `runproc` no longer exhaust the 32-slot pool
+- `process_exit` now disables interrupts for the entire critical section (state transition + queue removal + reclaim + context switch), closing a timer race where the timer could re-add the exiting process to the ready queue or save the current stack frame into `next->rsp`
+- Page-table teardown deferred (a few pages per process)
+
 ---
 
 ## ⭐ v0.4.2 — STAR MSR Fix (August 2026)
@@ -326,42 +334,51 @@ Boot chain is complete and stable.
 - Newlib reentrancy requires `_impure_ptr = &_impure_data` at startup
 - `sys_brk` must `invlpg` after mapping, or the first user write faults
 
+
+---
+
+## ⭐ v0.4.8 — Process Cleanup on Exit (September 2026)
+
+**What was accomplished:**
+- **PCB reclaim.** `process_exit` calls a new `process_reclaim`, which frees the exiting process's ELF segment pages and user stack pages and marks the PCB slot reusable. Repeated `testyield` and `runproc` in one boot no longer exhaust the 32-slot pool.
+- **`process_exit` timer race closed.** Interrupts are disabled for the entire critical section (state transition + queue removal + reclaim + context switch). The timer can no longer re-add the exiting process to the ready queue or save the current stack frame into `next->rsp`.
+- **Page-table teardown deferred.** The process's page tables still leak; the teardown requires walking the page tables and freeing only the user-space portion.
+
+**Key learnings:**
+- Reclaiming the PCB made slot reuse happen sooner, which exposed a latent timer race in `process_exit`. The two fixes are coupled: the reclaim is correct, but only with the `cli` window.
+- `context_switch` is not safe against timer preemption mid-switch. Any code path that mutates `current_process` and then calls `context_switch` must run with interrupts disabled, or the timer can save the wrong stack frame into the wrong PCB.
+- A `noreturn` exit path that can fall through to a kernel shell or a halt must explicitly `sti` on that fallback, because the `cli` from the critical section persists until the next `iretq`.
+
 ---
 
 ## 4. User‑Facing Features
 
-### ☐ 4.1 — Process Cleanup on Exit
-- Reclaim the exiting process's PCB slot (`PROC_STATE_UNUSED`) so `get_free_pcb` can reuse it
-- Free the process's ELF pages and user stack pages (tracked in `elf_page_list`)
-- Page-table teardown is deferred to a follow-up; the PCB slot is the resource that actually runs out
-- Prerequisite for FAT testing: every process launch currently leaks a PCB slot, and the pool has 32 entries
-
-### ☐ 4.2 — Permanent Storage Layer
+### ☐ 4.1 — Permanent Storage Layer
 - ATA PIO block device driver (read/write sectors from long mode)
 - FatFs integration (FAT12/FAT16/FAT32)
 - Mount a filesystem, `f_open` / `f_read` / `f_write` / `f_close`
 - Load user programs from disk rather than embedding them
 
-### ☐ 4.3 — Framebuffer Graphics
+### ☐ 4.2 — Framebuffer Graphics
 - Switch from VGA text mode
 - Draw pixels, shapes, text
 - Simple GUI experiments
 
-### ☐ 4.4 — Serial Console Debug Access
+### ☐ 4.3 — Serial Console Debug Access
 - Kernel shell reachable over COM1 (input and output)
 - Physically separate from the user's keyboard; cannot be triggered from user code
 - This is the right shape for runtime kernel-shell access. The magic-key-combo approach was tried and abandoned: it is a security backdoor, and the kernel shell is not a process the scheduler can suspend and resume.
 
-### ☐ 4.5 — Per-Process tty / Console Focus
+### ☐ 4.4 — Per-Process tty / Console Focus
 - Prerequisite for multiple concurrent shells
 - Route keyboard input to the focused shell instead of the current shared-buffer behavior
 
-### ☐ 4.6 — File System (VFS)
+### ☐ 4.5 — File System (VFS)
 - Virtual File System (VFS) layer above FatFs
 - File operations (`open`, `read`, `write`, `close`)
 - Path resolution, mount points
 
-### ☐ 4.7 — Device Drivers
+### ☐ 4.6 — Device Drivers
 - Serial/COM port (working for output; input needed for the serial console)
 - PCI enumeration
 - AHCI disk driver
@@ -428,7 +445,7 @@ Boot chain is complete and stable.
 | **Boot-Time Shell Choice** | **✔ Complete ⭐ v0.4.7** |
 | **Userland Heap via sys_brk** | **✔ Complete ⭐ v0.4.7** |
 | **gdtdump / tssdump** | **✔ Complete ⭐ v0.4.7** |
-| Process Cleanup on Exit | ☐ Planned (Next) |
+| **Process Cleanup on Exit** | **✔ Complete ⭐ v0.4.8** |
 | Permanent Storage (ATA PIO + FatFs) | ☐ Planned (After cleanup) |
 | Serial Console Debug Access | ☐ Planned |
 | Framebuffer Graphics | ☐ Planned |
