@@ -100,6 +100,13 @@ void __attribute__((noreturn)) process_exit(void) {
     pcb_t* next = scheduler_ready_queue_next();
     if (!next) {
         scheduler_reset();
+        /* No runnable process. Clear the syscall stack top so a stray
+           syscall would fault loudly instead of silently using a stale
+           stack. The shell loop is entered via a raw jump below; it is
+           a kernel thread and does not go through user_syscall_entry. */
+        extern void tss_set_syscall_stack(uint64_t stack);
+        tss_set_syscall_stack(0);
+
         __asm__ volatile (
             "mov $0xFFFFFFFF8008FF00, %%rsp\n"
             "jmp *%0\n"
@@ -113,6 +120,15 @@ void __attribute__((noreturn)) process_exit(void) {
     process_set_current(next);
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
+
+    /* Keep TSS.RSP0 and the syscall entry stack top in lockstep. Both
+       must point at the incoming process's kernel stack. */
+    if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
+        extern void tss_set_kernel_stack(uint64_t stack);
+        extern void tss_set_syscall_stack(uint64_t stack);
+        tss_set_kernel_stack(next->kernel_stack_top);
+        tss_set_syscall_stack(next->kernel_stack_top);
+    }
 
     context_switch(exiting, next);
 
@@ -149,9 +165,13 @@ void scheduler_switch_to(pcb_t* next) {
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
 
+    /* Keep TSS.RSP0 and the syscall entry stack top in lockstep. Both
+       must point at the incoming process's kernel stack. */
     if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
         extern void tss_set_kernel_stack(uint64_t stack);
+        extern void tss_set_syscall_stack(uint64_t stack);
         tss_set_kernel_stack(next->kernel_stack_top);
+        tss_set_syscall_stack(next->kernel_stack_top);
     }
 
     context_switch(prev, next);

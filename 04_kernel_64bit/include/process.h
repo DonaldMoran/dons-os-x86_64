@@ -6,7 +6,7 @@
 
 #define MAX_PROCESSES 32
 #define PROC_NAME_LEN 32
-#define PROC_STACK_SIZE  8192   // 8KB
+#define PROC_STACK_SIZE  16384   // 16KB: syscall entry + nested timer frame + sys_read blocking headroom
 
 // Process states
 typedef enum {

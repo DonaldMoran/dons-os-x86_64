@@ -70,17 +70,24 @@ static int g_caps  = 0;
    this function with rdi = rsp, and then uses the return value in rax as
    the new rsp for the resume path (`mov rsp, rax; pop GPRs; iretq`).
 
-   For this contract to hold, the function must actually be a real call:
-   if the compiler inlines it into the surrounding code (which it did once
-   the function became small enough at -O2, after removing diagnostics),
-   the frame layout between irq0_stub's pushes and the returned rsp no
-   longer matches, and the shell ends up resuming with a corrupted frame
-   (observed as a user-mode #PF at CR2=0x7FF3xxxxxx inside newlib).
+   Historically this function had to be noinline for the contract to hold:
+   clang would inline it at -O2 once it became small enough, and the frame
+   layout between irq0_stub's pushes and the returned rsp would no longer
+   match, producing intermittent user-mode #PF at CR2=0x7FF3xxxxxx inside
+   newlib.
 
-   noinline makes the function a fixed point that clang cannot dissolve.
+   As of the kernel-stack-on-syscall-entry change, the syscall path runs
+   on the per-process kernel stack (the same stack TSS.RSP0 points at),
+   so a timer that interrupts a syscall is a same-stack kernel-mode
+   interrupt and never crosses this boundary with a user-mode frame. The
+   noinline is now defensive rather than load-bearing; keep it anyway,
+   because the cost is one CALL/RET per tick and the failure mode if it
+   is ever needed again is nasty.
 
-   Long-term fix: switch to a per-process kernel stack on syscall entry
-   so this boundary is enforced by architecture rather than by attribute. */
+   Long-term: this boundary is still an implicit ABI between asm and C.
+   The cleaner design is a small asm shim that does the frame save and
+   the return-value RSP write itself, and calls the C handler with a
+   normal prototype. Not done yet. */
 uint64_t __attribute__((noinline))
 timer_preempt_handler(uint64_t stack_pointer) {
     g_ticks++;
@@ -191,9 +198,15 @@ timer_preempt_handler(uint64_t stack_pointer) {
         next->state = PROC_STATE_RUNNING;
         scheduler_set_current(next);
 
+        /* Keep TSS.RSP0 and the syscall entry stack top in lockstep.
+           Both must point at the incoming process's kernel stack, so a
+           timer that fires during a subsequent syscall lands on the same
+           stack the syscall entry installed. */
         if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
             extern void tss_set_kernel_stack(uint64_t stack);
+            extern void tss_set_syscall_stack(uint64_t stack);
             tss_set_kernel_stack(next->kernel_stack_top);
+            tss_set_syscall_stack(next->kernel_stack_top);
         }
 
         __asm__ volatile("mov %0, %%cr3" : : "r"(next->cr3));

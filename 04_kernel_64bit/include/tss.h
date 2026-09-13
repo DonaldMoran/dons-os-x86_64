@@ -34,8 +34,16 @@ typedef struct {
 // TSS physical address
 #define TSS_PHYS_ADDR 0x5000
 
+// Kernel stack top used by user_syscall_entry.asm for the duration of a
+// syscall. Symmetric with tss->rsp0, which is what the CPU loads on a
+// ring-3 -> ring-0 transition for interrupts. Both must point at the same
+// per-process kernel stack, or a timer that fires during a syscall would
+// build a second live frame on a different stack.
+extern uint64_t g_syscall_stack_top;
+
 // Function prototypes
 void tss_init(void);
 void tss_set_kernel_stack(uint64_t stack);
+void tss_set_syscall_stack(uint64_t stack);
 
 #endif // TSS_H

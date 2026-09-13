@@ -115,20 +115,30 @@ make -C 05_boot_kernel64 run
 make[1]: Entering directory '/home/noneya/code/dons-os-x86_64/05_boot_kernel64'
 qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -monitor none
 BootInfo validated successfully
-TIMER[1] frame=FFFFFFFF8008FF30 cs=18 ss=10 rip=FFFFFFFF8010470E rsp=FFFFFFFF8008FFD0 rflags=10207 cur=NULL
+TIMER[1] frame=FFFFFFFF8008FF30 cs=18 ss=10 rip=FFFFFFFF8010471E rsp=FFFFFFFF8008FFD0 rflags=10207 cur=NULL
 PMM: init OK, free=32448 pages (126 MB)
 VMM: init OK, 127 MB usable, max phys 0x7FE0000
 HEAP: init OK, 1024 KB
 PROCESS: init OK, 1 process(es)
 GDT: User segments fixed for Ring 3
+TIMER[2] frame=FFFFFFFF8008FF10 cs=18 ss=20 rip=FFFFFFFF80105C50 rsp=FFFFFFFF8008FFB8 rflags=10246 cur=1
 TSS: TR loaded correctly (0x38)
 CPU: x86_64 FSGSBASE instructions successfully enabled for Ring 3.
 SYSCALL init done
 **RING** 3 syscalls Initialized
-CPU: Native harTIMER[2] frame=FFFFFFFF8008FF30 cs=18 ss=20 rip=FFFFFFFF801059D0 rsp=FFFFFFFF8008FFD0 rflags=10202 cur=1
-dware SSE vector extensions safely enabled.
+CPU: Native hardware SSE vector extensions safely enabled.
 Kernel: entering shell loop
 TIMER[3] frame=FFFFFFFF8008FE70 cs=18 ss=20 rip=FFFFFFFF8010046F rsp=FFFFFFFF8008FF10 rflags=10246 cur=1
+
+--- Cooperative Task Yield Test ---
+  1. Spawning thread: test1...
+  2. Spawning thread: test2...
+  3. Switching context execution...
+Process 1: iteration 0
+Process 1: iteration 1
+Process 1: iteration 2
+Process 1: iteration 3
+Process 1: iteration 4
 
 ========================================
    DonsDOS Native Newlib 4.x User Shell

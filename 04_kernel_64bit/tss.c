@@ -11,6 +11,11 @@ static uint8_t* iomap = (uint8_t*)(TSS_PHYS_ADDR + sizeof(tss_t));
 uint64_t kernel_stack[4096] __attribute__((aligned(16)));
 uint64_t *kernel_stack_top = &kernel_stack[4096];
 
+/* Kernel stack top read by user_syscall_entry.asm on every syscall.
+   Updated whenever `current` changes: process_init (idle), 
+   scheduler_switch_to, process_exit, and timer_preempt_handler. */
+uint64_t g_syscall_stack_top = 0;
+
 
 void tss_init(void) {
     // Zero the entire TSS region (TSS + I/O Permission Bitmap)
@@ -64,4 +69,11 @@ void tss_init(void) {
 void __attribute__((noinline))
 tss_set_kernel_stack(uint64_t stack) {
     tss->rsp0 = stack;
+}
+
+/* Set the kernel stack top that user_syscall_entry.asm will load on
+   entry. Must be called in lockstep with tss_set_kernel_stack: both
+   should point at the same per-process kernel stack. */
+void tss_set_syscall_stack(uint64_t stack) {
+    g_syscall_stack_top = stack;
 }

@@ -37,6 +37,12 @@ void process_init(void) {
         idle->state = PROC_STATE_READY;
         current_process = idle;
         scheduler_set_current(idle);
+
+        /* Seed the syscall entry stack top with idle's kernel stack.
+           tss_init() runs later in kmain and only touches tss->rsp0;
+           this global is what user_syscall_entry.asm reads. */
+        extern void tss_set_syscall_stack(uint64_t stack);
+        tss_set_syscall_stack(idle->kernel_stack_top);
     }
 
     serial_print("PROCESS: init OK, ");
