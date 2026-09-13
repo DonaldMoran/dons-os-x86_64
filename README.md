@@ -540,8 +540,8 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - ~~Blocking reads~~ ✅
 - ~~Userland heap via sys_brk (newlib malloc)~~ ✅
 - ~~newlib 4.x linked into user programs~~ ✅
+- **Process cleanup on exit (PCB reclaim)** — free the exiting process's ELF pages and user stack pages, mark the PCB `PROC_STATE_UNUSED` so `get_free_pcb` can reuse it. Page-table teardown is deferred; the PCB slot is the resource that actually runs out. This is the prerequisite for FAT testing: without it, every process launch leaks a PCB slot and FAT testing hits the 32-slot ceiling.
 - **Permanent storage layer** — ATA PIO block device driver, then FatFs integration
-- **Process cleanup on exit (PCB reclaim)** — free the exiting process's ELF pages and user stack pages, mark the PCB `PROC_STATE_UNUSED` so `get_free_pcb` can reuse it. Page-table teardown is deferred; the PCB slot is the resource that actually runs out.
 
 ### Medium-term
 - **Serial console debug access** — kernel shell reachable over COM1, physically separate from the user's keyboard. This is the right shape for runtime kernel-shell access; the magic-key-combo approach was tried and abandoned (it's a security backdoor and the kernel shell isn't a process the scheduler can suspend).

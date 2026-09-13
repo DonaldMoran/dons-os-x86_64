@@ -84,9 +84,9 @@
 | 47 | **Preemptive Scheduler** | ✅ Complete | PIT timer preemption, quantum slicing, timer-driven kernel-mode preemption |
 | 48 | **newlib Userland C Library** | ✅ Complete ⭐ v0.4.7 | Full newlib 4.x linked into user programs. Standard C available in Ring 3. |
 | 49 | **Blocking I/O** | ✅ Complete ⭐ v0.4.7 | `sys_read` on fd 0 blocks via BLOCKED + `hlt`, woken by `irq1`. |
-| 50 | **User-Mode Processes** | 🚧 In Progress | Page table per process, context switching running securely within Ring 3. Multi-process coordination (tty, focus) not yet done. |
+| 50 | **User-Mode Processes** | 🚧 In Progress | ... |
 | 51 | **Process Cleanup on Exit** | ☐ Not Started | Reclaim PCBs in `process_exit` so diagnostics don't leak. Recommended next. |
-| 52 | **Permanent Storage Layer** | ☐ Not Started | ATA PIO block device + FatFs integration. Recommended next. |
+| 52 | **Permanent Storage Layer** | ☐ Not Started | ATA PIO block device + FatFs integration. Follows cleanup. |
 | 53 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
 
 ---
@@ -192,8 +192,8 @@
 
 ## Next Steps (Recommended Order)
 
-1. **Permanent Storage Layer** — ATA PIO block device driver (read/write sectors from long mode), then FatFs integration (FAT12/FAT16/FAT32).
-2. **Process Cleanup on Exit (Option A)** — reclaim the exiting process's PCB slot; free ELF pages and user stack pages; mark PCB `PROC_STATE_UNUSED`. Page-table teardown deferred.
+1. **Process Cleanup on Exit (Option A)** — reclaim the exiting process's PCB slot; free ELF pages and user stack pages; mark PCB `PROC_STATE_UNUSED`. Page-table teardown deferred. Prerequisite for FAT testing.
+2. **Permanent Storage Layer** — ATA PIO block device driver (read/write sectors from long mode), then FatFs integration (FAT12/FAT16/FAT32).
 3. **User-Mode Processes (full)** — per-process tty / focus so multiple shells can coexist.
 4. **Serial Console Debug Access** — kernel shell over COM1 (the right shape for runtime kernel-shell access; the magic-key-combo approach was tried and abandoned).
 5. **Framebuffer Graphics** — Move from VGA text mode to graphics.

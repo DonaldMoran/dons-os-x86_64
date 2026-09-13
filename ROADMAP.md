@@ -330,16 +330,17 @@ Boot chain is complete and stable.
 
 ## 4. User‑Facing Features
 
-### ☐ 4.1 — Permanent Storage Layer
+### ☐ 4.1 — Process Cleanup on Exit
+- Reclaim the exiting process's PCB slot (`PROC_STATE_UNUSED`) so `get_free_pcb` can reuse it
+- Free the process's ELF pages and user stack pages (tracked in `elf_page_list`)
+- Page-table teardown is deferred to a follow-up; the PCB slot is the resource that actually runs out
+- Prerequisite for FAT testing: every process launch currently leaks a PCB slot, and the pool has 32 entries
+
+### ☐ 4.2 — Permanent Storage Layer
 - ATA PIO block device driver (read/write sectors from long mode)
 - FatFs integration (FAT12/FAT16/FAT32)
 - Mount a filesystem, `f_open` / `f_read` / `f_write` / `f_close`
 - Load user programs from disk rather than embedding them
-
-### ☐ 4.2 — Process Cleanup on Exit
-- Reclaim the exiting process's PCB slot (`PROC_STATE_UNUSED`) so `get_free_pcb` can reuse it
-- Free the process's ELF pages and user stack pages (tracked in `elf_page_list`)
-- Page-table teardown is deferred to a follow-up; the PCB slot is the resource that actually runs out
 
 ### ☐ 4.3 — Framebuffer Graphics
 - Switch from VGA text mode
@@ -427,8 +428,8 @@ Boot chain is complete and stable.
 | **Boot-Time Shell Choice** | **✔ Complete ⭐ v0.4.7** |
 | **Userland Heap via sys_brk** | **✔ Complete ⭐ v0.4.7** |
 | **gdtdump / tssdump** | **✔ Complete ⭐ v0.4.7** |
-| Permanent Storage (ATA PIO + FatFs) | ☐ Planned (Next) |
 | Process Cleanup on Exit | ☐ Planned (Next) |
+| Permanent Storage (ATA PIO + FatFs) | ☐ Planned (After cleanup) |
 | Serial Console Debug Access | ☐ Planned |
 | Framebuffer Graphics | ☐ Planned |
 | File System (VFS) | ☐ Planned |
