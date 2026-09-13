@@ -174,9 +174,7 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
            rip cs rflags rsp ss
        Mode determines CS/SS/RSP: a kernel process (idle) uses kernel
        selectors and its kernel stack; a user process uses user
-       selectors and user_stack_top. This frame is what irq0_stub
-       iretqs through when the timer first picks the process up, so it
-       must already be the frame for the mode the process will run in. */
+       selectors and user_stack_top. */
     uint64_t* stack_ptr = (uint64_t*)pcb->kernel_stack_top;
     int is_user = (entry_point != 0 && entry_point < KERNEL_BASE);
 
@@ -233,6 +231,22 @@ pcb_t* process_find_by_pid(uint64_t pid) {
         }
     }
     return NULL;
+}
+
+void process_wake_all_blocked(void) {
+    /* Move every BLOCKED process back to READY and onto the ready
+       queue. Intended to be called from irq1_handler when a key
+       arrives. Does not switch; the timer picks the woken process
+       up on the next tick.
+
+       Currently unused: nothing sets PROC_STATE_BLOCKED yet. When
+       sys_read starts blocking, this is the wake path. */
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (pcb_pool[i].state == PROC_STATE_BLOCKED) {
+            pcb_pool[i].state = PROC_STATE_READY;
+            scheduler_ready_queue_add(&pcb_pool[i]);
+        }
+    }
 }
 
 void process_dump_all(void) {
