@@ -330,31 +330,41 @@ Boot chain is complete and stable.
 
 ## 4. User‑Facing Features
 
-### ☐ 4.1 — Framebuffer Graphics
-- Switch from VGA text mode  
-- Draw pixels, shapes, text  
-- Simple GUI experiments
-
-### ☐ 4.2 — File System
-- Virtual File System (VFS) layer  
-- FAT32 support (starting with FAT via FatFs)
-- File operations (open, read, write, close)
+### ☐ 4.1 — Permanent Storage Layer
+- ATA PIO block device driver (read/write sectors from long mode)
+- FatFs integration (FAT12/FAT16/FAT32)
+- Mount a filesystem, `f_open` / `f_read` / `f_write` / `f_close`
 - Load user programs from disk rather than embedding them
 
-### ☐ 4.3 — Device Drivers
-- Serial/COM port (working)
+### ☐ 4.2 — Process Cleanup on Exit
+- Reclaim the exiting process's PCB slot (`PROC_STATE_UNUSED`) so `get_free_pcb` can reuse it
+- Free the process's ELF pages and user stack pages (tracked in `elf_page_list`)
+- Page-table teardown is deferred to a follow-up; the PCB slot is the resource that actually runs out
+
+### ☐ 4.3 — Framebuffer Graphics
+- Switch from VGA text mode
+- Draw pixels, shapes, text
+- Simple GUI experiments
+
+### ☐ 4.4 — Serial Console Debug Access
+- Kernel shell reachable over COM1 (input and output)
+- Physically separate from the user's keyboard; cannot be triggered from user code
+- This is the right shape for runtime kernel-shell access. The magic-key-combo approach was tried and abandoned: it is a security backdoor, and the kernel shell is not a process the scheduler can suspend and resume.
+
+### ☐ 4.5 — Per-Process tty / Console Focus
+- Prerequisite for multiple concurrent shells
+- Route keyboard input to the focused shell instead of the current shared-buffer behavior
+
+### ☐ 4.6 — File System (VFS)
+- Virtual File System (VFS) layer above FatFs
+- File operations (`open`, `read`, `write`, `close`)
+- Path resolution, mount points
+
+### ☐ 4.7 — Device Drivers
+- Serial/COM port (working for output; input needed for the serial console)
 - PCI enumeration
 - AHCI disk driver
 - PS/2 mouse
-
-### ☐ 4.4 — Kernel-Shell Re-Entry
-- A way to reach the kernel shell after boot without a full reboot (serial console or a gated debug flag)
-
-### ☐ 4.5 — Process Cleanup on Exit
-- Reclaim PCBs in `process_exit` so diagnostics don't leak
-
-### ☐ 4.6 — Per-Process tty / Console Focus
-- Prerequisite for multiple concurrent shells
 
 ---
 
@@ -417,8 +427,11 @@ Boot chain is complete and stable.
 | **Boot-Time Shell Choice** | **✔ Complete ⭐ v0.4.7** |
 | **Userland Heap via sys_brk** | **✔ Complete ⭐ v0.4.7** |
 | **gdtdump / tssdump** | **✔ Complete ⭐ v0.4.7** |
+| Permanent Storage (ATA PIO + FatFs) | ☐ Planned (Next) |
+| Process Cleanup on Exit | ☐ Planned (Next) |
+| Serial Console Debug Access | ☐ Planned |
 | Framebuffer Graphics | ☐ Planned |
-| File System (FAT via FatFs) | ☐ Planned |
+| File System (VFS) | ☐ Planned |
 
 ---
 

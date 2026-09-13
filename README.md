@@ -540,18 +540,18 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - ~~Blocking reads~~ ✅
 - ~~Userland heap via sys_brk (newlib malloc)~~ ✅
 - ~~newlib 4.x linked into user programs~~ ✅
-- **Kernel-shell re-entry** — a way to reach the kernel shell after boot without a full reboot (serial console or a gated debug flag)
-- **Process cleanup on exit** — reclaim PCBs so diagnostics don't leak
+- **Permanent storage layer** — ATA PIO block device driver, then FatFs integration
+- **Process cleanup on exit (PCB reclaim)** — free the exiting process's ELF pages and user stack pages, mark the PCB `PROC_STATE_UNUSED` so `get_free_pcb` can reuse it. Page-table teardown is deferred; the PCB slot is the resource that actually runs out.
 
 ### Medium-term
-- ~~Ring0 kernel threads~~ ✅
+- **Serial console debug access** — kernel shell reachable over COM1, physically separate from the user's keyboard. This is the right shape for runtime kernel-shell access; the magic-key-combo approach was tried and abandoned (it's a security backdoor and the kernel shell isn't a process the scheduler can suspend).
 - **Dynamic linking** — a userland ELF loader so programs don't need to be statically linked
 - **Framebuffer graphics** — move from VGA text mode to graphics
 - **Per-process tty / console focus** — prerequisite for multiple concurrent shells
 
 ### Long-term
-- **File system** — Virtual File System (VFS) layer, starting with FAT
-- **User-space programs from disk** — once there's a filesystem, load programs from it instead of embedding them
+- **User-space programs from disk** — once FatFs works, load programs from disk instead of embedding them in the kernel image
+- **Page-table teardown on process exit** — walk the process's page tables and free the user-space portion, completing the cleanup story from the short-term item
 
 ---
 

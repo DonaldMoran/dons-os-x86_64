@@ -72,7 +72,7 @@
 
 ---
 
-## 4. User Space & Advanced Features (9/10 Complete)
+## 4. User Space & Advanced Features (10/13 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
@@ -85,7 +85,9 @@
 | 48 | **newlib Userland C Library** | ✅ Complete ⭐ v0.4.7 | Full newlib 4.x linked into user programs. Standard C available in Ring 3. |
 | 49 | **Blocking I/O** | ✅ Complete ⭐ v0.4.7 | `sys_read` on fd 0 blocks via BLOCKED + `hlt`, woken by `irq1`. |
 | 50 | **User-Mode Processes** | 🚧 In Progress | Page table per process, context switching running securely within Ring 3. Multi-process coordination (tty, focus) not yet done. |
-| 51 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
+| 51 | **Process Cleanup on Exit** | ☐ Not Started | Reclaim PCBs in `process_exit` so diagnostics don't leak. Recommended next. |
+| 52 | **Permanent Storage Layer** | ☐ Not Started | ATA PIO block device + FatFs integration. Recommended next. |
+| 53 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
 
 ---
 
@@ -96,8 +98,8 @@
 | Boot & System Init | 5 | 5 | **100%** ✅ |
 | Core Kernel | 26 | 26 | **100%** ✅ |
 | Memory Management | 8 | 8 | **100%** ✅ |
-| User Space | 9 | 10 | **90%** 🚧 |
-| **Overall** | **48** | **49** | **98%** |
+| User Space | 10 | 13 | **77%** 🚧 |
+| **Overall** | **49** | **52** | **94%** |
 
 ---
 
@@ -190,13 +192,12 @@
 
 ## Next Steps (Recommended Order)
 
-1. **Permanent Storage Layer** — FatFs source inclusion, IDE/ATA PIO disk sector read/write hooks.
-2. **User-Mode Processes (full)** — Run processes in Ring 3 with full privilege separation and per-process tty / focus so multiple shells can coexist.
-3. **Kernel-Shell Re-Entry** — a way to reach the kernel shell after boot without a full reboot (serial console or a gated debug flag).
-4. **Process Cleanup on Exit** — reclaim PCBs in `process_exit` so diagnostics don't leak.
-5. **Ring0 Kernel Threads** — Kernel daemons, system services.
-6. **Framebuffer Graphics** — Move from VGA text mode to graphics.
-7. **File System** — VFS layer, starting with FAT.
+1. **Permanent Storage Layer** — ATA PIO block device driver (read/write sectors from long mode), then FatFs integration (FAT12/FAT16/FAT32).
+2. **Process Cleanup on Exit (Option A)** — reclaim the exiting process's PCB slot; free ELF pages and user stack pages; mark PCB `PROC_STATE_UNUSED`. Page-table teardown deferred.
+3. **User-Mode Processes (full)** — per-process tty / focus so multiple shells can coexist.
+4. **Serial Console Debug Access** — kernel shell over COM1 (the right shape for runtime kernel-shell access; the magic-key-combo approach was tried and abandoned).
+5. **Framebuffer Graphics** — Move from VGA text mode to graphics.
+6. **File System (VFS)** — VFS layer above FatFs.
 
 ---
 
