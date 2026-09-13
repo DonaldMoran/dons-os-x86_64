@@ -32,3 +32,5 @@ out/
 
 # Ignore archived experiments
 archive/
+diff.sh
+collect_full_sources.sh
