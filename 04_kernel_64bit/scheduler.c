@@ -149,16 +149,44 @@ void __attribute__((noreturn)) process_exit(void) {
              user shell is the terminal interactive console; there is
              no kernel shell to fall back to by design. */
         scheduler_reset();
+
+        /* Restore TSS.RSP0 and g_syscall_stack_top to idle's kernel
+           stack. The previous code zeroed only g_syscall_stack_top,
+           leaving TSS.RSP0 pointing at whichever process ran last.
+           The two must stay in lockstep (see tss.c); leaving RSP0
+           pointing at a dead process's stack (or at 0) is a latent
+           hazard for any Ring 3 -> Ring 0 transition that occurs
+           before the next scheduler switch. Idle's stack is always
+           mapped and always valid. */
+        extern void tss_set_kernel_stack(uint64_t stack);
         extern void tss_set_syscall_stack(uint64_t stack);
-        tss_set_syscall_stack(0);
+        pcb_t* idle = process_find_by_pid(1);
+        if (idle) {
+            tss_set_kernel_stack(idle->kernel_stack_top);
+            tss_set_syscall_stack(idle->kernel_stack_top);
+        } else {
+            tss_set_kernel_stack(0);
+            tss_set_syscall_stack(0);
+        }
 
         if (exiting->entry_point >= KERNEL_BASE) {
+            /* Direct jump, not indirect through a register. The
+               previous version loaded kmain_shell_loop into RAX,
+               did sti, then jmp *RAX. If an IRQ1 fired between the
+               sti and the jmp — which is possible, since irq1_stub
+               historically did not preserve caller-saved registers —
+               RAX could be clobbered by irq1_handler and the jmp
+               would land at a garbage address. isr.asm now
+               preserves all GPRs in every stub, but the direct
+               jump is the belt-and-suspenders fix: no register is
+               involved, so no interrupt can corrupt the target.
+               The compiler emits jmp rel32; the CPU decodes it as
+               a single instruction with no memory operand. */
             __asm__ volatile(
                 "sti\n"
                 "mov $0xFFFFFFFF8008FF00, %%rsp\n"
-                "jmp *%0\n"
-                : : "r"(kmain_shell_loop)
-                : "memory"
+                "jmp kmain_shell_loop\n"
+                : : : "memory"
             );
             /* not reached */
         }
@@ -173,12 +201,17 @@ void __attribute__((noreturn)) process_exit(void) {
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
 
-    if (next->entry_point != 0 && next->entry_point < KERNEL_BASE) {
-        extern void tss_set_kernel_stack(uint64_t stack);
-        extern void tss_set_syscall_stack(uint64_t stack);
-        tss_set_kernel_stack(next->kernel_stack_top);
-        tss_set_syscall_stack(next->kernel_stack_top);
-    }
+    /* TSS.RSP0 and the syscall entry stack top must track `current`
+       unconditionally. Gating this on entry_point < KERNEL_BASE was
+       wrong: kernel-mode threads still need RSP0 correct so that a
+       later switch to a user process does not inherit a stale kernel
+       stack pointer, and the "both move in lockstep with current"
+       invariant documented in tss.c must hold at every context
+       switch. See scheduler_switch_to for the matching update. */
+    extern void tss_set_kernel_stack(uint64_t stack);
+    extern void tss_set_syscall_stack(uint64_t stack);
+    tss_set_kernel_stack(next->kernel_stack_top);
+    tss_set_syscall_stack(next->kernel_stack_top);
 
     context_switch(exiting, next);
 
@@ -193,6 +226,20 @@ void scheduler_switch_to(pcb_t* next) {
         current_process->state == PROC_STATE_RUNNING) {
         return;
     }
+
+    /* Disable interrupts around the state mutation and the actual
+       stack switch. Without this, a PIT tick that arrives between
+       `current_process = next` and `context_switch(prev, next)` will
+       see `current == next` (a process that hasn't actually been
+       switched to yet) and save the *current* CPU state — which is
+       still running on the previous process's stack — into `next`'s
+       PCB fields. That overwrites `next->rsp` with a frame base that
+       lives on the wrong stack, and the next time `next` is resumed
+       the iretq fires on a corrupted frame.
+
+       Interrupts are re-enabled by the iretq in context_switch,
+       which restores RFLAGS (IF=1) from the target's saved frame. */
+    __asm__ volatile("cli");
 
     pcb_t* prev = current_process;
     current_process = next;
@@ -212,13 +259,16 @@ void scheduler_switch_to(pcb_t* next) {
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
 
-    if (next->entry_point != 0 && next->entry_point < KERNEL_BASE) {
-        extern void tss_set_kernel_stack(uint64_t stack);
-        extern void tss_set_syscall_stack(uint64_t stack);
-        tss_set_kernel_stack(next->kernel_stack_top);
-        tss_set_syscall_stack(next->kernel_stack_top);
-    }
-    
+    /* TSS.RSP0 and the syscall entry stack top must track `current`
+       unconditionally. The previous gate (entry_point < KERNEL_BASE)
+       caused g_syscall_stack_top to stay at 0 when switching to a
+       kernel-mode process, breaking the lockstep invariant
+       documented in tss.c. Update both, always. */
+    extern void tss_set_kernel_stack(uint64_t stack);
+    extern void tss_set_syscall_stack(uint64_t stack);
+    tss_set_kernel_stack(next->kernel_stack_top);
+    tss_set_syscall_stack(next->kernel_stack_top);
+
     context_switch(prev, next);
 }
 

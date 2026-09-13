@@ -19,9 +19,18 @@ extern timer_preempt_handler
 extern irq1_handler
 extern isr13_handler
 
-irq0_stub:
-    ; 1. CPU has automatically pushed: SS, RSP, RFLAGS, CS, RIP
-    ; Push all remaining general purpose registers to form a clean preempt_frame_t struct
+; =====================================================================
+; Macros for GPR save/restore. Used by every stub that calls C.
+; The C ABI lets the callee clobber rax, rcx, rdx, rsi, rdi, r8..r11,
+; so any stub that returns to interrupted code with iretq must restore
+; all of those. rbx, rbp, r12..r15 are callee-saved and would normally
+; be preserved by the callee, but the kernel's C is compiled freestanding
+; with the standard SysV convention, so a stray inline-asm clobber or a
+; compiler bug could leave them dirty. Push them all; the cost is
+; negligible and the failure mode (a corrupted register that only shows
+; up 50 instructions later on an iretq) is otherwise unfindable.
+; =====================================================================
+%macro PUSH_ALL_GPRS 0
     push rax
     push rbx
     push rcx
@@ -37,18 +46,9 @@ irq0_stub:
     push r13
     push r14
     push r15
+%endmacro
 
-    ; 2. Pass the exact memory pointer to this saved register frame as argument 1 (RDI)
-    mov rdi, rsp
-
-    ; 3. Invoke the core C kernel preemptive time-slicer logic
-    call timer_preempt_handler
-
-    ; 4. CRITICAL RECOVERY JUMP: Update RSP to whatever stack register node 
-    ; the scheduler selected to run next!
-    mov rsp, rax
-
-    ; 5. Restore registers belonging to the incoming thread context
+%macro POP_ALL_GPRS 0
     pop r15
     pop r14
     pop r13
@@ -64,74 +64,106 @@ irq0_stub:
     pop rcx
     pop rbx
     pop rax
+%endmacro
 
-    ; 6. Issue EOI notification back to the master PIC 
+; =====================================================================
+; IRQ0 — PIT timer. Special: the C handler returns the RSP to resume
+; from, and the stub uses it to switch stacks. This is the scheduler's
+; ABI boundary; do not change the frame layout without also changing
+; timer_preempt_handler and the initial frame built in process_create.
+; =====================================================================
+irq0_stub:
+    ; CPU has automatically pushed: SS, RSP, RFLAGS, CS, RIP
+    PUSH_ALL_GPRS
+
+    ; Pass the frame base as argument 1 (RDI)
+    mov rdi, rsp
+
+    ; Invoke the C preemptive time-slicer
+    call timer_preempt_handler
+
+    ; The handler returns the RSP to resume from in RAX. If it was a
+    ; context switch, RAX is the incoming process's saved frame base;
+    ; otherwise it is our own frame base (no-op switch).
+    mov rsp, rax
+
+    POP_ALL_GPRS
+
+    ; EOI to master PIC
     push rax
     mov al, 0x20
     out 0x20, al
     pop rax
 
-    ; Return safely from the interrupt frame
     iretq
 
+; =====================================================================
+; IRQ1 — PS/2 keyboard.
+; =====================================================================
 irq1_stub:
-    push rbp
-    mov rbp, rsp
+    PUSH_ALL_GPRS
+    mov rdi, rsp
     call irq1_handler
-    pop rbp
+    POP_ALL_GPRS
     iretq
 
+; =====================================================================
+; CPU exceptions. The CPU pushes an error code for some vectors
+; (8, 13, 14) and not for others (0, 1). The stubs push a dummy 0 for
+; the ones that don't, so the C handler always sees:
+;   [rsp+0]  = error code
+;   [rsp+8]  = RIP
+;   [rsp+16] = CS
+;   [rsp+24] = RFLAGS
+;   [rsp+32] = RSP
+;   [rsp+40] = SS
+; =====================================================================
+
+; #DE — divide by zero (no CPU error code)
 isr0_stub:
-    push 0
-    push rbp
-    mov  rbp, rsp
+    push 0                  ; fake error code
+    PUSH_ALL_GPRS
+    mov rdi, rsp
     call isr0_handler
-    pop  rbp
-    add  rsp, 8
+    POP_ALL_GPRS
+    add rsp, 8              ; drop fake error code
     iretq
 
+; #DB — debug (no CPU error code)
 isr1_stub:
     push 0
-    push rbp
-    mov  rbp, rsp
+    PUSH_ALL_GPRS
+    mov rdi, rsp
     call isr1_handler
-    pop  rbp
-    add  rsp, 8
+    POP_ALL_GPRS
+    add rsp, 8
     iretq
 
+; #DF — double fault (CPU pushes an error code, always 0)
 isr8_stub:
-    push rbp
-    mov  rbp, rsp
-    mov  rdi, rsp
+    PUSH_ALL_GPRS
+    mov rdi, rsp
     call isr8_handler
-    pop  rbp
+    POP_ALL_GPRS
+    add rsp, 8              ; drop CPU error code
     iretq
 
-; GP Fault - call C handler
+; #GP — general protection fault (CPU pushes an error code)
 isr13_stub:
     cli
-    push rbp
-    mov  rbp, rsp
-
-    ; rdi -> error_code (start of frame)
-    lea  rdi, [rsp + 8]
-
+    PUSH_ALL_GPRS
+    mov rdi, rsp
     call isr13_handler
-
-    pop  rbp
-    add  rsp, 8      ; drop error_code
+    POP_ALL_GPRS
+    add rsp, 8              ; drop CPU error code
     iretq
-    
-; Page Fault
+
+; #PF — page fault (CPU pushes an error code)
 isr14_stub:
     cli
-    push rbp
-    mov  rbp, rsp
-
-    lea  rdi, [rsp + 8]
-
+    PUSH_ALL_GPRS
+    mov rdi, rsp
     call isr14_handler
-
-    pop  rbp
-    add  rsp, 8
+    POP_ALL_GPRS
+    add rsp, 8              ; drop CPU error code
     iretq

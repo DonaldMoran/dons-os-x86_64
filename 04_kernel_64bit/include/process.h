@@ -33,6 +33,17 @@ typedef struct pcb {
     uint64_t kernel_stack_phys;
     uint64_t kernel_stack_virt;
     uint64_t kernel_stack_top;
+
+    /* Index into kernel_stack_pool[], 0..MAX_PROCESSES-1, or
+       KERNEL_STACK_SLOT_NONE if this PCB owns no slot. Allocated by
+       process_create and released by process_reclaim / process_destroy.
+       Decoupled from pid: pid is monotonic and can exceed
+       MAX_PROCESSES, but the slot index is always in range and never
+       aliases a slot owned by another live PCB. See the comment at
+       kernel_stack_slot_alloc in process.c for why pid % MAX_PROCESSES
+       was wrong. */
+    int kernel_stack_slot;
+
     uint64_t user_stack_phys;
     uint64_t user_stack_virt;
     uint64_t user_stack_top;
@@ -69,6 +80,8 @@ typedef struct pcb {
     //   1 = blocking in a syscall (force ring-0 save)
     uint64_t block_kind;
 } pcb_t;
+
+#define KERNEL_STACK_SLOT_NONE (-1)
 
 // Function prototypes
 void process_init(void);

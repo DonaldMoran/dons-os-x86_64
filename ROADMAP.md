@@ -183,7 +183,7 @@ Boot chain is complete and stable.
 - Kernel-mode preemption: a process blocked in `sys_read` does not hold the CPU
 - **`testyield` now alternates cleanly** between both test processes
 
-### ✔ 3.13 — Userland C Library (newlib 4.x) ⭐ NEW
+### ✔ 3.13 — Userland C Library (newlib 4.x)
 - newlib 4.x statically linked into user programs (`libc.a`, `libm.a`)
 - `crt0.S`, `syscalls.c`, `reent.c` provide startup, syscall shims, and reentrancy
 - **`_impure_ptr = &_impure_data`** in `reent.c` — without this, the first `printf` faults
@@ -191,7 +191,7 @@ Boot chain is complete and stable.
 - User programs written in ordinary C, compiled with `x86_64-elf-gcc`
 - Loaded as ELF64 binaries embedded in the kernel image
 
-### ✔ 3.14 — Blocking I/O ⭐ NEW
+### ✔ 3.14 — Blocking I/O
 - `sys_read` on fd 0 no longer spins the CPU
 - Blocked process sets `PROC_STATE_BLOCKED`, executes `sti; hlt`
 - Timer skips blocked processes (narrowed re-add condition to `state == RUNNING`)
@@ -199,31 +199,42 @@ Boot chain is complete and stable.
 - Timer resumes the process via its saved kernel frame
 - Multiple processes can be blocked; whichever wakes first consumes the byte
 
-### ✔ 3.15 — Boot-Time Shell Choice ⭐ NEW
+### ✔ 3.15 — Boot-Time Shell Choice
 - 2-second window at boot: `k` → kernel shell, any other key or timeout → user shell
 - Kernel shell is a diagnostic console (not reachable after user shell starts)
 - User shell is the default interactive console
 - `sys_exit` on a user process halts the CPU; kernel diagnostics return to the kernel shell
 - `gdtdump` and `tssdump` added as on-demand kernel shell diagnostics
 
-### ✔ 3.16 — Process Yield Queue Fix ⭐ NEW
+### ✔ 3.16 — Process Yield Queue Fix
 - `process_yield` no longer corrupts the ready queue by calling
   `scheduler_ready_queue_remove(current_process)` on an off-queue process
 - Defensive check added to `scheduler_ready_queue_remove` for off-queue processes
 - `testyield` demonstrably alternates between both test processes
 
-### ✔ 3.17 — TSS.RSP0 / `g_syscall_stack_top` Sync ⭐ NEW
+### ✔ 3.17 — TSS.RSP0 / `g_syscall_stack_top` Sync
 - `process_init` runs after `tss_init` in `kmain`
 - `process_init` calls `tss_set_kernel_stack(idle->kernel_stack_top)` alongside `tss_set_syscall_stack`
 - `tssdump` on a fresh boot shows `rsp0` and `g_syscall_stack_top` as the same address
 
-### ✔ 3.18 — Process Cleanup on Exit ⭐ v0.4.8
+### ✔ 3.18 — Process Cleanup on Exit
 - `process_reclaim(pcb_t*)` in `process.c`, called from `process_exit`
 - Frees ELF segment pages and user stack pages via `process_cleanup_elf_pages`
 - Sets PCB `PROC_STATE_UNUSED`, resets `pid = 0`, decrements `process_count`
 - PCB slot can be reused by a future `process_create`; repeated `testyield` and `runproc` no longer exhaust the 32-slot pool
 - `process_exit` now disables interrupts for the entire critical section (state transition + queue removal + reclaim + context switch), closing a timer race where the timer could re-add the exiting process to the ready queue or save the current stack frame into `next->rsp`
 - Page-table teardown deferred (a few pages per process)
+
+### ✔ 3.19 — Scheduler, TSS, and Interrupt ABI Stability Pass ⭐ NEW (v0.4.9)
+- **ELF-load race at boot.** `process_create` queues the PCB before the ELF is loaded, so a PIT tick between create and `elf_load_into_process` could schedule a process whose entry page was not yet mapped. Fixed at the three call sites (`kmain` boot path, `elfload`, `usershell`): remove from queue, load ELF, set `entry_point`, add back.
+- **TSS.RSP0 / `g_syscall_stack_top` lockstep.** The update was gated on `entry_point < KERNEL_BASE`; kernel-mode switches left `g_syscall_stack_top` stale. Gate removed in `scheduler_switch_to`, `process_exit`, `timer_preempt_handler`.
+- **`process_exit` fallback TSS restoration.** The no-runnable fallback zeroed only `g_syscall_stack_top`, leaving `TSS.RSP0` pointing at a dead process's stack. Now restores both to idle's kernel stack top.
+- **Kernel stack slot aliasing.** Kernel stack slots were computed as `pid % MAX_PROCESSES`. `next_pid` is monotonic and never decremented on teardown, so after 32+ creations the modulo wrapped and a new process aliased a live one's slot. Replaced with `slot_owner[]` and a `pcb_t::kernel_stack_slot` field.
+- **`context_switch.asm` offsets.** Inserting `kernel_stack_slot` at `pcb_t` offset `0x58` shifted later fields by 8 bytes; the asm hardcoded the old offsets. Every offset updated by +8, and a `_Static_assert` block in `process.c` now pins the offsets the asm depends on.
+- **`scheduler_switch_to` preemption window.** The function set `current_process = next` with interrupts enabled, then called `context_switch(prev, next)`. A PIT tick in that window saved the wrong stack frame into `next`. Fixed with `cli` at the top of the function.
+- **`irq1_stub` ABI violation.** `irq1_handler` was called without preserving caller-saved registers. A keyboard interrupt between `sti` and a subsequent indirect `jmp *%rax` corrupted `%rax` and landed mid-instruction inside `kmain_shell_loop`. Fixed on two fronts: all stubs that call C handlers now preserve all 15 GPRs, and the fallback uses a direct `jmp kmain_shell_loop`.
+- **`process_dump_all` cosmetic fix.** Detached PCBs show `DETACHED` instead of `READY`.
+- **Frame validation in `context_switch.asm`.** `.kernel_task` validates the resume frame's `rip` and `cs` before popping, and emits a serial marker byte on failure.
 
 ---
 
@@ -334,7 +345,6 @@ Boot chain is complete and stable.
 - Newlib reentrancy requires `_impure_ptr = &_impure_data` at startup
 - `sys_brk` must `invlpg` after mapping, or the first user write faults
 
-
 ---
 
 ## ⭐ v0.4.8 — Process Cleanup on Exit (September 2026)
@@ -348,6 +358,27 @@ Boot chain is complete and stable.
 - Reclaiming the PCB made slot reuse happen sooner, which exposed a latent timer race in `process_exit`. The two fixes are coupled: the reclaim is correct, but only with the `cli` window.
 - `context_switch` is not safe against timer preemption mid-switch. Any code path that mutates `current_process` and then calls `context_switch` must run with interrupts disabled, or the timer can save the wrong stack frame into the wrong PCB.
 - A `noreturn` exit path that can fall through to a kernel shell or a halt must explicitly `sti` on that fallback, because the `cli` from the critical section persists until the next `iretq`.
+
+---
+
+## ⭐ v0.4.9 — Scheduler, TSS, and Interrupt ABI Stability Pass (September 2026) ⭐ NEW
+
+**What was accomplished:**
+- **ELF-load race at boot.** Fixed at all three call sites (`kmain` boot path, `elfload`, `usershell`). Eliminated the intermittent user-mode `#PF` at `CR2 == RIP == 0x8000000000` that reproduced when a key was pressed during the boot-choice window.
+- **`TSS.RSP0` / `g_syscall_stack_top` lockstep.** Gate on `entry_point < KERNEL_BASE` removed in `scheduler_switch_to`, `process_exit`, and `timer_preempt_handler`. Both fields now update on every switch.
+- **`process_exit` fallback TSS restoration.** The no-runnable-process fallback now restores both `TSS.RSP0` and `g_syscall_stack_top` to idle's kernel stack top.
+- **Kernel stack slot aliasing.** Replaced `pid % MAX_PROCESSES` with an explicit `slot_owner[]` allocator and a `pcb_t::kernel_stack_slot` field. Survives 20+ `testyield` runs per boot with no fault.
+- **`context_switch.asm` offsets.** Every offset at or after `user_stack_phys` updated by +8 to account for the new `kernel_stack_slot` field. `_Static_assert` block in `process.c` pins the offsets.
+- **`scheduler_switch_to` preemption window.** Added `__asm__ volatile("cli")` at the top of the function to close the race between `current_process = next` and `context_switch(prev, next)`.
+- **`irq1_stub` ABI violation.** All stubs that call C handlers now preserve all 15 GPRs. `isr8_stub` also fixed a latent missing `add rsp, 8` for the CPU's error code. `process_exit`'s fallback now uses a direct `jmp kmain_shell_loop`.
+- **Frame validation in `context_switch.asm`.** `.kernel_task` now checks the resume frame's `rip` and `cs` before popping, and emits a serial marker byte (`R` or `C`) and halts on failure.
+
+**Key learnings:**
+- **Two-variable invariants need to be updated everywhere or nowhere.** The TSS.RSP0 / `g_syscall_stack_top` pair was updated in one path and skipped in another; the divergence was invisible until it wasn't.
+- **Monotonic counters and modulo indexing don't mix.** `next_pid % MAX_PROCESSES` looks fine until `next_pid` exceeds `MAX_PROCESSES`, at which point it aliases live slots.
+- **Any struct change in C needs to be reflected in the assembly that reads it.** The `_Static_assert` guard is the durable fix; the offset update is the one-time fix.
+- **Stubs that call C code must save caller-saved registers.** The SysV ABI lets the callee clobber `rax`, `rcx`, `rdx`, `rsi`, `rdi`, `r8`–`r11`. Interrupt/exception entry points that return via `iretq` must restore them.
+- **Indirect jumps through registers are fragile.** A direct jump (`jmp symbol`) emits a `rel32` with no register involved, and no interrupt can corrupt the target.
 
 ---
 
@@ -383,6 +414,12 @@ Boot chain is complete and stable.
 - PCI enumeration
 - AHCI disk driver
 - PS/2 mouse
+
+### ☐ 4.7 — Kernel Shell on a Proper Stack
+- Move `kmain_shell_loop` off the hardcoded `0xFFFFFFFF8008FF00` boot stack
+- Allocate the shell's stack from the kernel stack pool
+- Eliminates the `process_exit` fallback's dependency on a specific low-memory address being mapped
+- Companion: IST stack for `#DF`, so double faults produce printed diagnostics instead of triple faults
 
 ---
 
@@ -446,7 +483,8 @@ Boot chain is complete and stable.
 | **Userland Heap via sys_brk** | **✔ Complete ⭐ v0.4.7** |
 | **gdtdump / tssdump** | **✔ Complete ⭐ v0.4.7** |
 | **Process Cleanup on Exit** | **✔ Complete ⭐ v0.4.8** |
-| Permanent Storage (ATA PIO + FatFs) | ☐ Planned (After cleanup) |
+| **Scheduler / TSS / Interrupt ABI Stability** | **✔ Complete ⭐ v0.4.9** |
+| Permanent Storage (ATA PIO + FatFs) | ☐ Planned (Next) |
 | Serial Console Debug Access | ☐ Planned |
 | Framebuffer Graphics | ☐ Planned |
 | File System (VFS) | ☐ Planned |

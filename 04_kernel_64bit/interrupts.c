@@ -159,6 +159,7 @@ timer_preempt_handler(uint64_t stack_pointer) {
         current->rsp = stack_pointer;
 
         current->timeslice_ticks = SCHED_QUANTUM;
+
     }
 
     if ((frame->cs & 3) == 3) {
@@ -209,16 +210,18 @@ timer_preempt_handler(uint64_t stack_pointer) {
         next->state = PROC_STATE_RUNNING;
         scheduler_set_current(next);
 
-        /* Keep TSS.RSP0 and the syscall entry stack top in lockstep.
-           Both must point at the incoming process's kernel stack, so a
-           timer that fires during a subsequent syscall lands on the same
-           stack the syscall entry installed. */
-        if (next->entry_point != 0 && next->entry_point < 0xFFFFFFFF80000000ULL) {
-            extern void tss_set_kernel_stack(uint64_t stack);
-            extern void tss_set_syscall_stack(uint64_t stack);
-            tss_set_kernel_stack(next->kernel_stack_top);
-            tss_set_syscall_stack(next->kernel_stack_top);
-        }
+        /* Keep TSS.RSP0 and the syscall entry stack top in lockstep
+           with `current`, unconditionally. The previous gate
+           (entry_point < KERNEL_BASE) left g_syscall_stack_top at 0
+           when the incoming process was a kernel-mode thread,
+           breaking the invariant documented in tss.c. Both must
+           point at the incoming process's kernel stack at every
+           context switch, so a subsequent syscall or interrupt
+           lands on the right stack. */
+        extern void tss_set_kernel_stack(uint64_t stack);
+        extern void tss_set_syscall_stack(uint64_t stack);
+        tss_set_kernel_stack(next->kernel_stack_top);
+        tss_set_syscall_stack(next->kernel_stack_top);
 
         __asm__ volatile("mov %0, %%cr3" : : "r"(next->cr3));
 

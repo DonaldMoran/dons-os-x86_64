@@ -183,9 +183,9 @@ static void handle_command(const char *cmd) {
     if (strcmp(cmd, "help") == 0) {
         vga_print("\nAvailable commands:\n  help, clear, version, reboot, pmmtest, info, mem, test,\n  vmmtest, serialtest, heapstat, maptest, testrec, heaptest,\n  nxtest, syscall, elfload, proclist, proccreate, vmmclone,\n  runproc, schstat, testyield, usershell, gdtdump, tssdump\n> ");
     } else if (strcmp(cmd, "clear") == 0) {
-        vga_clear(); vga_print("DonsDOS v0.4.8\nType 'help'\n> ");
+        vga_clear(); vga_print("DonsDOS v0.4.9\nType 'help'\n> ");
     } else if (strcmp(cmd, "version") == 0) {
-        vga_print("\nDonsDOS v0.4.8\nBuild: 64-bit preemptive kernel with VGA console\n> ");
+        vga_print("\nDonsDOS v0.4.9\nBuild: 64-bit preemptive kernel with VGA console\n> ");
     } else if (strcmp(cmd, "info") == 0) {
         vga_print("\n=== System Boot Telemetry Information ===\n");
         if (g_bootinfo) {
@@ -674,7 +674,10 @@ static void handle_command(const char *cmd) {
         pcb_t* proc = process_create("elf_prog", 0x8000000000ULL, 0);
         if (proc) {
             extern uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data);
-            
+
+            /* Dequeue until the ELF is loaded — see kmain() comment. */
+            scheduler_ready_queue_remove(proc);
+
             uint64_t old_cr3;
             __asm__ volatile("mov %%cr3, %0" : "=r"(old_cr3));
             __asm__ volatile("mov %0, %%cr3" : : "r"(proc->cr3));
@@ -688,6 +691,7 @@ static void handle_command(const char *cmd) {
                 proc->entry_point = entry;
                 vga_print("Launching Ring 3 scheduled test program...\n");
                 keyboard_buffer_flush();
+                scheduler_ready_queue_add(proc);
                 scheduler_switch_to(proc);
             } else {
                 vga_print("Error: ELF structural mapping failed.\n");
@@ -778,6 +782,9 @@ static void handle_command(const char *cmd) {
         if (shell_proc) {
             extern uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data);
 
+            /* Dequeue until the ELF is loaded — see kmain() comment. */
+            scheduler_ready_queue_remove(shell_proc);
+
             /* Map pages natively without touching active hardware CR3 registers.
                The VMM handles table traversal via HHDM pointers, so we keep
                full visibility over the kernel data source symbols. */
@@ -790,7 +797,9 @@ static void handle_command(const char *cmd) {
                 /* Flush keyboard buffer prior to task handover */
                 keyboard_buffer_flush();
 
-                /* Hand control to the scheduler */
+                /* Re-arm the shell on the ready queue, then hand control
+                   to the scheduler. */
+                scheduler_ready_queue_add(shell_proc);
                 scheduler_switch_to(shell_proc);
             } else {
                 vga_print("Error: Compiled binary structure validation failed!\n");
@@ -812,7 +821,7 @@ static void handle_command(const char *cmd) {
 }
 
 __attribute__((noreturn)) void kmain_shell_loop(void) {
-    vga_print("DonsDOS v0.4.8\nType 'help'\n> ");
+    vga_print("DonsDOS v0.4.9\nType 'help'\n> ");
     char cmd_buffer[128];
     int cmd_pos = 0;
 
@@ -843,6 +852,7 @@ void kmain(BootInfo *info) {
     g_bootinfo = info;
     vga_clear();
     serial_init();
+    
     validate_bootinfo(info);
     
     vga_set_cursor_shape(0x00, 0x0F);
@@ -940,6 +950,12 @@ void kmain(BootInfo *info) {
         while (1) __asm__ volatile("hlt");
     }
 
+    /* process_create adds the PCB to the ready queue. Pull it back out
+       until the ELF is loaded, otherwise a PIT tick between here and
+       elf_load_into_process() will schedule it and #PF at 0x8000000000
+       because the entry page is not mapped yet. */
+    scheduler_ready_queue_remove(shell);
+
     extern uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data);
     uint64_t shell_entry = elf_load_into_process(shell, build_user_shell_elf);
     if (shell_entry == 0) {
@@ -948,8 +964,10 @@ void kmain(BootInfo *info) {
     }
     shell->entry_point = shell_entry;
 
-    /* shell is already on the ready queue (process_create added it).
-       Fall into the idle loop; the timer will pick the shell up. */
+    /* ELF is loaded and entry point set — make the shell runnable. */
+    scheduler_ready_queue_add(shell);
+
+    /* Fall into the idle loop; the timer will pick the shell up. */
     kernel_idle_loop();
     /* not reached */
 }

@@ -8,10 +8,21 @@
 #include "include/user_space.h"
 #include "include/elf.h"
 #include <string.h>
+#include <stddef.h>
 
 #define DBG 0
 
 static uint8_t kernel_stack_pool[MAX_PROCESSES][PROC_STACK_SIZE] __attribute__((aligned(16)));
+
+/* Slot ownership map. slot_owner[i] is either NULL (slot i is free)
+   or a pointer to the PCB that owns kernel_stack_pool[i]. This is
+   what prevents two live PCBs from sharing the same 16 KB kernel
+   stack, which is what used to happen when the slot was computed as
+   pid % MAX_PROCESSES and pid exceeded MAX_PROCESSES.
+
+   Idle owns slot 0 (see kernel_stack_slot_alloc: it always picks the
+   lowest free index, and idle is created first). */
+static pcb_t* slot_owner[MAX_PROCESSES];
 
 static pcb_t pcb_pool[MAX_PROCESSES];
 static pcb_t* current_process = NULL;
@@ -23,6 +34,46 @@ static void process_initialize_pcb(pcb_t* pcb);
 
 #define KERNEL_BASE 0xFFFFFFFF80000000ULL
 
+/* Allocate a free kernel stack slot for pcb. Returns the slot index,
+   or KERNEL_STACK_SLOT_NONE if the pool is exhausted.
+
+   The previous scheme used `pcb->pid % MAX_PROCESSES`. That was
+   wrong: next_pid is monotonic and process_reclaim/process_destroy
+   set the PCB's pid to 0 but never decrement next_pid, so after
+   enough process churn the modulo wraps around and starts colliding
+   with slots still owned by live PCBs. The worst collision was
+   aliasing idle's slot: a new process would write its initial
+   iretq frame over idle's saved frame at the same address, and the
+   next time the scheduler resumed idle, it iretq'd from garbage
+   (observed symptom: kernel-mode #GP with a bogus selector in the
+   error code, after a dozen or so testyield runs).
+
+   The new allocator is O(MAX_PROCESSES) and keyed on slot_owner[],
+   which is the authoritative map of who owns what. Slots are freed
+   by kernel_stack_slot_free below. */
+static int kernel_stack_slot_alloc(pcb_t* pcb) {
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (slot_owner[i] == NULL) {
+            slot_owner[i] = pcb;
+            return i;
+        }
+    }
+    return KERNEL_STACK_SLOT_NONE;
+}
+
+static void kernel_stack_slot_free(pcb_t* pcb) {
+    if (!pcb) return;
+    int slot = pcb->kernel_stack_slot;
+    if (slot < 0 || slot >= MAX_PROCESSES) return;
+    if (slot_owner[slot] == pcb) {
+        slot_owner[slot] = NULL;
+    }
+    pcb->kernel_stack_slot = KERNEL_STACK_SLOT_NONE;
+    pcb->kernel_stack_phys = 0;
+    pcb->kernel_stack_virt = 0;
+    pcb->kernel_stack_top  = 0;
+}
+
 void kernel_idle_loop(void) {
     for (;;) {
         __asm__ volatile("hlt");
@@ -31,6 +82,9 @@ void kernel_idle_loop(void) {
 
 void process_init(void) {
     memset(pcb_pool, 0, sizeof(pcb_pool));
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        slot_owner[i] = NULL;
+    }
 
     pcb_t* idle = process_create("idle", (uint64_t)kernel_idle_loop, 0);
     if (idle) {
@@ -82,6 +136,7 @@ static void process_initialize_pcb(pcb_t* pcb) {
     pcb->state = PROC_STATE_UNUSED;
     pcb->elf_page_list = NULL;
     pcb->elf_num_pages = 0;
+    pcb->kernel_stack_slot = KERNEL_STACK_SLOT_NONE;
     process_count++;
 }
 
@@ -168,9 +223,20 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
         pcb->user_stack_top = 0;
     }
 
-    pcb->kernel_stack_virt = (uint64_t)&kernel_stack_pool[pcb->pid % MAX_PROCESSES];
+    /* Allocate a private kernel stack slot. The slot index is now
+       decoupled from pid; see kernel_stack_slot_alloc for why. */
+    int slot = kernel_stack_slot_alloc(pcb);
+    if (slot == KERNEL_STACK_SLOT_NONE) {
+        serial_print("PROCESS: kernel stack pool exhausted\n");
+        pcb->state = PROC_STATE_UNUSED;
+        pcb->pid = 0;
+        process_count--;
+        return NULL;
+    }
+    pcb->kernel_stack_slot = slot;
+    pcb->kernel_stack_virt = (uint64_t)&kernel_stack_pool[slot];
     pcb->kernel_stack_phys = vmm_get_phys(pcb->kernel_stack_virt);
-    pcb->kernel_stack_top = pcb->kernel_stack_virt + PROC_STACK_SIZE;
+    pcb->kernel_stack_top  = pcb->kernel_stack_virt + PROC_STACK_SIZE;
 
     ensure_hhdm_mapped(pcb->kernel_stack_phys);
     if (pcb->user_stack_phys) {
@@ -268,12 +334,20 @@ void process_dump_all(void) {
         if (p->state == PROC_STATE_UNUSED) continue;
 
         const char* state_str;
-        switch (p->state) {
-            case PROC_STATE_READY: state_str = "READY"; break;
-            case PROC_STATE_RUNNING: state_str = "RUNNING"; break;
-            case PROC_STATE_BLOCKED: state_str = "BLOCKED"; break;
-            case PROC_STATE_TERMINATED: state_str = "TERMINATED"; break;
-            default: state_str = "UNKNOWN"; break;
+        /* A PCB that is READY but not on the ready queue is detached
+           (e.g. a placeholder from 'proccreate'). It is not runnable.
+           Idle is the exception: it is intentionally off-queue. */
+        if (p->state == PROC_STATE_READY && p->pid != 1 &&
+            p->prev == NULL && p->next == NULL) {
+            state_str = "DETACHED";
+        } else {
+            switch (p->state) {
+                case PROC_STATE_READY: state_str = "READY"; break;
+                case PROC_STATE_RUNNING: state_str = "RUNNING"; break;
+                case PROC_STATE_BLOCKED: state_str = "BLOCKED"; break;
+                case PROC_STATE_TERMINATED: state_str = "TERMINATED"; break;
+                default: state_str = "UNKNOWN"; break;
+            }
         }
 
         serial_print_dec(p->pid); serial_print("  ");
@@ -371,13 +445,9 @@ void process_cleanup_elf_pages(pcb_t* pcb) {
    reused. Called from process_exit in scheduler.c, in the context of
    the exiting process, before the scheduler switches away.
 
-   Frees the process's ELF segment pages and user stack pages, and
-   the elf_page_list array itself. Does NOT free the page tables
-   (cr3); that teardown is deferred, because it requires walking the
-   page tables and freeing the user-space portion without touching
-   shared kernel mappings. The page-table leak is a few pages per
-   process; the PCB slot is the resource that actually runs out
-   (32 total).
+   Frees the process's ELF segment pages and user stack pages, the
+   elf_page_list array, and the kernel stack slot. Does NOT free the
+   page tables (cr3); that teardown is deferred.
 
    Does not remove the process from the ready queue or clear
    current_process; the caller (process_exit) already did those
@@ -388,6 +458,12 @@ void process_reclaim(pcb_t* pcb) {
 
     process_cleanup_elf_pages(pcb);
     pcb->user_stack_phys = 0;
+
+    /* Release the kernel stack slot before the PCB slot, so a
+       subsequent process_create in the same tick does not have to
+       scan past a slot still marked owned by this (dead) PCB. */
+    kernel_stack_slot_free(pcb);
+
     pcb->state = PROC_STATE_UNUSED;
     pcb->pid = 0;
     process_count--;
@@ -397,6 +473,7 @@ void process_destroy(pcb_t* pcb) {
     if (!pcb || pcb->state == PROC_STATE_UNUSED) return;
     process_cleanup_elf_pages(pcb);
     pcb->user_stack_phys = 0;
+    kernel_stack_slot_free(pcb);
     pcb->state = PROC_STATE_UNUSED;
     pcb->pid = 0;
     process_count--;
@@ -404,3 +481,31 @@ void process_destroy(pcb_t* pcb) {
     if (current_process == pcb) current_process = NULL;
     serial_print("PROCESS: Process destroyed\n");
 }
+
+/* =====================================================================
+   ABI LOCK: pcb_t layout must match context_switch.asm's hardcoded
+   offsets. If you change pcb_t, update both the asm AND these asserts.
+   These compile-time checks turn "silent ABI drift" into a build error,
+   which is what it should have been all along.
+   ===================================================================== */
+_Static_assert(offsetof(pcb_t, cr3)              == 0x030, "context_switch.asm: cr3 offset");
+_Static_assert(offsetof(pcb_t, entry_point)      == 0x038, "context_switch.asm: entry_point offset");
+_Static_assert(offsetof(pcb_t, user_stack_top)   == 0x070, "context_switch.asm: user_stack_top offset");
+_Static_assert(offsetof(pcb_t, r15)              == 0x098, "context_switch.asm: r15 offset");
+_Static_assert(offsetof(pcb_t, r14)              == 0x0A0, "context_switch.asm: r14 offset");
+_Static_assert(offsetof(pcb_t, r13)              == 0x0A8, "context_switch.asm: r13 offset");
+_Static_assert(offsetof(pcb_t, r12)              == 0x0B0, "context_switch.asm: r12 offset");
+_Static_assert(offsetof(pcb_t, r11)              == 0x0B8, "context_switch.asm: r11 offset");
+_Static_assert(offsetof(pcb_t, r10)              == 0x0C0, "context_switch.asm: r10 offset");
+_Static_assert(offsetof(pcb_t, r9)               == 0x0C8, "context_switch.asm: r9 offset");
+_Static_assert(offsetof(pcb_t, r8)               == 0x0D0, "context_switch.asm: r8 offset");
+_Static_assert(offsetof(pcb_t, rbp)              == 0x0D8, "context_switch.asm: rbp offset");
+_Static_assert(offsetof(pcb_t, rdi)              == 0x0E0, "context_switch.asm: rdi offset");
+_Static_assert(offsetof(pcb_t, rsi)              == 0x0E8, "context_switch.asm: rsi offset");
+_Static_assert(offsetof(pcb_t, rdx)              == 0x0F0, "context_switch.asm: rdx offset");
+_Static_assert(offsetof(pcb_t, rcx)              == 0x0F8, "context_switch.asm: rcx offset");
+_Static_assert(offsetof(pcb_t, rbx)              == 0x100, "context_switch.asm: rbx offset");
+_Static_assert(offsetof(pcb_t, rax)              == 0x108, "context_switch.asm: rax offset");
+_Static_assert(offsetof(pcb_t, rsp)              == 0x110, "context_switch.asm: rsp offset");
+_Static_assert(offsetof(pcb_t, rip)              == 0x118, "context_switch.asm: rip offset");
+_Static_assert(offsetof(pcb_t, block_kind)       == 0x158, "context_switch.asm: block_kind offset");
