@@ -102,24 +102,59 @@ long sys_write(int fd, const void* buf, size_t count) {
 }
 
 long sys_read(int fd, void* buf, size_t count) {
-    if (fd == 0) {
-        char c;
-        size_t bytes_read = 0;
-        uint8_t* dest_ptr = (uint8_t*)buf;
-
-        while (bytes_read < count) {
-            __asm__ volatile("sti; hlt");
-            if (kbd_buffer_get(&c)) {
-                if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
-                    bytes_read++;
-                } else {
-                    return -1;
-                }
-            }
-        }
-        return bytes_read;
+    if (fd != 0) {
+        return 0;
     }
-    return 0;
+    if (!buf || count == 0) {
+        return 0;
+    }
+
+    pcb_t* self = process_get_current();
+    if (!self) {
+        return 0;
+    }
+
+    char c;
+    size_t bytes_read = 0;
+    uint8_t* dest_ptr = (uint8_t*)buf;
+
+    while (bytes_read < count) {
+        /* Interrupts off across the buffer check and the BLOCKED
+           transition, so irq1 cannot deliver a byte between the two
+           and miss the wake. */
+        __asm__ volatile("cli");
+
+        if (kbd_buffer_get(&c)) {
+            __asm__ volatile("sti");
+            if (safe_copy_to_user(dest_ptr + bytes_read, &c, 1) == 0) {
+                bytes_read++;
+            } else {
+                return -1;
+            }
+            continue;
+        }
+
+        /* Buffer empty. Idle must never block (it is the fallback
+           runnable process); keep spinning. */
+        if (self->pid == 1) {
+            __asm__ volatile("sti");
+            __asm__ volatile("hlt");
+            continue;
+        }
+
+        /* Mark BLOCKED and halt. The next timer tick's kernel-mode
+           branch saves our kernel frame into the PCB and, because
+           state is BLOCKED, leaves us off the ready queue. irq1_handler
+           wakes us (BLOCKED -> READY, back on the queue) when a key
+           arrives, and the timer resumes us via irq0_stub's iretq
+           using the frame it saved. We return here and retry the
+           buffer check. */
+        self->state = PROC_STATE_BLOCKED;
+        __asm__ volatile("sti");
+        __asm__ volatile("hlt");
+    }
+
+    return (long)bytes_read;
 }
 
 void* sys_brk(long inc) {

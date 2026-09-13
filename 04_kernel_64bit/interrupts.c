@@ -197,7 +197,11 @@ timer_preempt_handler(uint64_t stack_pointer) {
             }
         }
 
-        if (current->pid != 1 && current->state != PROC_STATE_TERMINATED) {
+        /* Only a RUNNING current goes back on the ready queue. A
+           BLOCKED process must stay off it; that is what makes "a
+           shell waiting for input does not prevent any other process
+           from running" hold. A TERMINATED process is already removed. */
+        if (current->pid != 1 && current->state == PROC_STATE_RUNNING) {
             current->state = PROC_STATE_READY;
             scheduler_ready_queue_add(current);
         }
