@@ -334,6 +334,83 @@ void isr8_handler(void) {
 #define EXC_OFF_RSP        19
 #define EXC_OFF_SS         20
 
+//~ void isr13_handler(exception_frame_t *frame) {
+    //~ uint64_t *raw = (uint64_t *)frame;
+    //~ uint64_t error_code = raw[EXC_OFF_ERROR_CODE];
+    //~ uint64_t fault_rip  = raw[EXC_OFF_RIP];
+    //~ uint64_t fault_cs   = raw[EXC_OFF_CS];
+    //~ uint64_t fault_rsp  = raw[EXC_OFF_RSP];
+
+    //~ vga_print("\n=== GENERAL PROTECTION FAULT (#GP) ===\n");
+    //~ vga_print("  Faulting RIP : 0x"); vga_print_hex_cur(fault_rip);  vga_print("\n");
+    //~ vga_print("  Code Seg (CS): 0x"); vga_print_hex_cur(fault_cs);   vga_print("\n");
+    //~ vga_print("  Stack (RSP)  : 0x"); vga_print_hex_cur(fault_rsp);  vga_print("\n");
+    //~ vga_print("  Error Code   : 0x"); vga_print_hex_cur(error_code); vga_print("\n");
+
+    //~ serial_print("\n=== GENERAL PROTECTION FAULT (#GP) ===\n");
+    //~ serial_print("  Faulting RIP : 0x"); serial_print_hex(fault_rip);  serial_print("\n");
+    //~ serial_print("  Code Seg (CS): 0x"); serial_print_hex(fault_cs);   serial_print("\n");
+    //~ serial_print("  Stack (RSP)  : 0x"); serial_print_hex(fault_rsp);  serial_print("\n");
+    //~ serial_print("  Error Code   : 0x"); serial_print_hex(error_code); serial_print("\n");
+
+    //~ /*
+     //~ * TSS.RSP0 diagnostic. When the CPU takes a user-mode interrupt or
+     //~ * exception, it switches to the stack at TSS.RSP0. If the fault
+     //~ * frame's SS slot is wrong, either TSS.RSP0 points at the wrong
+     //~ * stack (so the frame is being built on top of stale data) or
+     //~ * something wrote the wrong value into the slot.
+     //~ *
+     //~ * Reading TSS.RSP0 requires walking the GDT to find the TSS base.
+     //~ * The TSS descriptor is at GDT selector 0x38 (two 8-byte entries).
+     //~ */
+    //~ {
+        //~ struct __attribute__((packed)) {
+            //~ uint16_t limit;
+            //~ uint64_t base;
+        //~ } gdt_ptr;
+        //~ __asm__ volatile("sgdt %0" : "=m"(gdt_ptr));
+
+        //~ uint64_t* gdt = (uint64_t*)gdt_ptr.base;
+        //~ uint64_t tss_desc_low  = gdt[0x38 / 8];
+        //~ uint64_t tss_desc_high = gdt[0x38 / 8 + 1];
+        //~ uint64_t tss_base = ((tss_desc_low >> 16) & 0xFFFFFF)
+                          //~ | (((tss_desc_low >> 56) & 0xFF) << 24)
+                          //~ | ((tss_desc_high & 0xFFFFFFFF) << 32);
+
+        //~ serial_print("  TSS base   : 0x"); serial_print_hex(tss_base); serial_print("\n");
+        //~ if (tss_base) {
+            //~ uint64_t rsp0 = *(uint64_t*)(tss_base + 4);
+            //~ uint64_t rsp1 = *(uint64_t*)(tss_base + 12);
+            //~ uint64_t rsp2 = *(uint64_t*)(tss_base + 20);
+            //~ serial_print("  TSS.RSP0   : 0x"); serial_print_hex(rsp0); serial_print("\n");
+            //~ serial_print("  TSS.RSP1   : 0x"); serial_print_hex(rsp1); serial_print("\n");
+            //~ serial_print("  TSS.RSP2   : 0x"); serial_print_hex(rsp2); serial_print("\n");
+        //~ }
+    //~ }
+
+    //~ /*
+     //~ * Raw frame dump. The #GP stub (isr13_stub) pushes all 15 GPRs
+     //~ * before calling this handler, so `raw[0..14]` are the saved GPRs
+     //~ * and `raw[15..20]` are the CPU-pushed fault frame
+     //~ * (error_code, rip, cs, rflags, rsp, ss).
+     //~ *
+     //~ * We dump 48 slots so we can see several frames deep. This is the
+     //~ * only way to see what the CPU was actually trying to iretq to
+     //~ * when the fault fired.
+     //~ */
+    //~ serial_print("  --- raw frame dump ---\n");
+    //~ for (int i = 0; i < 48; i++) {
+        //~ serial_print("    [");
+        //~ serial_print_dec(i);
+        //~ serial_print("] 0x");
+        //~ serial_print_hex(raw[i]);
+        //~ serial_print("\n");
+    //~ }
+    //~ serial_print("  --- end frame dump ---\n");
+
+    //~ while (1) __asm__ volatile("hlt");
+//~ }
+
 void isr13_handler(exception_frame_t *frame) {
     uint64_t *raw = (uint64_t *)frame;
     uint64_t error_code = raw[EXC_OFF_ERROR_CODE];
@@ -352,6 +429,72 @@ void isr13_handler(exception_frame_t *frame) {
     serial_print("  Code Seg (CS): 0x"); serial_print_hex(fault_cs);   serial_print("\n");
     serial_print("  Stack (RSP)  : 0x"); serial_print_hex(fault_rsp);  serial_print("\n");
     serial_print("  Error Code   : 0x"); serial_print_hex(error_code); serial_print("\n");
+
+    /*
+     * TSS.RSP0 diagnostic. When the CPU takes a user-mode interrupt or
+     * exception, it switches to the stack at TSS.RSP0. If the fault
+     * frame's SS slot is wrong, either TSS.RSP0 points at the wrong
+     * stack, or something wrote the wrong value into the slot.
+     */
+    {
+        struct __attribute__((packed)) {
+            uint16_t limit;
+            uint64_t base;
+        } gdt_ptr;
+        __asm__ volatile("sgdt %0" : "=m"(gdt_ptr));
+
+        uint64_t* gdt = (uint64_t*)gdt_ptr.base;
+        uint64_t tss_desc_low  = gdt[0x38 / 8];
+        uint64_t tss_desc_high = gdt[0x38 / 8 + 1];
+        uint64_t tss_base = ((tss_desc_low >> 16) & 0xFFFFFF)
+                          | (((tss_desc_low >> 56) & 0xFF) << 24)
+                          | ((tss_desc_high & 0xFFFFFFFF) << 32);
+
+        serial_print("  TSS base   : 0x"); serial_print_hex(tss_base); serial_print("\n");
+        if (tss_base) {
+            uint64_t rsp0 = *(uint64_t*)(tss_base + 4);
+            serial_print("  TSS.RSP0   : 0x"); serial_print_hex(rsp0); serial_print("\n");
+        }
+    }
+
+    /*
+     * Process-state diagnostic. Tells us what the scheduler thinks
+     * the current process's kernel stack top and saved RSP are.
+     * If TSS.RSP0 != cur->kernel_stack_top, the TSS is out of sync
+     * with the scheduler. If cur->rsp doesn't point at a valid frame,
+     * the saved frame is bad.
+     */
+    {
+        extern pcb_t* process_get_current(void);
+        pcb_t* cur = process_get_current();
+        if (cur) {
+            serial_print("  Current PID : "); serial_print_dec(cur->pid); serial_print("\n");
+            serial_print("  Name        : "); serial_print(cur->name); serial_print("\n");
+            serial_print("  entry_point : 0x"); serial_print_hex(cur->entry_point); serial_print("\n");
+            serial_print("  kernel_top  : 0x"); serial_print_hex(cur->kernel_stack_top); serial_print("\n");
+            serial_print("  user_stack  : 0x"); serial_print_hex(cur->user_stack_top); serial_print("\n");
+            serial_print("  saved rsp   : 0x"); serial_print_hex(cur->rsp); serial_print("\n");
+            serial_print("  saved rip   : 0x"); serial_print_hex(cur->rip); serial_print("\n");
+        } else {
+            serial_print("  Current PID : (null)\n");
+        }
+    }
+
+    /*
+     * Raw frame dump. The #GP stub (isr13_stub) pushes all 15 GPRs
+     * before calling this handler, so `raw[0..14]` are the saved GPRs
+     * and `raw[15..20]` are the CPU-pushed fault frame
+     * (error_code, rip, cs, rflags, rsp, ss).
+     */
+    serial_print("  --- raw frame dump ---\n");
+    for (int i = 0; i < 48; i++) {
+        serial_print("    [");
+        serial_print_dec(i);
+        serial_print("] 0x");
+        serial_print_hex(raw[i]);
+        serial_print("\n");
+    }
+    serial_print("  --- end frame dump ---\n");
 
     while (1) __asm__ volatile("hlt");
 }

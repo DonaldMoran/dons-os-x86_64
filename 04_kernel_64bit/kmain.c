@@ -80,13 +80,59 @@ void test_process_entry(void) {
 
 extern void user_syscall_entry(void);
 
+/*
+ * IA32_STAR programming for SYSCALL/SYSRET.
+ *
+ * STAR[63:48] is the SYSRET CS/SS base; STAR[47:32] is the SYSCALL CS/SS base.
+ *
+ * We use a SYSRET base of 0x23 rather than the more common 0x20 so that
+ * SYSRET works correctly on both Intel and AMD:
+ *
+ *   - Intel SYSRET forces RPL 3 on the loaded CS/SS, so base 0x20 gives
+ *     CS=0x33, SS=0x2B.
+ *   - AMD SYSRET does NOT force RPL 3 (APM Vol 3). Base 0x20 gives
+ *     SS=0x28 (RPL 0, DPL 3), an invalid user-mode stack selector. The
+ *     CPU runs with it until the next interrupt, then iretq validates SS
+ *     against CPL and raises #GP(0x28). This is the AMD-only fault we hit
+ *     under KVM; TCG masks it because QEMU's emulated SYSRET forces RPL 3.
+ *
+ * Pre-baking the RPL bits into the base fixes both vendors:
+ *     SYSRET CS = 0x23 + 16 = 0x33  (RPL 3)  ✓
+ *     SYSRET SS = 0x23 +  8 = 0x2B  (RPL 3)  ✓
+ * Intel's forced OR with 3 is a no-op on these values.
+ *
+ * SYSCALL base stays 0x18: kernel CS = 0x18, SS = 0x20. SYSCALL does not
+ * apply the RPL trick, so this half is vendor-independent.
+ *
+ * Note: syscall_init() runs syscall_init_asm() first with the same values;
+ * this function is the authoritative writer and overwrites it. Keep them
+ * in sync — both must use SYSRET base 0x23.
+ */
+//~ void user_syscall_init(void) {
+    //~ uint64_t star = ((uint64_t)0x23 << 48) | ((uint64_t)0x18 << 32);
+    //~ wrmsr(0xC0000081, star);
+    //~ wrmsr(0xC0000082, (uint64_t)user_syscall_entry);
+    //~ wrmsr(0xC0000084, (1ULL << 9));
+    //~ serial_print("**RING** 3 syscalls Initialized\n");
+//~ }
 void user_syscall_init(void) {
-    uint64_t star = ((uint64_t)0x20 << 48) | ((uint64_t)0x18 << 32);
+    /*
+     * IA32_EFER (0xC0000080): set SCE (bit 0) to enable SYSCALL/SYSRET.
+     * Without this, SYSCALL from ring 3 raises #UD. Previously this was
+     * done in syscall_init_asm; since that routine was folded into this
+     * function, EFER programming lives here now.
+     */
+    uint64_t efer = rdmsr(0xC0000080);
+    efer |= 1ULL;                   /* SCE */
+    wrmsr(0xC0000080, efer);
+
+    uint64_t star = ((uint64_t)0x23 << 48) | ((uint64_t)0x18 << 32);
     wrmsr(0xC0000081, star);
     wrmsr(0xC0000082, (uint64_t)user_syscall_entry);
     wrmsr(0xC0000084, (1ULL << 9));
     serial_print("**RING** 3 syscalls Initialized\n");
 }
+
 
 static int strcmp(const char *s1, const char *s2) {
     while (*s1 && (*s1 == *s2)) { s1++; s2++; }
@@ -1056,7 +1102,7 @@ void kmain(BootInfo *info) {
 
     enable_user_fsgsbase();
     
-    syscall_init();
+    // syscall_init();
     user_syscall_init();
 
     // =======================================================================

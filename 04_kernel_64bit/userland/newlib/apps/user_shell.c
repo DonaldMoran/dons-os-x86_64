@@ -7,7 +7,7 @@ int main(int argc, char** argv) {
     (void)argv;
 
     /* Unbuffered stdout so every printf immediately hits sys_write. */
-    setvbuf(stdout, NULL, _IONBF, 0);
+    //setvbuf(stdout, NULL, _IONBF, 0);
 
     printf("\n========================================\n");
     printf("   DonsDOS Native Newlib 4.x User Shell\n");

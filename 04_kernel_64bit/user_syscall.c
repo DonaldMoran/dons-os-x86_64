@@ -225,8 +225,9 @@ uint64_t syscall_dispatch(uint64_t num,
     }
 }
 
-void syscall_init(void) {
-    extern void syscall_init_asm(void);
-    syscall_init_asm();
-    serial_print("SYSCALL init done\n");
-}
+// Handled now in kmain.c
+//~ void syscall_init(void) {
+    //~ extern void syscall_init_asm(void);
+    //~ syscall_init_asm();
+    //~ serial_print("SYSCALL init done\n");
+//~ }

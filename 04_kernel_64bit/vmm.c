@@ -60,8 +60,11 @@ void vmm_init(BootInfo* info) {
 
     vmm_max_physical = max_phys;
 
+    //~ for (uint64_t addr = 0; addr < 0x200000; addr += 0x1000) {
+        //~ vmm_map_page(addr, addr, PT_PRESENT | PT_WRITE | PAGE_UNCACHED);
+    //~ }
     for (uint64_t addr = 0; addr < 0x200000; addr += 0x1000) {
-        vmm_map_page(addr, addr, PT_PRESENT | PT_WRITE | PAGE_UNCACHED);
+        vmm_map_page(addr, addr, PT_PRESENT | PT_WRITE);
     }
 
     serial_print("VMM: init OK, ");
