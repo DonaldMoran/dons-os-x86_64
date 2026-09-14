@@ -9,6 +9,25 @@ BOOTINFO_MAGIC equ 0x4F534F444E4F53
 BOOTINFO_VERSION equ 1
 
 ; ============================================
+; Kernel staging and destination layout
+; --------------------------------------------
+;   Staging   : 0x80000 .. 0xB7FFF  (192 KB, three 64 KB passes)
+;                 - 0x80000 .. 0x9FFFF  PASS 1+2 (usable RAM)
+;                 - 0xA0000 .. 0xAFFFF  PASS 3 (VGA graphics memory,
+;                   unused in text mode 03h)
+;   Destination: 0x100000 .. 0x12FFFF (192 KB, copied in long mode)
+;
+; The staging region must stop below 0xB8000, which is where the
+; VGA text-mode framebuffer lives. A fourth pass starting at
+; 0xB000:0000 would clobber the screen.
+; ============================================
+KERNEL_SECTORS_PER_PASS equ 128
+KERNEL_PASSES           equ 3
+KERNEL_TOTAL_SECTORS    equ KERNEL_SECTORS_PER_PASS * KERNEL_PASSES
+KERNEL_TOTAL_BYTES      equ KERNEL_TOTAL_SECTORS * 512      ; 192 KB
+KERNEL_TOTAL_QWORDS     equ KERNEL_TOTAL_BYTES / 8          ; 24576
+
+; ============================================
 ; DAP entries - at the beginning for fixed offsets
 ; Configured for isolated 128-sector passes to prevent segment wraps
 ; ============================================
@@ -55,7 +74,7 @@ start:
 
     ; ----------------------------------------------------
     ; THE TRICK: Advance your segment and LBA coordinates!
-    ; We shift the segment forward by 0x1000 to target 
+    ; We shift the segment forward by 0x1000 to target
     ; the next 64 KB block, preventing segment wrap-around!
     ; We use dword to keep the 16-bit compiler happy.
     ; ----------------------------------------------------
@@ -64,6 +83,25 @@ start:
 
     ; ----------------------------------------------------
     ; PASS 2: Load next 128 sectors (64 KB) to 0x9000:0000
+    ; ----------------------------------------------------
+    mov si, dap_kernel
+    mov dl, 0x80
+    mov ah, 0x42
+    int 0x13
+    jc disk_error
+
+    ; ----------------------------------------------------
+    ; Advance to the third and final 64 KB block. Segment
+    ; 0xA000 lands at physical 0xA0000..0xAFFFF, which is
+    ; VGA graphics memory on real hardware but is unused in
+    ; text mode 03h (the text framebuffer is at 0xB8000).
+    ; ----------------------------------------------------
+    add word [dap_kernel.segment], 0x1000  ; Next target segment pointer: 0xA000
+    add dword [dap_kernel.lba], 128        ; Next target disk sector coordinate: 192 + 128 = 320
+
+    ; ----------------------------------------------------
+    ; PASS 3: Load final 128 sectors (64 KB) to 0xA000:0000
+    ; Total loaded: 384 sectors = 192 KB at 0x80000..0xB7FFF
     ; ----------------------------------------------------
     mov si, dap_kernel
     mov dl, 0x80
@@ -154,13 +192,19 @@ long_mode_entry:
     mov qword [rbx + 0x18], rax            ; memory_map_count
 
     ; ============================================
-    ; Copy kernel from 0x80000 to 0x100000
-    ; We scale the copy counter register loops up to 
-    ; 16384 quadwords to copy the full 128 KB data payload safely!
+    ; Copy kernel from staging (0x80000) to destination (0x100000)
+    ;
+    ; 192 KB total = 24576 quadwords. The staging region is
+    ; 0x80000..0xB7FFF and the destination is 0x100000..0x12FFFF,
+    ; so they do not overlap; the rep movsq is a straight copy.
+    ;
+    ; If you raise KERNEL_TOTAL_QWORDS above the value that keeps
+    ; staging below 0xB8000, you will overwrite the VGA text
+    ; framebuffer. See the layout comment near the top of the file.
     ; ============================================
     mov rsi, 0x00080000
     mov rdi, 0x00100000
-    mov rcx, 16384          
+    mov rcx, KERNEL_TOTAL_QWORDS
     rep movsq
 
     ; Jump to kernel
@@ -244,7 +288,7 @@ bootinfo:
     dq e820_buffer          ; 0x10: memory_map_addr
     dq 0                    ; 0x18: memory_map_count
     dq 0x00100000           ; 0x20: kernel_phys_start
-    dq 0x00100000 + (256*512) ; 0x28: kernel_phys_end (256 sectors = 256*512 bytes = 128 KB)
+    dq 0x00100000 + KERNEL_TOTAL_BYTES ; 0x28: kernel_phys_end (192 KB reserved)
     dq pml4                 ; 0x30: pml4_addr
     dq 0xFFFFFF7FBFDFE000   ; 0x38: pml4_virt
     dq 0                    ; 0x40: framebuffer_addr

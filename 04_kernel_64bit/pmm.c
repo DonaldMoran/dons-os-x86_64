@@ -8,6 +8,19 @@
 #define MAX_PAGES      (MAX_PHYS_MEM / PAGE_SIZE)
 #define BITMAP_SIZE    (MAX_PAGES / 8)
 
+/*
+ * Safety floor added on top of BootInfo.kernel_phys_end when
+ * reserving the kernel's physical range. stage2.asm reports the end
+ * of the file-backed portion of the kernel; .bss is NOBITS and has no
+ * file representation, so stage2 cannot know its size. The
+ * authoritative reservation is computed from _kernel_end (see the
+ * reservation block in pmm_init); this margin is a floor so that if
+ * BootInfo ever reports a larger range than _kernel_end (which would
+ * happen if stage2's constants and the actual kernel image drift),
+ * the larger of the two wins.
+ */
+#define KERNEL_RESERVE_MARGIN  0x4000ULL
+
 static uint8_t pmm_bitmap[BITMAP_SIZE];
 static page_info_t pmm_page_info[MAX_PAGES];
 static uint64_t pmm_total_pages = 0;
@@ -201,12 +214,49 @@ void pmm_init(BootInfo *info) {
         }
     }
 
-    if (info->kernel_phys_start && info->kernel_phys_end) {
+    /*
+     * Reserve the kernel's physical footprint, .bss included.
+     *
+     * BootInfo.kernel_phys_end describes what stage2 loaded from disk.
+     * That covers the file-backed portion of the image (.text, .rodata,
+     * .data, .userelf) but NOT .bss, because .bss is NOBITS and takes
+     * no space in the file. stage2 has no way to know its size.
+     *
+     * The kernel's .bss begins immediately after .userelf and can be
+     * several megabytes (pmm_page_info alone is 1.25 MB,
+     * kernel_stack_pool is 512 KB). If .bss extends past the reserved
+     * range, the PMM will hand its pages out for page tables and
+     * user data, silently corrupting the kernel's own state.
+     *
+     * _kernel_end, emitted by linker.ld after .bss, is the end of the
+     * kernel's virtual address range. Its physical address is what
+     * needs to be reserved. The higher-half base subtracted here must
+     * match the linker script's .text base.
+     *
+     * KERNEL_RESERVE_MARGIN is kept as a floor so that a mismatch
+     * between stage2's constant and the actual kernel image (in
+     * either direction) still reserves the larger of the two ranges.
+     */
+    {
+        extern char _kernel_end;
+        uint64_t kend_virt = (uint64_t)&_kernel_end;
+        uint64_t kend_phys = kend_virt - 0xFFFFFFFF80000000ULL;
+
         uint64_t kstart = info->kernel_phys_start;
-        uint64_t kend = info->kernel_phys_end;
+        uint64_t kend   = kend_phys;
+
+        if (info->kernel_phys_end + KERNEL_RESERVE_MARGIN > kend) {
+            kend = info->kernel_phys_end + KERNEL_RESERVE_MARGIN;
+        }
 
         kstart = (kstart / PAGE_SIZE) * PAGE_SIZE;
         kend = ((kend + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+
+        serial_print("PMM: reserving kernel [0x");
+        serial_print_hex(kstart);
+        serial_print(", 0x");
+        serial_print_hex(kend);
+        serial_print(") via _kernel_end\n");
 
         for (uint64_t addr = kstart; addr < kend && addr < pmm_max_physical; addr += PAGE_SIZE) {
             uint64_t page = addr / PAGE_SIZE;
