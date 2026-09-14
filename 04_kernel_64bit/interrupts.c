@@ -377,5 +377,89 @@ void isr14_handler(exception_frame_t *frame) {
     serial_print("  CS                : 0x"); serial_print_hex(fault_cs);   serial_print("\n");
     serial_print("  RSP               : 0x"); serial_print_hex(fault_rsp);  serial_print("\n");
 
+    /*
+     * Page-table walk diagnostic.
+     *
+     * Reads the four levels of the current page tables directly through
+     * the HHDM (0xFFFF800000000000 + phys) and prints the raw entry
+     * at each level for the faulting virtual address. This tells us
+     * whether the CPU is seeing a valid PTE, a 2 MB PDE, or something
+     * corrupted.
+     *
+     * If the HHDM mapping itself is broken, the first read of pml4[]
+     * will fault again and we'll see a nested fault (or a triple fault
+     * and reboot). That itself is diagnostic.
+     */
+    {
+        uint64_t cr3;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+        serial_print("  CR3               : 0x"); serial_print_hex(cr3); serial_print("\n");
+
+        uint64_t idx_pml4 = (fault_addr >> 39) & 0x1FF;
+        uint64_t idx_pdpt = (fault_addr >> 30) & 0x1FF;
+        uint64_t idx_pd   = (fault_addr >> 21) & 0x1FF;
+        uint64_t idx_pt   = (fault_addr >> 12) & 0x1FF;
+
+        serial_print("  Walk indices: pml4=");
+        serial_print_dec(idx_pml4);
+        serial_print(" pdpt=");
+        serial_print_dec(idx_pdpt);
+        serial_print(" pd=");
+        serial_print_dec(idx_pd);
+        serial_print(" pt=");
+        serial_print_dec(idx_pt);
+        serial_print("\n");
+
+        uint64_t* pml4 = (uint64_t*)(0xFFFF800000000000ULL + (cr3 & ~0xFFFULL));
+        uint64_t pml4e = pml4[idx_pml4];
+        serial_print("  pml4e             : 0x"); serial_print_hex(pml4e); serial_print("\n");
+        if (!(pml4e & 1)) {
+            serial_print("  PML4E NOT PRESENT - stopping walk\n");
+            while (1) __asm__ volatile("hlt");
+        }
+
+        uint64_t* pdpt = (uint64_t*)(0xFFFF800000000000ULL + (pml4e & ~0xFFFULL));
+        uint64_t pdpte = pdpt[idx_pdpt];
+        serial_print("  pdpte             : 0x"); serial_print_hex(pdpte); serial_print("\n");
+        if (!(pdpte & 1)) {
+            serial_print("  PDPTE NOT PRESENT - stopping walk\n");
+            while (1) __asm__ volatile("hlt");
+        }
+
+        uint64_t* pd = (uint64_t*)(0xFFFF800000000000ULL + (pdpte & ~0xFFFULL));
+        uint64_t pde = pd[idx_pd];
+        serial_print("  pde               : 0x"); serial_print_hex(pde); serial_print("\n");
+        if (!(pde & 1)) {
+            serial_print("  PDE NOT PRESENT - stopping walk\n");
+            while (1) __asm__ volatile("hlt");
+        }
+
+        if (pde & 0x80) {
+            uint64_t big_base = pde & ~0x1FFFFFULL;
+            uint64_t big_off  = fault_addr & 0x1FFFFFULL;
+            serial_print("  PDE IS 2 MB PAGE, phys base 0x");
+            serial_print_hex(big_base);
+            serial_print(" -> effective phys 0x");
+            serial_print_hex(big_base + big_off);
+            serial_print("\n");
+        } else {
+            uint64_t* pt = (uint64_t*)(0xFFFF800000000000ULL + (pde & ~0xFFFULL));
+            uint64_t pte = pt[idx_pt];
+            serial_print("  pte               : 0x"); serial_print_hex(pte); serial_print("\n");
+            if (pte & 1) {
+                uint64_t phys = (pte & ~0xFFFULL) | (fault_addr & 0xFFFULL);
+                serial_print("  PTE PRESENT, phys 0x"); serial_print_hex(phys); serial_print("\n");
+                if (pte & 0x80) {
+                    serial_print("  *** PTE HAS PS BIT SET (reserved in a PTE!) ***\n");
+                }
+                if (pte & 0x8000000000000000ULL) {
+                    serial_print("  *** PTE HAS NX BIT SET ***\n");
+                }
+            } else {
+                serial_print("  PTE NOT PRESENT\n");
+            }
+        }
+    }
+
     while (1) __asm__ volatile("hlt");
 }

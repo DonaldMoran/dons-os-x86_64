@@ -17,6 +17,10 @@ BOOTINFO_VERSION equ 1
 ;                   unused in text mode 03h)
 ;   Destination: 0x100000 .. 0x12FFFF (192 KB, copied in long mode)
 ;
+; Kernel source: LBA 128 on the disk (was LBA 64).  The shift
+; is because boot.asm now reads 128 sectors (64 KB) for stage2;
+; 64 sectors were not enough once pt_low was added.
+;
 ; The staging region must stop below 0xB8000, which is where the
 ; VGA text-mode framebuffer lives. A fourth pass starting at
 ; 0xB000:0000 would clobber the screen.
@@ -39,7 +43,7 @@ dap_kernel:
 .segment:
     dw 0x8000         ; Dynamically incremented! (Starts at 0x8000)
 .lba:
-    dd 64             ; Lower 32-bits of starting LBA (Kernel starts at sector 64)
+    dd 128            ; Lower 32-bits of starting LBA (Kernel starts at sector 128)
     dd 0              ; Upper 32-bits of starting LBA
 
 ; ============================================
@@ -50,6 +54,18 @@ start:
     mov ax, 0x1000
     mov ds, ax
     mov es, ax
+
+    ; Real-mode stack: SS=0x0000, SP=0x7C00. Physical top-of-stack
+    ; is at 0x7C00, well BELOW the page tables at 0x11000..0x17FFF.
+    ;
+    ; Previously SS=0x1000, SP=0x7C00 gave a physical top-of-stack
+    ; at 0x17C00, directly on top of pt_low (which ends at 0x18000).
+    ; BIOS int calls push flags/CS/IP and can use additional stack
+    ; space, clobbering pt_low's tail entries (e.g., pt_low[382] at
+    ; physical 0x17BF0). That corrupted the page table entry for
+    ; physical 0x17E000, causing the kernel to #PF when pmm_init
+    ; wrote to pmm_page_info[9088] (which lives at physical 0x17E000).
+    mov ax, 0x0000
     mov ss, ax
     mov sp, 0x7C00
 
@@ -73,13 +89,12 @@ start:
     jc disk_error
 
     ; ----------------------------------------------------
-    ; THE TRICK: Advance your segment and LBA coordinates!
-    ; We shift the segment forward by 0x1000 to target
-    ; the next 64 KB block, preventing segment wrap-around!
-    ; We use dword to keep the 16-bit compiler happy.
+    ; Advance segment and LBA. Shifting the segment forward
+    ; by 0x1000 targets the next 64 KB block, avoiding
+    ; segment wrap-around.
     ; ----------------------------------------------------
     add word [dap_kernel.segment], 0x1000  ; Next target segment pointer: 0x9000
-    add dword [dap_kernel.lba], 128        ; Next target disk sector coordinate: 64 + 128 = 192
+    add dword [dap_kernel.lba], 128        ; Next target disk sector coordinate: 128 + 128 = 256
 
     ; ----------------------------------------------------
     ; PASS 2: Load next 128 sectors (64 KB) to 0x9000:0000
@@ -97,7 +112,7 @@ start:
     ; text mode 03h (the text framebuffer is at 0xB8000).
     ; ----------------------------------------------------
     add word [dap_kernel.segment], 0x1000  ; Next target segment pointer: 0xA000
-    add dword [dap_kernel.lba], 128        ; Next target disk sector coordinate: 192 + 128 = 320
+    add dword [dap_kernel.lba], 128        ; Next target disk sector coordinate: 256 + 128 = 384
 
     ; ----------------------------------------------------
     ; PASS 3: Load final 128 sectors (64 KB) to 0xA000:0000
@@ -232,7 +247,23 @@ gdt_descriptor:
     dq gdt_start
 
 ; ============================================
-; Page Tables - ORIGINAL + HHDM mapping
+; Page Tables - SHARED PT FOR FIRST 2 MB
+; --------------------------------------------
+; pd[0] and pd_hhdm[0] both point at pt_low. This is the key
+; change from the original. Before, both were 2 MB pages (0x83),
+; which caused vmm_map_page() and vmm_map_page_in_cr3() to
+; misinterpret the PDE as a PT pointer and write into physical 0.
+;
+; Now:
+;   - Identity map, virt 0x0..0x1FFFFF          -> pt_low
+;   - HHDM,        virt 0xFFFF800000000000      -> pt_low
+;   - Higher-half, virt 0xFFFFFFFF80000000      -> pt_low (via pdpt_higher)
+;
+; pd[1..511] and pd_hhdm[1..511] stay as 2 MB pages. Nothing in
+; the baseline kernel calls vmm_map_page() on those ranges, so
+; the PDE-as-PT bug is not triggered there.
+;
+; Cost: one new 4 KB page table. stage2 grows by ~4 KB.
 ; ============================================
 align 4096
 pml4:
@@ -262,21 +293,29 @@ pdpt_higher:
 
 align 4096
 pd:
-    %assign i 0
-    %rep 512
+    dq pt_low + 3               ; pd[0]: points at the shared 4 KB PT
+    %assign i 1
+    %rep 511
         dq (i * 0x200000) + 0x83
         %assign i i+1
     %endrep
-    times (512 - 512) dq 0
 
 align 4096
 pd_hhdm:
-    %assign i 0
-    %rep 512
+    dq pt_low + 3               ; pd_hhdm[0]: same PT as pd[0]
+    %assign i 1
+    %rep 511
         dq (i * 0x200000) + 0x83
         %assign i i+1
     %endrep
-    times (512 - 512) dq 0
+
+align 4096
+pt_low:
+    %assign i 0
+    %rep 512
+        dq (i * 0x1000) + 0x03  ; 4 KB pages, P|W
+        %assign i i+1
+    %endrep
 
 ; ============================================
 ; BootInfo Structure (must match bootinfo.h)

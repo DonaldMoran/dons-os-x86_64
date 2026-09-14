@@ -18,13 +18,13 @@ hdd.img: boot.bin stage2.bin ../04_kernel_64bit/kernel.bin
 	qemu-img create -f raw hdd.img 20M
 	dd if=boot.bin of=hdd.img conv=notrunc
 	dd if=stage2.bin of=hdd.img bs=512 seek=1 conv=notrunc
-	dd if=../04_kernel_64bit/kernel.bin of=hdd.img bs=512 seek=64 conv=notrunc
+	dd if=../04_kernel_64bit/kernel.bin of=hdd.img bs=512 seek=128 conv=notrunc
 
 # ---------------------------------------------------------
 # QEMU Run Targets
 # ---------------------------------------------------------
 
-# PATCH: Appended '-cpu max' to default run targets. 
+# PATCH: Appended '-cpu max' to default run targets.
 # This unlocks modern instructions like wrfsbase/wrgsbase required by Newlib
 run:
 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -monitor none
