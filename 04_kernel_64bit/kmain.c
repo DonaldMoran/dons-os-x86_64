@@ -18,6 +18,7 @@
 #include "include/user_msr.h"
 #include "include/process.h"
 #include "include/scheduler.h"
+#include "include/ata.h"
 
 extern void pit_init(uint32_t freq);
 
@@ -174,14 +175,14 @@ static void handle_command(const char *cmd) {
         "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", 
         "nxtest", "syscall", "elfload", "proclist" , "proccreate" , "vmmclone", 
         "runproc", "schstat", "testyield", "usershell",
-        "gdtdump", "tssdump"
+        "gdtdump", "tssdump", "atatest"
     };
     // FIX 2: Corrected division metrics to scale array item thresholds accurately
     int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
     (void)num_commands;
 
     if (strcmp(cmd, "help") == 0) {
-        vga_print("\nAvailable commands:\n  help, clear, version, reboot, pmmtest, info, mem, test,\n  vmmtest, serialtest, heapstat, maptest, testrec, heaptest,\n  nxtest, syscall, elfload, proclist, proccreate, vmmclone,\n  runproc, schstat, testyield, usershell, gdtdump, tssdump\n> ");
+        vga_print("\nAvailable commands:\n  help, clear, version, reboot, pmmtest, info, mem, test,\n  vmmtest, serialtest, heapstat, maptest, testrec, heaptest,\n  nxtest, syscall, elfload, proclist, proccreate, vmmclone,\n  runproc, schstat, testyield, usershell, gdtdump, tssdump, atatest\n> ");;
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear(); vga_print("DonsDOS v0.4.9\nType 'help'\n> ");
     } else if (strcmp(cmd, "version") == 0) {
@@ -815,6 +816,189 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "tssdump") == 0) {
         tss_dump();
         vga_print("> ");
+
+
+
+    } else if (strcmp(cmd, "atatest") == 0) {
+        vga_print("\n=== ATA PIO Driver Test ===\n");
+        serial_print("\n=== ATA PIO Driver Test ===\n");
+
+        if (!ata_present(ATA_DRIVE_MASTER) && !ata_present(ATA_DRIVE_SLAVE)) {
+            vga_print("  Status: FAILED - no ATA device on primary channel\n");
+            serial_print("  Status: FAILED - no ATA device on primary channel\n");
+            vga_print("> ");
+            return;
+        }
+
+        /* -- Identity ------------------------------------------------- */
+        if (ata_present(ATA_DRIVE_MASTER)) {
+            vga_print("  Master model : ");
+            vga_print(ata_model(ATA_DRIVE_MASTER));
+            vga_print("\n");
+            serial_print("  Master model : ");
+            serial_print(ata_model(ATA_DRIVE_MASTER));
+            serial_print("\n");
+        }
+        if (ata_present(ATA_DRIVE_SLAVE)) {
+            vga_print("  Slave model  : ");
+            vga_print(ata_model(ATA_DRIVE_SLAVE));
+            vga_print("\n");
+            serial_print("  Slave model  : ");
+            serial_print(ata_model(ATA_DRIVE_SLAVE));
+            serial_print("\n");
+        }
+
+        uint8_t* buf = (uint8_t*)kmalloc(512);
+        if (!buf) {
+            vga_print("  Status: FAILED - kmalloc(512) denied\n");
+            serial_print("  Status: FAILED - kmalloc(512) denied\n");
+            vga_print("> ");
+            return;
+        }
+
+        int ok = 1;
+
+        /* -- Read LBA 0, check MBR signature --------------------------- */
+        vga_print("  [1] Read LBA 0 (MBR)... ");
+        serial_print("  [1] Read LBA 0 (MBR)... ");
+        if (ata_read_sector(0, buf) != 0) {
+            vga_print("FAILED\n");
+            serial_print("FAILED\n");
+            ok = 0;
+        } else {
+            uint16_t sig = (uint16_t)buf[510] | ((uint16_t)buf[511] << 8);
+            if (sig == 0xAA55) {
+                vga_print("OK (sig 0x55AA)\n");
+                serial_print("OK (sig 0x55AA)\n");
+                uint8_t* pe = buf + 446;
+                vga_print("      Part[0] boot=");  vga_print_dec_cur(pe[0]);
+                vga_print(" type=0x");             vga_print_hex_cur(pe[4]);
+                serial_print("      Part[0] boot="); serial_print_dec(pe[0]);
+                serial_print(" type=0x");            serial_print_hex(pe[4]);
+                uint32_t pstart = (uint32_t)pe[8]
+                                | ((uint32_t)pe[9]  << 8)
+                                | ((uint32_t)pe[10] << 16)
+                                | ((uint32_t)pe[11] << 24);
+                uint32_t plen = (uint32_t)pe[12]
+                              | ((uint32_t)pe[13] << 8)
+                              | ((uint32_t)pe[14] << 16)
+                              | ((uint32_t)pe[15] << 24);
+                vga_print("\n      Part[0] LBA start=0x");
+                vga_print_hex_cur(pstart);
+                vga_print(" sectors=0x");
+                vga_print_hex_cur(plen);
+                vga_print("\n");
+                serial_print("\n      Part[0] LBA start=0x");
+                serial_print_hex(pstart);
+                serial_print(" sectors=0x");
+                serial_print_hex(plen);
+                serial_print("\n");
+            } else {
+                vga_print("OK but no MBR signature (0x");
+                vga_print_hex_cur(sig);
+                vga_print(")\n");
+                serial_print("OK but no MBR signature (0x");
+                serial_print_hex(sig);
+                serial_print(")\n");
+            }
+        }
+
+        /* -- Read LBA 64, dump first 16 bytes -------------------------- */
+        vga_print("  [2] Read LBA 64 (kernel start)... ");
+        serial_print("  [2] Read LBA 64 (kernel start)... ");
+        if (ata_read_sector(64, buf) != 0) {
+            vga_print("FAILED\n");
+            serial_print("FAILED\n");
+            ok = 0;
+        } else {
+            vga_print("OK\n      first 16 bytes: ");
+            serial_print("OK\n      first 16 bytes: ");
+            for (int i = 0; i < 16; i++) {
+                vga_print_hex_cur(buf[i]);
+                vga_print(" ");
+                serial_print_hex(buf[i]);
+                serial_print(" ");
+            }
+            vga_print("\n");
+            serial_print("\n");
+        }
+
+        /* -- Scratch sector round-trip at LBA 1024 --------------------- */
+        vga_print("  [3] Write/read-back round-trip at LBA 1024...\n");
+        serial_print("  [3] Write/read-back round-trip at LBA 1024...\n");
+
+        uint8_t* orig = (uint8_t*)kmalloc(512);
+        uint8_t* pat  = (uint8_t*)kmalloc(512);
+
+        if (!orig || !pat) {
+            vga_print("      FAILED - scratch allocation denied\n");
+            serial_print("      FAILED - scratch allocation denied\n");
+            ok = 0;
+        } else {
+            int rc = ata_read_sector(1024, orig);
+            if (rc != 0) {
+                vga_print("      FAILED - could not read scratch sector\n");
+                serial_print("      FAILED - could not read scratch sector\n");
+                ok = 0;
+            } else {
+                for (int i = 0; i < 512; i++) {
+                    pat[i] = (uint8_t)(0xA5 ^ (i & 0xFF));
+                }
+
+                if (ata_write_sector(1024, pat) != 0) {
+                    vga_print("      FAILED - write rejected\n");
+                    serial_print("      FAILED - write rejected\n");
+                    ok = 0;
+                } else {
+                    uint8_t* rb = (uint8_t*)kmalloc(512);
+                    if (!rb) {
+                        vga_print("      FAILED - read-back allocation denied\n");
+                        serial_print("      FAILED - read-back allocation denied\n");
+                        ok = 0;
+                    } else {
+                        if (ata_read_sector(1024, rb) != 0) {
+                            vga_print("      FAILED - read-back failed\n");
+                            serial_print("      FAILED - read-back failed\n");
+                            ok = 0;
+                        } else {
+                            int match = 1;
+                            for (int i = 0; i < 512; i++) {
+                                if (rb[i] != pat[i]) { match = 0; break; }
+                            }
+                            if (match) {
+                                vga_print("      OK - 512 bytes verified\n");
+                                serial_print("      OK - 512 bytes verified\n");
+                            } else {
+                                vga_print("      FAILED - data mismatch\n");
+                                serial_print("      FAILED - data mismatch\n");
+                                ok = 0;
+                            }
+                        }
+                        if (ata_write_sector(1024, orig) != 0) {
+                            vga_print("      WARN - restore of scratch sector failed\n");
+                            serial_print("      WARN - restore of scratch sector failed\n");
+                        } else {
+                            vga_print("      Scratch sector restored\n");
+                            serial_print("      Scratch sector restored\n");
+                        }
+                        kfree(rb);
+                    }
+                }
+            }
+            kfree(orig);
+            kfree(pat);
+        }
+
+        kfree(buf);
+
+        if (ok) {
+            vga_print("  Status: SUCCESS\n");
+            serial_print("  Status: SUCCESS\n");
+        } else {
+            vga_print("  Status: FAILED\n");
+            serial_print("  Status: FAILED\n");
+        }
+        vga_print("> ");     
     } else {
         vga_print("\nUnknown command. Type 'help'\n> ");
     }
@@ -859,15 +1043,11 @@ void kmain(BootInfo *info) {
     idt_init();
     pit_init(100);
     asm volatile("sti");
-    
-    uint8_t mask = inb(0x21);
-    mask &= ~0x02; // Unmask keyboard IRQ1
-    outb(0x21, mask);
-    
+      
     pmm_init(g_bootinfo);
     vmm_init(info);
     heap_init(HEAP_START, HEAP_INITIAL_SIZE);
-    
+    ata_init();    
     scheduler_init();
     gdt_fix_user_segments();
     tss_init();

@@ -47,17 +47,30 @@ void pic_remap(void) {
     outb(PIC1_CMD, 0x11);
     outb(PIC2_CMD, 0x11);
 
-    outb(PIC1_DATA, 0x20);
-    outb(PIC2_DATA, 0x28);
+    outb(PIC1_DATA, 0x20);   /* master vector offset 32 */
+    outb(PIC2_DATA, 0x28);   /* slave vector offset 40 */
 
-    outb(PIC1_DATA, 0x04);
-    outb(PIC2_DATA, 0x02);
+    outb(PIC1_DATA, 0x04);   /* slave on IRQ2 */
+    outb(PIC2_DATA, 0x02);   /* cascade identity */
 
-    outb(PIC1_DATA, 0x01);
+    outb(PIC1_DATA, 0x01);   /* 8086 mode */
     outb(PIC2_DATA, 0x01);
 
-    outb(PIC1_DATA, a1);
-    outb(PIC2_DATA, a2);
+    /*
+     * Do NOT restore the BIOS mask values. The BIOS leaves IRQ14
+     * unmasked because it uses the ATA controller during boot. If we
+     * restore that mask, the first ATA command we send (IDENTIFY) makes
+     * the controller assert IRQ14, the PIC forwards it as vector 46, and
+     * the CPU takes a #GP because we have no gate at vector 46.
+     *
+     * Start from a known-good mask instead:
+     *   master: unmask IRQ0 (PIT) and IRQ1 (keyboard) only
+     *   slave:  mask everything (IRQ8-IRQ15, including IRQ14/15)
+     */
+    (void)a1;
+    (void)a2;
+    outb(PIC1_DATA, 0xFC);   /* 1111 1100 */
+    outb(PIC2_DATA, 0xFF);   /* 1111 1111 */
 }
 
 volatile uint64_t g_ticks = 0;
@@ -284,12 +297,49 @@ void isr8_handler(void) {
     while (1) __asm__ volatile("hlt");
 }
 
+/*
+ * Exception frame layout, as seen by C after the stub has pushed all GPRs:
+ *
+ *   offset 0x00: r15      } 
+ *   offset 0x08: r14      }
+ *   offset 0x10: r13      }
+ *   offset 0x18: r12      }
+ *   offset 0x20: r11      }
+ *   offset 0x28: r10      }  15 GPRs pushed by PUSH_ALL_GPRS
+ *   offset 0x30: r9       }  (120 bytes total)
+ *   offset 0x38: r8       }
+ *   offset 0x40: rbp      }
+ *   offset 0x48: rdi      }
+ *   offset 0x50: rsi      }
+ *   offset 0x58: rdx      }
+ *   offset 0x60: rcx      }
+ *   offset 0x68: rbx      }
+ *   offset 0x70: rax      }
+ *   offset 0x78: error_code   <- pushed by CPU (for #GP, #PF, #DF)
+ *   offset 0x80: rip          <- pushed by CPU
+ *   offset 0x88: cs           <- pushed by CPU
+ *   offset 0x90: rflags       <- pushed by CPU
+ *   offset 0x98: rsp          <- pushed by CPU
+ *   offset 0xA0: ss           <- pushed by CPU
+ *
+ * The old handlers read raw[0..4] as if the frame began at error_code,
+ * which meant they printed r15/r14/r13/r11 instead. That is why the #GP
+ * dump showed "RIP=0x0 CS=0x0 RSP=0x7FFF" regardless of the real fault.
+ * The fix is to index past the GPR save area.
+ */
+#define EXC_OFF_ERROR_CODE 15
+#define EXC_OFF_RIP        16
+#define EXC_OFF_CS         17
+#define EXC_OFF_RFLAGS     18
+#define EXC_OFF_RSP        19
+#define EXC_OFF_SS         20
+
 void isr13_handler(exception_frame_t *frame) {
     uint64_t *raw = (uint64_t *)frame;
-    uint64_t error_code = raw[0];
-    uint64_t fault_rip  = raw[1];
-    uint64_t fault_cs   = raw[2];
-    uint64_t fault_rsp  = raw[4];
+    uint64_t error_code = raw[EXC_OFF_ERROR_CODE];
+    uint64_t fault_rip  = raw[EXC_OFF_RIP];
+    uint64_t fault_cs   = raw[EXC_OFF_CS];
+    uint64_t fault_rsp  = raw[EXC_OFF_RSP];
 
     vga_print("\n=== GENERAL PROTECTION FAULT (#GP) ===\n");
     vga_print("  Faulting RIP : 0x"); vga_print_hex_cur(fault_rip);  vga_print("\n");
@@ -308,10 +358,10 @@ void isr13_handler(exception_frame_t *frame) {
 
 void isr14_handler(exception_frame_t *frame) {
     uint64_t *raw = (uint64_t *)frame;
-    uint64_t error_code = raw[0];
-    uint64_t fault_rip  = raw[1];
-    uint64_t fault_cs   = raw[2];
-    uint64_t fault_rsp  = raw[4];
+    uint64_t error_code = raw[EXC_OFF_ERROR_CODE];
+    uint64_t fault_rip  = raw[EXC_OFF_RIP];
+    uint64_t fault_cs   = raw[EXC_OFF_CS];
+    uint64_t fault_rsp  = raw[EXC_OFF_RSP];
     uint64_t fault_addr;
     __asm__ volatile("mov %%cr2, %0" : "=r"(fault_addr));
 
