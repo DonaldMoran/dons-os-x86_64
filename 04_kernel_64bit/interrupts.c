@@ -463,3 +463,56 @@ void isr14_handler(exception_frame_t *frame) {
 
     while (1) __asm__ volatile("hlt");
 }
+
+/*
+ * Default interrupt handler, used for all vectors that do not have a
+ * dedicated stub.  Called from isr_default_common in isr.asm.
+ *
+ * The frame layout is:
+ *   [rsp+0]    r15
+ *   [rsp+8]    r14
+ *   ...
+ *   [rsp+112]  rax
+ *   [rsp+120]  vector
+ *   [rsp+128]  error_code
+ *   [rsp+136]  rip
+ *   [rsp+144]  cs
+ *   [rsp+152]  rflags
+ *   [rsp+160]  rsp
+ *   [rsp+168]  ss
+ *
+ * This handler does not attempt to recover.  An unexpected exception
+ * or spurious IRQ means the system is in an unknown state, and the
+ * safest thing is to print diagnostics and halt.  The point of the
+ * handler is to make the failure visible instead of silent (which is
+ * what happens when a #GP, #DF, or triple fault fires on an
+ * uninstalled gate).
+ */
+void isr_default_handler(default_frame_t *frame) {
+    uint64_t vec = frame->vector;
+
+    serial_print("\n*** UNHANDLED INTERRUPT: vector ");
+    serial_print_dec(vec);
+    serial_print(" ***\n");
+    serial_print("  error_code : 0x"); serial_print_hex(frame->error_code); serial_print("\n");
+    serial_print("  rip        : 0x"); serial_print_hex(frame->rip);        serial_print("\n");
+    serial_print("  cs         : 0x"); serial_print_hex(frame->cs);         serial_print("\n");
+    serial_print("  rflags     : 0x"); serial_print_hex(frame->rflags);     serial_print("\n");
+    serial_print("  rsp        : 0x"); serial_print_hex(frame->rsp);        serial_print("\n");
+    serial_print("  ss         : 0x"); serial_print_hex(frame->ss);         serial_print("\n");
+    serial_print("  rax        : 0x"); serial_print_hex(frame->rax);        serial_print("\n");
+    serial_print("  rbx        : 0x"); serial_print_hex(frame->rbx);        serial_print("\n");
+    serial_print("  rcx        : 0x"); serial_print_hex(frame->rcx);        serial_print("\n");
+    serial_print("  rdx        : 0x"); serial_print_hex(frame->rdx);        serial_print("\n");
+    serial_print("  rsi        : 0x"); serial_print_hex(frame->rsi);        serial_print("\n");
+    serial_print("  rdi        : 0x"); serial_print_hex(frame->rdi);        serial_print("\n");
+
+    vga_print("\n*** UNHANDLED INTERRUPT: vector ");
+    vga_print_dec_cur(vec);
+    vga_print(" ***\n");
+    vga_print("  rip = 0x");
+    vga_print_hex_cur(frame->rip);
+    vga_print("\n");
+
+    while (1) __asm__ volatile("hlt");
+}
