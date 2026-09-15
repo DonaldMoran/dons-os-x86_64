@@ -87,15 +87,45 @@ long sys_open(const char* path, int flags) {
     }
     if (fd == -1) return -1;
 
-    BYTE mode = FA_READ;
-    if (flags == 1) mode = FA_WRITE;
-    else if (flags == 2) mode = FA_READ | FA_WRITE;
-    if (flags & 0x0200) mode |= FA_CREATE_ALWAYS;
+    /* -----------------------------------------------------------------
+     * newlib BSD-style fcntl flags (see sys/_default_fcntl.h):
+     *   O_RDONLY = 0x0000   O_WRONLY = 0x0001   O_RDWR   = 0x0002
+     *   O_APPEND = 0x0008   O_CREAT  = 0x0200   O_TRUNC  = 0x0400
+     *   O_EXCL   = 0x0800
+     * ----------------------------------------------------------------- */
+    BYTE mode = 0;
+
+    /* Access mode: low 2 bits. */
+    switch (flags & 0x3) {
+        case 0:  mode |= FA_READ;             break;  /* O_RDONLY */
+        case 1:  mode |= FA_WRITE;            break;  /* O_WRONLY */
+        case 2:  mode |= FA_READ | FA_WRITE;  break;  /* O_RDWR   */
+        default: kfree(NULL); return -1;
+    }
+
+    /* Creation / truncation / exclusivity. */
+    if (flags & 0x0400) {                              /* O_TRUNC */
+        mode |= FA_CREATE_ALWAYS;
+    } else if (flags & 0x0200) {                       /* O_CREAT */
+        if (flags & 0x0800) mode |= FA_CREATE_NEW;     /* O_CREAT|O_EXCL */
+        else                mode |= FA_OPEN_ALWAYS;
+    } else {
+        mode |= FA_OPEN_EXISTING;
+    }
+
+    if (flags & 0x0008) mode |= FA_OPEN_APPEND;        /* O_APPEND */
 
     FIL* file_obj = (FIL*)kmalloc(sizeof(FIL));
     if (!file_obj) return -1;
 
-    if (f_open(file_obj, local_path, mode) != FR_OK) {
+    FRESULT r = f_open(file_obj, local_path, mode);
+    if (r != FR_OK) {
+        serial_print("sys_open: f_open FAIL path=");
+        serial_print(local_path);
+        serial_print(" flags=0x"); serial_print_hex((uint64_t)flags);
+        serial_print(" mode=0x");  serial_print_hex((uint64_t)mode);
+        serial_print(" r=");       serial_print_dec(r);
+        serial_print("\n");
         kfree(file_obj);
         return -1;
     }
@@ -114,6 +144,7 @@ long sys_close(int fd) {
     self->file_table[fd] = NULL;
     return 0;
 }
+
 // ============================================================
 // CORE IO REDIRECTION PIPES
 // ============================================================
@@ -146,11 +177,13 @@ long sys_write(int fd, const void* buf, size_t count) {
         while (total_written < count) {
             size_t chunk = (count - total_written) > 512 ? 512 : (count - total_written);
             if (safe_copy_from_user(bounce, (const uint8_t*)buf + total_written, chunk) != 0) {
-                kfree(bounce); return -1;
+                kfree(bounce);
+                return (total_written > 0) ? (long)total_written : -1;
             }
             UINT written;
             if (f_write(file_obj, bounce, chunk, &written) != FR_OK) {
-                kfree(bounce); return -1;
+                kfree(bounce);
+                return (total_written > 0) ? (long)total_written : -1;
             }
             total_written += written;
             if (written < chunk) break;
@@ -159,31 +192,10 @@ long sys_write(int fd, const void* buf, size_t count) {
         return (long)total_written;
     }
 
-    return (long)count;
+    /* Unknown / invalid fd. */
+    return -1;
 }
-//~ long sys_write(int fd, const void* buf, size_t count) {
-    //~ if (!buf || count == 0) return 0;
-    //~ pcb_t* self = process_get_current();
-    //~ if (!self) return -1;
 
-    //~ if (fd == 1 || fd == 2) {
-        //~ size_t remaining = count;
-        //~ const uint8_t* user_ptr = (const uint8_t*)buf;
-        //~ while (remaining > 0) {
-            //~ size_t chunk = remaining > WRITE_CHUNK ? WRITE_CHUNK : remaining;
-            //~ if (safe_copy_from_user(g_write_bounce, user_ptr, chunk) != 0) return -1;
-            //~ for (size_t i = 0; i < chunk; i++) {
-                //~ char c = g_write_bounce[i];
-                //~ serial_putc(c); vga_putc(c);
-            //~ }
-            //~ user_ptr += chunk; remaining -= chunk;
-        //~ }
-        //~ return (long)count;
-    //~ }
-
-    //~ /* File writes not supported while FF_FS_READONLY is 1. */
-    //~ return -1;
-//~ }
 long sys_read(int fd, void* buf, size_t count) {
     if (!buf || count == 0) return 0;
     pcb_t* self = process_get_current();
@@ -259,7 +271,6 @@ void* sys_brk(long inc) {
             void* hhdm = (void*)(HHDM_START + phys);
             for (uint64_t j = 0; j < 4096 / 8; j++) ((uint64_t*)hhdm)[j] = 0ULL;
 
-            /* FIXED: Standard user memory permissions without the 0x18 caching bits */
             uint64_t map_flags = PT_PRESENT | PT_WRITE | PT_USER;
             vmm_map_page_in_cr3(current->cr3, virt, phys, map_flags);
             elf_add_page_to_pcb(current, phys);
@@ -268,8 +279,6 @@ void* sys_brk(long inc) {
     current->brk_virt = new_brk;
     return (void*)new_brk;
 }
-
-/* Find this section at the bottom of 04_kernel_64bit/user_syscall.c and replace it: */
 
 long sys_getpid(void) {
     pcb_t* current = process_get_current();
@@ -308,7 +317,7 @@ uint64_t syscall_dispatch(uint64_t num,
         case 4:  return (uint64_t)sys_open((const char*)arg0, (int)arg1);
         case 6:  return (uint64_t)sys_close((int)arg0);
         case 10: return (uint64_t)sys_brk((long)arg0);
-        case 20: return (uint64_t)sys_getpid();                     /* NEW: Vector 20 */
+        case 20: return (uint64_t)sys_getpid();
         case 5:  sys_arch_set_fs((void*)arg0); return 0;
         default:
             serial_print("Unknown syscall: ");

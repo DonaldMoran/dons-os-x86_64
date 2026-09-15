@@ -7,6 +7,8 @@
 #define SYS_WRITE   1
 #define SYS_EXIT    2
 #define SYS_READ    3
+#define SYS_OPEN    4
+#define SYS_CLOSE   6
 #define SYS_BRK     10
 #define SYS_REBOOT  25
 
@@ -38,6 +40,7 @@ void exit(int status) {
         __asm__ volatile("hlt");
     }
 }
+
 // FIXED: Dynamic memory allocator tracker that queries your kernel's native 
 // 0x8000200000 heap base location automatically to eliminate address pointer gaps.
 void *sbrk(ptrdiff_t incr) {
@@ -69,6 +72,23 @@ void *sbrk(ptrdiff_t incr) {
 }
 
 /* ---------------------------------------------------------------------------
+ * FILE DESCRIPTOR WRAPPERS (syscall 4 = open, syscall 6 = close)
+ * --------------------------------------------------------------------------- */
+
+int open(const char *path, int flags, int mode) {
+    return (int)syscall3(SYS_OPEN,
+                         (uint64_t)path,
+                         (uint64_t)flags,
+                         (uint64_t)mode);
+}
+
+int close(int fd) {
+    return (int)syscall3(SYS_CLOSE,
+                         (uint64_t)fd,
+                         0, 0);
+}
+
+/* ---------------------------------------------------------------------------
  * ARCHITECTURAL WRAPPERS WITH UNDERSCORES (FOR STRUCTURAL REDUNDANCY)
  * --------------------------------------------------------------------------- */
 
@@ -89,8 +109,6 @@ void sys_reboot(void) {
  * REQUIRED STRUCTURAL LINKS TO SATISFY LINKER SCHEMATICS
  * --------------------------------------------------------------------------- */
 
-int close(int fd) { (void)fd; return -1; }
-
 // FIXED: Explicitly populates the character device attribute flag (S_IFCHR)
 // to verify to Newlib that stdout/stderr are active interactive console streams.
 int fstat(int fd, struct stat *st) { 
@@ -103,7 +121,6 @@ int fstat(int fd, struct stat *st) {
 
 int isatty(int fd) { if (fd == 1 || fd == 2) return 1; return 0; }
 off_t lseek(int fd, off_t offset, int whence) { (void)fd; (void)offset; (void)whence; return -1; }
-int open(const char *path, int flags, int mode) { (void)path; (void)flags; (void)mode; return -1; }
 int kill(int pid, int sig) { (void)pid; (void)sig; return -1; }
 int getpid(void) { return 1; }
 
