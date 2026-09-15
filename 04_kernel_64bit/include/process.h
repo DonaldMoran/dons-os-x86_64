@@ -7,6 +7,7 @@
 #define MAX_PROCESSES 32
 #define PROC_NAME_LEN 32
 #define PROC_STACK_SIZE  16384   // 16KB: syscall entry + nested timer frame + sys_read blocking headroom
+#define MAX_PROCESS_FILES 8
 
 // Process states
 typedef enum {
@@ -34,14 +35,6 @@ typedef struct pcb {
     uint64_t kernel_stack_virt;
     uint64_t kernel_stack_top;
 
-    /* Index into kernel_stack_pool[], 0..MAX_PROCESSES-1, or
-       KERNEL_STACK_SLOT_NONE if this PCB owns no slot. Allocated by
-       process_create and released by process_reclaim / process_destroy.
-       Decoupled from pid: pid is monotonic and can exceed
-       MAX_PROCESSES, but the slot index is always in range and never
-       aliases a slot owned by another live PCB. See the comment at
-       kernel_stack_slot_alloc in process.c for why pid % MAX_PROCESSES
-       was wrong. */
     int kernel_stack_slot;
 
     uint64_t user_stack_phys;
@@ -73,12 +66,10 @@ typedef struct pcb {
     // Heap management (per-process)
     uint64_t brk_virt;  // Current break position for sbrk()
     
-    // Set by a blocking syscall (e.g. sys_read) immediately before it
-    // calls process_yield, and cleared by the syscall loop on resume.
-    // context_switch reads this to force the ring-0 save path.
-    //   0 = no pending block (use rip heuristic)
-    //   1 = blocking in a syscall (force ring-0 save)
     uint64_t block_kind;
+
+    // Per-Process File Descriptor Tracking Array (Pointer maps to index)
+    void* file_table[MAX_PROCESS_FILES];
 } pcb_t;
 
 #define KERNEL_STACK_SLOT_NONE (-1)

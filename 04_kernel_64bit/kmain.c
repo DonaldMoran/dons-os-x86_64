@@ -552,6 +552,14 @@ void kmain(BootInfo *info) {
     );
     PRINT_BOTH("CPU: SSE extensions enabled.\n");
 
+    /* Automatically mount the FAT storage volume at boot for userland availability */
+    static FATFS boot_fs;
+    if (f_mount(&boot_fs, "0:", 1) == FR_OK) {
+        serial_print("Storage filesystem mounted safely at boot.\n");
+    } else {
+        serial_print("WARN: Auto-mounting boot device failed.\n");
+    }
+
     vga_clear();
     serial_print("Prompt: press 'k' for debug loop\n");
     vga_print("\nPress 'k' for kernel shell, else launching user shell...\n");

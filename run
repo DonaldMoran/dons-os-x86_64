@@ -1,2 +1,2 @@
-make clean && make && make runkernel64-kvm
-# make clean && make && make runkernel64
+#make clean && make && make runkernel64-kvm
+make clean && make && make runkernel64
