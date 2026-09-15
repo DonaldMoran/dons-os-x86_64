@@ -26,8 +26,14 @@ hdd.img: boot.bin stage2.bin ../04_kernel_64bit/kernel.bin
 
 # PATCH: Appended '-cpu max' to default run targets.
 # This unlocks modern instructions like wrfsbase/wrgsbase required by Newlib
+#~ run:
+#~ 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -monitor none
 run:
-	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -monitor none
+	qemu-system-x86_64 -cpu max \
+		-drive file=hdd.img,format=raw,if=ide,index=0 \
+		-drive file=fat.img,format=raw,if=ide,index=1 \
+		-serial stdio -display sdl -monitor none
+
 
 # Serial output to file (view later with 'cat serial.log')
 run-log:
@@ -52,7 +58,12 @@ run-headless:
 
 # With KVM acceleration (faster, if available)
 run-kvm:
-	qemu-system-x86_64 -drive file=hdd.img,format=raw -serial stdio -display sdl -enable-kvm -cpu host
+	qemu-system-x86_64 -drive file=hdd.img,format=raw,if=ide,index=0 \
+	-drive file=fat.img,format=raw,if=ide,index=1 \
+	-serial stdio \
+	-display sdl \
+	-enable-kvm \
+	-cpu host
 
 # With telnet serial (connect with 'telnet localhost 4444')
 run-telnet:

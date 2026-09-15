@@ -7,10 +7,10 @@ XXD     := xxd
 # Userland directory - only newlib now
 USERLAND_DIR := userland/newlib
 
-# Kernel CFLAGS
+# Kernel CFLAGS - Added -Ifatfs here so all files can parse ff.h natively
 CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra \
 	-mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 \
-	-mno-avx -mno-mmx
+	-mno-avx -mno-mmx -Iinclude -Ifatfs
 
 # User-space CFLAGS (for kernel-side objects that need to embed user data)
 USER_CFLAGS := -target x86_64-unknown-elf -ffreestanding -O0 -Wall -Wextra \
@@ -31,16 +31,13 @@ userland:
 # ============================================================
 # KERNEL OBJECTS
 # ============================================================
-#~ OBJS = entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o \
-#~ 	idt_load.o isr.o vga.o keyboard.o serial.o tss.o gdt.o \
-#~ 	elf.o test_program_data.o \
-#~ 	user_syscall.o user_syscall_entry.o process.o string.o scheduler.o \
-#~ 	context_switch.o user_shell_data.o
+# Appended fatfs/ff.o and fatfs/diskio.o to the operational link targets
 OBJS = entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o \
 	idt_load.o isr.o vga.o keyboard.o serial.o tss.o gdt.o \
 	elf.o test_program_data.o \
 	user_syscall.o user_syscall_entry.o process.o string.o scheduler.o \
-	context_switch.o user_shell_data.o ata.o
+	context_switch.o user_shell_data.o ata.o \
+	fatfs/ff.o fatfs/diskio.o
 
 kernel.elf: $(OBJS)
 	$(LD) $(LDFLAGS) -T linker.ld -o kernel.elf $(OBJS)
@@ -52,7 +49,7 @@ kernel.bin: kernel.elf
 # TEST PROGRAM
 # ============================================================
 test_program_data.o: test_program_data.c
-	$(CC) $(CFLAGS) -Iinclude -c test_program_data.c -o test_program_data.o
+	$(CC) $(CFLAGS) -c test_program_data.c -o test_program_data.o
 
 test_program_data.c: test_program
 	$(XXD) -i test_program > test_program_data.c
@@ -66,13 +63,10 @@ test_program.o: test_program.asm
 # ============================================================
 # USER SHELL (embedded ELF blob)
 # ============================================================
-
-# PATCH: Swapped $(CFLAGS) for $(USER_CFLAGS) to force 64-bit absolute 
-# memory instruction layout maps for the massive Newlib data array payload!
 user_shell_data.o: user_shell_data.c
 	sed -i 's/unsigned char build_user_shell_elf/__attribute__((section(".userelf"))) unsigned char build_user_shell_elf/' user_shell_data.c
 	sed -i 's/unsigned int build_user_shell_elf_len/const unsigned int build_user_shell_elf_len/' user_shell_data.c
-	$(CC) $(USER_CFLAGS) -Iinclude -c user_shell_data.c -o user_shell_data.o
+	$(CC) $(USER_CFLAGS) -c user_shell_data.c -o user_shell_data.o
 
 # ============================================================
 # ASSEMBLY RULES
@@ -99,19 +93,23 @@ user_syscall_entry.o: user_syscall_entry.asm
 # C COMPILATION RULES
 # ============================================================
 %.o: %.c
-	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Catch-all rule specifically compilation within the fatfs subdirectory
+fatfs/%.o: fatfs/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 vga.o: vga.c
-	$(CC) $(CFLAGS) -Iinclude -I. -c vga.c -o vga.o
+	$(CC) $(CFLAGS) -I. -c vga.c -o vga.o
 
 syscall.o: syscall.c
-	$(CC) $(CFLAGS) -Iinclude -I. -c syscall.c -o syscall.o
+	$(CC) $(CFLAGS) -I. -c syscall.c -o syscall.o
 
 elf.o: elf.c
-	$(CC) $(CFLAGS) -Iinclude -I. -c elf.c -o elf.o
+	$(CC) $(CFLAGS) -I. -c elf.c -o elf.o
 
 user_syscall.o: user_syscall.c
-	$(CC) $(CFLAGS) -Iinclude -I. -c user_syscall.c -o user_syscall.o
+	$(CC) $(CFLAGS) -I. -c user_syscall.c -o user_syscall.o
 
 # ============================================================
 # CLEAN
@@ -120,4 +118,5 @@ clean:
 	rm -f *.o *.bin *.elf test_program test_program.bin test_program_data.c
 	rm -f user_shell.elf user_shell_data.c
 	rm -f user_shell.bin
+	rm -f fatfs/*.o
 	$(MAKE) -C $(USERLAND_DIR) clean

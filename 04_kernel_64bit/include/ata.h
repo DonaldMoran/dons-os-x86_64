@@ -9,6 +9,21 @@
 #define ATA_DRIVE_SLAVE  1
 
 /*
+ * Drive-parameterized read/write. Same semantics as the non-drive
+ * variants above, but operate on the given drive instead of the
+ * default. Intended for callers that need a specific device (e.g.
+ * FatFs on the slave disk).
+ *
+ * Returns 0 on success, negative on error, or -1 if the drive is not
+ * present.
+ */
+int ata_read_sector_drive(uint8_t drive, uint32_t lba, void* buf);
+int ata_read_sectors_drive(uint8_t drive, uint32_t lba, uint32_t count, void* buf);
+int ata_write_sector_drive(uint8_t drive, uint32_t lba, const void* buf);
+int ata_write_sectors_drive(uint8_t drive, uint32_t lba, uint32_t count, const void* buf);
+int ata_flush_cache_drive(uint8_t drive);
+
+/*
  * Initialize the ATA driver.
  *
  * Probes primary master and primary slave. If a device is found, its model

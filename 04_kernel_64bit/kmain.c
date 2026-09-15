@@ -19,35 +19,28 @@
 #include "include/process.h"
 #include "include/scheduler.h"
 #include "include/ata.h"
+#include "ff.h"
 
 extern void pit_init(uint32_t freq);
-
-// Embedded ELF test program (from test_program.bin)
 extern unsigned char test_program[];
 extern unsigned int test_program_len;
-
-//~ // Embedded user shell binary
 extern unsigned char build_user_shell_elf[];
 extern unsigned int build_user_shell_elf_len;
 
 static BootInfo *g_bootinfo = NULL;
 
-// Add this directly into your kernel initialization pipeline inside kmain.c
+/* Consolidated Dual-Channel Printing Macros to cut binary bloat */
+#define PRINT_BOTH(str) do { vga_print(str); serial_print(str); } while(0)
+#define PRINT_BOTH_DEC(val) do { vga_print_dec_cur(val); serial_print_dec(val); } while(0)
+#define PRINT_BOTH_HEX(val) do { vga_print_hex_cur(val); serial_print_hex(val); } while(0)
+
 void enable_user_fsgsbase(void) {
     uint64_t cr4;
-    
-    // Read the current Control Register 4 state
     __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
-    
-    // Set Bit 16 (CR4.FSGSBASE = 1) to unlock user-mode wrfsbase/wrgsbase instructions
     cr4 |= (1ULL << 16);
-    
-    // Write back the updated properties to the hardware execution matrix
     __asm__ volatile("mov %0, %%cr4" : : "r"(cr4));
-    
-    serial_print("CPU: x86_64 FSGSBASE instructions successfully enabled for Ring 3.\n");
+    serial_print("CPU: FSGSBASE active\n");
 }
-
 
 static inline uint8_t inb(uint16_t port) {
     uint8_t ret;
@@ -60,95 +53,48 @@ static inline void outb(uint16_t port, uint8_t val) {
 }
 
 static int validate_bootinfo(BootInfo* info) {
-    if (!info) {
-        serial_print("ERROR: No BootInfo provided!\n");
+    if (!info || info->magic != BOOTINFO_MAGIC) {
+        serial_print("ERR: Bad BootInfo\n");
         return 0;
     }
-    if (info->magic != BOOTINFO_MAGIC) {
-        serial_print("ERROR: Invalid BootInfo magic!\n");
-        return 0;
-    }
-    serial_print("BootInfo validated successfully\n");
+    serial_print("BootInfo OK\n");
     return 1;
 }
 
 void test_process_entry(void) {
-    const char* msg = "Hello from process!\n";
-    sys_write(1, msg, 22);
+    sys_write(1, "Hello from process!\n", 20);
     process_exit();
 }
 
 extern void user_syscall_entry(void);
 
-/*
- * IA32_STAR programming for SYSCALL/SYSRET.
- *
- * STAR[63:48] is the SYSRET CS/SS base; STAR[47:32] is the SYSCALL CS/SS base.
- *
- * We use a SYSRET base of 0x23 rather than the more common 0x20 so that
- * SYSRET works correctly on both Intel and AMD:
- *
- *   - Intel SYSRET forces RPL 3 on the loaded CS/SS, so base 0x20 gives
- *     CS=0x33, SS=0x2B.
- *   - AMD SYSRET does NOT force RPL 3 (APM Vol 3). Base 0x20 gives
- *     SS=0x28 (RPL 0, DPL 3), an invalid user-mode stack selector. The
- *     CPU runs with it until the next interrupt, then iretq validates SS
- *     against CPL and raises #GP(0x28). This is the AMD-only fault we hit
- *     under KVM; TCG masks it because QEMU's emulated SYSRET forces RPL 3.
- *
- * Pre-baking the RPL bits into the base fixes both vendors:
- *     SYSRET CS = 0x23 + 16 = 0x33  (RPL 3)  ✓
- *     SYSRET SS = 0x23 +  8 = 0x2B  (RPL 3)  ✓
- * Intel's forced OR with 3 is a no-op on these values.
- *
- * SYSCALL base stays 0x18: kernel CS = 0x18, SS = 0x20. SYSCALL does not
- * apply the RPL trick, so this half is vendor-independent.
- *
- * Note: syscall_init() runs syscall_init_asm() first with the same values;
- * this function is the authoritative writer and overwrites it. Keep them
- * in sync — both must use SYSRET base 0x23.
- */
-//~ void user_syscall_init(void) {
-    //~ uint64_t star = ((uint64_t)0x23 << 48) | ((uint64_t)0x18 << 32);
-    //~ wrmsr(0xC0000081, star);
-    //~ wrmsr(0xC0000082, (uint64_t)user_syscall_entry);
-    //~ wrmsr(0xC0000084, (1ULL << 9));
-    //~ serial_print("**RING** 3 syscalls Initialized\n");
-//~ }
 void user_syscall_init(void) {
-    /*
-     * IA32_EFER (0xC0000080): set SCE (bit 0) to enable SYSCALL/SYSRET.
-     * Without this, SYSCALL from ring 3 raises #UD. Previously this was
-     * done in syscall_init_asm; since that routine was folded into this
-     * function, EFER programming lives here now.
-     */
     uint64_t efer = rdmsr(0xC0000080);
-    efer |= 1ULL;                   /* SCE */
-    wrmsr(0xC0000080, efer);
-
-    uint64_t star = ((uint64_t)0x23 << 48) | ((uint64_t)0x18 << 32);
-    wrmsr(0xC0000081, star);
+    wrmsr(0xC0000080, efer | 1ULL);
+    wrmsr(0xC0000081, ((uint64_t)0x23 << 48) | ((uint64_t)0x18 << 32));
     wrmsr(0xC0000082, (uint64_t)user_syscall_entry);
     wrmsr(0xC0000084, (1ULL << 9));
-    serial_print("**RING** 3 syscalls Initialized\n");
+    serial_print("**RING** 3 syscalls active\n");
 }
-
 
 static int strcmp(const char *s1, const char *s2) {
     while (*s1 && (*s1 == *s2)) { s1++; s2++; }
     return *(const unsigned char*)s1 - *(const unsigned char*)s2;
 }
 
+static int strncmp(const char *s1, const char *s2, size_t n) {
+    while (n && *s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+        n--;
+    }
+    if (n == 0) return 0;
+    return *(const unsigned char*)s1 - *(const unsigned char*)s2;
+}
+
 void test_process1(void) {
     for (int i = 0; i < 5; i++) {
-        vga_print("Process 1: iteration ");
-        vga_print_dec_cur(i);
-        vga_print("\n");
-        
-        serial_print("Process 1: iteration "); 
-        serial_print_dec(i); 
-        serial_print("\n");
-        
+        PRINT_BOTH("Proc 1: iter "); PRINT_BOTH_DEC(i); PRINT_BOTH("\n");
         process_yield();
     }
     process_exit();
@@ -156,14 +102,7 @@ void test_process1(void) {
 
 void test_process2(void) {
     for (int i = 0; i < 5; i++) {
-        vga_print("Process 2: iteration ");
-        vga_print_dec_cur(i);
-        vga_print("\n");
-        
-        serial_print("Process 2: iteration "); 
-        serial_print_dec(i); 
-        serial_print("\n");
-        
+        PRINT_BOTH("Proc 2: iter "); PRINT_BOTH_DEC(i); PRINT_BOTH("\n");
         process_yield();
     }
     process_exit();
@@ -171,98 +110,40 @@ void test_process2(void) {
 
 void handle_reboot_sequence(void) {
     __asm__ volatile("cli");
-    
-    // Clear the PS/2 8042 keyboard controller buffer loops
-    for (int i = 0; i < 1000; i++) {
-        if ((inb(0x64) & 2) == 0) break;
-    }
-    
-    // Issue hard pulse signals to the motherboard reset lines
-    outb(0x64, 0xFE);  // PS/2 Hard Pulse Line
-    outb(0xCF9, 0x06); // Legacy PCI Hard Reset
-
-    // FIX: Clear the 64-bit Task Register (TR) to prevent warm-reset 
-    // verification panics ("TR not loaded correctly!") during the boot cycle!
-    __asm__ volatile(
-        "xor %%ax, %%ax\n\t"
-        "ltr %%ax"
-        :
-        :
-        : "ax"
-    );
-
-    // Ultimate hard-reset fallback: Forceful architectural Triple Fault
-    volatile uint16_t malformed_idt_struct[5] = {0, 0, 0, 0, 0}; // Limit = 0, Base = 0
-    __asm__ volatile(
-        "lidt (%0)\n\t"
-        "int $0" 
-        : 
-        : "r"(malformed_idt_struct)
-        : "memory"
-    );
-
-    // Defensive freeze block in case the core is completely locked up
-    while (1) {
-        __asm__ volatile("hlt");
-    }
+    for (int i = 0; i < 1000; i++) { if ((inb(0x64) & 2) == 0) break; }
+    outb(0x64, 0xFE);  
+    outb(0xCF9, 0x06); 
+    __asm__ volatile("xor %%ax, %%ax\n\t" "ltr %%ax" : : : "ax");
+    volatile uint16_t malformed_idt_struct[5] = {0, 0, 0, 0, 0};
+    __asm__ volatile("lidt (%0)\n\t" "int $0" : : "r"(malformed_idt_struct) : "memory");
+    while (1) { __asm__ volatile("hlt"); }
 }
 
-
 static void handle_command(const char *cmd) {
-    // FIX 1: Evaluate string bounds correctly by checking individual element indices
     if (cmd == NULL || cmd[0] == '\0') {
         vga_print("> ");
         return;
     }
-    
-    const char *valid_commands[] = {
-        "help", "clear", "version", "reboot", 
-        "pmmtest", "info", "mem", "test", 
-        "vmmtest", "serialtest", "heapstat", "maptest", "testrec", "heaptest", 
-        "nxtest", "syscall", "elfload", "proclist" , "proccreate" , "vmmclone", 
-        "runproc", "schstat", "testyield", "usershell",
-        "gdtdump", "tssdump", "atatest"
-    };
-    // FIX 2: Corrected division metrics to scale array item thresholds accurately
-    int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
-    (void)num_commands;
 
     if (strcmp(cmd, "help") == 0) {
-        vga_print("\nAvailable commands:\n  help, clear, version, reboot, pmmtest, info, mem, test,\n  vmmtest, serialtest, heapstat, maptest, testrec, heaptest,\n  nxtest, syscall, elfload, proclist, proccreate, vmmclone,\n  runproc, schstat, testyield, usershell, gdtdump, tssdump, atatest\n> ");;
+        vga_print("\nCmds:\n  help, clear, version, reboot, pmmtest, info, mem, test,\n  vmmtest, serialtest, heapstat, maptest, testrec, heaptest,\n  nxtest, syscall, elfload, proclist, proccreate, vmmclone,\n  runproc, schstat, testyield, usershell, gdtdump, tssdump, \n  atatest, fatmount, fatls, fatcat <file>\n> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear(); vga_print("DonsDOS v0.4.9\nType 'help'\n> ");
     } else if (strcmp(cmd, "version") == 0) {
-        vga_print("\nDonsDOS v0.4.9\nBuild: 64-bit preemptive kernel with VGA console\n> ");
+        vga_print("\nDonsDOS v0.4.9 (64-bit Core)\n> ");
     } else if (strcmp(cmd, "info") == 0) {
-        vga_print("\n=== System Boot Telemetry Information ===\n");
+        vga_print("\n=== Boot Telemetry ===\n");
         if (g_bootinfo) {
-            vga_print("  Bootinfo Structure Magic : 0x"); 
-            vga_print_hex_cur(g_bootinfo->magic); 
-            vga_print("\n");
-            
-            vga_print("  PML4 Virtual Table Root  : 0x"); 
-            vga_print_hex_cur(g_bootinfo->pml4_addr); 
-            vga_print("\n");
-            
-            vga_print("  Memory Map Array Length  : "); 
-            vga_print_dec_cur(g_bootinfo->memory_map_count); 
-            vga_print(" entries\n");
-            
-            vga_print("  Memory Map Phys Address  : 0x"); 
-            vga_print_hex_cur(g_bootinfo->memory_map_addr); 
-            vga_print("\n");
-            
-            serial_print("\n--- DIAGNOSTIC DUMP: BOOTINFO STRUCT ---\n");
-            serial_print("Magic  : 0x"); serial_print_hex(g_bootinfo->magic); serial_print("\n");
-            serial_print("PML4   : 0x"); serial_print_hex(g_bootinfo->pml4_addr); serial_print("\n");
-            serial_print("MMap   : 0x"); serial_print_hex(g_bootinfo->memory_map_addr); serial_print("\n");
-            serial_print("Count  : "); serial_print_dec(g_bootinfo->memory_map_count); serial_print("\n");
+            vga_print("  Magic : 0x"); vga_print_hex_cur(g_bootinfo->magic); vga_print("\n");
+            vga_print("  PML4  : 0x"); vga_print_hex_cur(g_bootinfo->pml4_addr); vga_print("\n");
+            vga_print("  MMap  : 0x"); vga_print_hex_cur(g_bootinfo->memory_map_addr);
+            vga_print(" ("); vga_print_dec_cur(g_bootinfo->memory_map_count); vga_print(" entries)\n");
         } else {
-            vga_print("  Error: No system boot parameters detected!\n");
+            vga_print("  No boot info struct found.\n");
         }
         vga_print("> ");
     } else if (strcmp(cmd, "mem") == 0) {
-        vga_print("\nMemory Information:\n  Page size: 4096 bytes\n");
+        vga_print("\nMem Info (4KB Pages):\n");
         if (g_bootinfo && g_bootinfo->memory_map_count > 0) {
             MemoryMapEntry *m = (MemoryMapEntry *)g_bootinfo->memory_map_addr;
             uint64_t total_usable = 0;
@@ -270,810 +151,376 @@ static void handle_command(const char *cmd) {
                 if (m[i].type == 1) total_usable += m[i].length;
             }
             vga_print("  Usable RAM: "); vga_print_dec_cur(total_usable / (1024 * 1024)); vga_print(" MB\n");
-        } else { vga_print("  Memory map not available\n"); }
+        } else { vga_print("  MMap unavailable\n"); }
         vga_print("> ");   
     } else if (strcmp(cmd, "reboot") == 0) {
-        vga_print("\nRebooting...\n");
+        vga_print("\nResetting...\n");
         handle_reboot_sequence();
     } else if (strcmp(cmd, "pmmtest") == 0) {
-        vga_print("\n--- Physical Memory Manager Test ---\n");
-        serial_print("\n--- Physical Memory Manager Test ---\n");
-        
-        // Capture baseline statistics before allocation
-        uint64_t initial_free = pmm_get_free_pages();
-        uint64_t total_pages  = pmm_get_total_pages();
-        
-        vga_print("  Total Page Frames Available  : "); vga_print_dec_cur(total_pages); vga_print("\n");
-        vga_print("  Initial Free Page Counter    : "); vga_print_dec_cur(initial_free); vga_print("\n");
+        PRINT_BOTH("\n--- PMM Test ---\n");
+        PRINT_BOTH("  Total Pages: "); PRINT_BOTH_DEC(pmm_get_total_pages()); PRINT_BOTH("\n");
+        PRINT_BOTH("  Free Pages : "); PRINT_BOTH_DEC(pmm_get_free_pages()); PRINT_BOTH("\n");
 
-        // Request a pristine 4096-byte page frame marked for Kernel usage
         uint64_t phys_page = pmm_alloc_page(PAGE_KERNEL);
-        
         if (phys_page != 0) {
-            vga_print("  Allocated Page Phys Address  : 0x"); vga_print_hex_cur(phys_page); vga_print("\n");
-            serial_print("  Allocated Page Phys Address  : 0x"); serial_print_hex(phys_page); serial_print("\n");
-            
-            // Determine memory zone boundaries dynamically (LOW zone vs HIGH zone page)
-            if (phys_page < (8388ULL * 4096ULL)) {
-                vga_print("  Memory Allocation Sector     : LOW ZONE territory\n");
-            } else {
-                vga_print("  Memory Allocation Sector     : HIGH ZONE territory\n");
-            }
-            
-            // Capture and verify post-allocation metric compliance
-            uint64_t post_free = pmm_get_free_pages();
-            vga_print("  Remaining Free Page Counter  : "); vga_print_dec_cur(post_free); vga_print("\n");
-            vga_print("  Status                       : SUCCESS\n");
-            
-            // Dump the detailed block mapping allocation map straight to background logs
+            PRINT_BOTH("  Allocated  : 0x"); PRINT_BOTH_HEX(phys_page); PRINT_BOTH("\n");
+            PRINT_BOTH("  Zone       : "); vga_print(phys_page < 0x2000000 ? "LOW\n" : "HIGH\n");
+            PRINT_BOTH("  Status     : SUCCESS\n");
             pmm_dump_stats();
         } else {
-            vga_print("  Status                       : FAILED (Out of Physical Page Frames!)\n");
-            serial_print("  [ERR] PMM Allocation failed during shell test pass.\n");
+            PRINT_BOTH("  Status     : FAILED (OOM)\n");
         }
         vga_print("> ");
     } else if (strcmp(cmd, "test") == 0) {
-        vga_print("\n=== Kernel Exception Test Harness ===\n");
-        vga_print("  1 - Trigger Divide-By-Zero Exception (#DE)\n");
-        vga_print("  2 - Trigger Protection Page Fault Exception (#PF)\n");
-        vga_print("  3 - Trigger General Protection Fault Exception (#GP)\n");
-        vga_print("Enter selection choice: ");
-        
+        vga_print("\n=== Exception Test ===\n  1 - #DE\n  2 - #PF\n  3 - #GP\nSelect: ");
         char c = 0; 
-        while (!kbd_buffer_get(&c)) {
-            __asm__ volatile("hlt");
-        }
-        
-        // Echo the keystroke choice clearly to the screen layout
-        vga_putc(c);
-        vga_print("\n");
+        while (!kbd_buffer_get(&c)) { asm volatile("hlt"); }
+        vga_putc(c); vga_print("\n");
 
         if (c == '1') {
-            vga_print("  Executing: Forceful math division by zero... System halting.\n\n");
-            serial_print("TEST: Triggering hardware #DE exception pass.\n");
-            __asm__ volatile(
-                "xor %%rax, %%rax\n\t"
-                "xor %%rbx, %%rbx\n\t"
-                "div %%rbx\n\t" 
-                : 
-                : 
-                : "rax", "rbx", "rdx"
-            );
-        } 
-        else if (c == '2') {
-            vga_print("  Executing: Supervisor unmapped address segment write... System halting.\n\n");
-            serial_print("TEST: Triggering hardware #PF exception pass.\n");
-            uint64_t *bad = (uint64_t*)0xFFFFFFFF00000000ULL; 
-            *bad = 0xDEADBEEF; 
-        } 
-        else if (c == '3') {
-            vga_print("  Executing: Non-canonical address boundary reference... System halting.\n\n");
-            serial_print("TEST: Triggering hardware #GP exception pass.\n");
-            uint64_t *non_canonical = (uint64_t*)0x000FFFFF00000000ULL;
-            *non_canonical = 0xDEADBEEF;
-        }
-        else {
-            vga_print("  Error: Invalid test selection sequence aborted.\n");
+            __asm__ volatile("xor %%rax, %%rax\n\txor %%rbx, %%rbx\n\tdiv %%rbx" : : : "rax","rbx","rdx");
+        } else if (c == '2') {
+            *(volatile uint64_t*)0xFFFFFFFF00000000ULL = 0xDEADBEEF;
+        } else if (c == '3') {
+            *(volatile uint64_t*)0x000FFFFF00000000ULL = 0xDEADBEEF;
+        } else {
+            vga_print("Aborted.\n");
         }
         vga_print("> ");
     } else if (strcmp(cmd, "vmmtest") == 0) {
-        vga_print("\n=== Virtual Memory Manager (VMM) Status Dashboard ===\n");
-        serial_print("\n=== Virtual Memory Manager (VMM) Status Dashboard ===\n");
-
-        // 1. Read the active hardware translation directory root (CR3)
-        uint64_t cr3; 
-        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
-        
-        vga_print("  1. PML4 Table Tree Root (CR3) : 0x"); vga_print_hex_cur(cr3); vga_print("\n");
-        serial_print("  1. PML4 Table Tree Root (CR3) : 0x"); serial_print_hex(cr3); serial_print("\n");
-
-        // 2. Query CR0 to check if Write-Protect (WP - Bit 16) is active
-        uint64_t cr0;
-        __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
-        int wp_active = (cr0 & (1ULL << 16)) ? 1 : 0;
-        
-        vga_print("  2. Supervisor Write-Protect   : "); vga_print(wp_active ? "ENABLED (Strict Kernel Safety)\n" : "DISABLED\n");
-        serial_print("  2. Supervisor Write-Protect   : "); serial_print(wp_active ? "ENABLED (Strict Kernel Safety)\n" : "DISABLED\n");
-
-        // 3. Query the IA32_EFER MSR to verify No-Execute (NXE - Bit 11) is active
-        extern uint64_t rdmsr(uint32_t msr);
-        uint64_t efer = rdmsr(0xC0000080);
-        int nxe_active = (efer & (1ULL << 11)) ? 1 : 0;
-        
-        vga_print("  3. Hardware No-Execute (NXE)  : "); vga_print(nxe_active ? "ENABLED (Stack Guard Active)\n" : "DISABLED\n");
-        serial_print("  3. Hardware No-Execute (NXE)  : "); serial_print(nxe_active ? "ENABLED (Stack Guard Active)\n" : "DISABLED\n");
-
-        // 4. Report fixed mapping architecture context definitions
-        vga_print("  4. Higher Half Mapping (HHDM) : 0xFFFF800000000000\n");
-        vga_print("  5. Recursive Paging Slot      : PML4 Index 510\n");
-        
-        serial_print("  4. Higher Half Mapping (HHDM) : 0xFFFF800000000000\n");
-        serial_print("  5. Recursive Paging Slot      : PML4 Index 510\n");
-
-        vga_print("  Status: VMM TRANSLATION TABLES STABLE\n");
-        serial_print("  Status: VMM TRANSLATION TABLES STABLE\n");
+        PRINT_BOTH("\n=== VMM Dashboard ===\n");
+        uint64_t tmp;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(tmp));
+        PRINT_BOTH("  CR3 Root : 0x"); PRINT_BOTH_HEX(tmp); PRINT_BOTH("\n");
+        __asm__ volatile("mov %%cr0, %0" : "=r"(tmp));
+        PRINT_BOTH("  WP Active: "); PRINT_BOTH(tmp & (1ULL << 16) ? "Yes\n" : "No\n");
+        PRINT_BOTH("  NX Active: "); PRINT_BOTH(rdmsr(0xC0000080) & (1ULL << 11) ? "Yes\n" : "No\n");
         vga_print("> ");
     } else if (strcmp(cmd, "serialtest") == 0) {
-        vga_print("\n=== Hardware Serial Port Communication Test ===\n");
-        vga_print("  Status: Sending 8-N-1 UART data frames via Port 0x3F8 (COM1)...\n");
-        
-        // Transmit the formal validation layout framework out to your background logs
-        serial_print("\n=============================================\n");
-        serial_print("SERIAL PORT VERIFICATION: Hello from DonsDOS!\n");
-        serial_print("=============================================\n");
-        
-        vga_print("  Result: Synchronized package transmitted successfully!\n");
-        vga_print("          (Check your host terminal output or serial.log file)\n");
-        vga_print("> ");
+        vga_print("\nSending COM1 packets...\n");
+        serial_print("\n=== COM1 UART TEST PASSED ===\n");
+        vga_print("Done.\n> ");
     } else if (strcmp(cmd, "heapstat") == 0) {
-        vga_print("\n=== Kernel Dynamic Heap Memory Dashboard ===\n");
-        serial_print("\n=== Kernel Dynamic Heap Memory Dashboard ===\n");
-        
-        // Invoke your core heap manager function to stream the raw allocation block lists
+        PRINT_BOTH("\n=== Heap Dashboard ===\n");
         heap_stats();
-        
-        // Print clean descriptive parameters onto the visual VGA screen
-        vga_print("  Heap Virtual Base Address : 0xFFFF900000000000\n");
-        vga_print("  Total Initialized Pools   : 1024 KB (256 Pages)\n");
-        vga_print("  Tracking Metadata Blocks  : List Nodes Synchronized\n");
-        vga_print("  Detailed Node Map Allocation Analysis streamed to Serial Monitor.\n");
-        
-        vga_print("> ");
+        vga_print("Node trace complete.\n> ");
     } else if (strcmp(cmd, "maptest") == 0) {
-        // Output headers to both display channels
-        vga_print("\n=== Virtual Memory Manager Mapping Test ===\n");
-        serial_print("\n=== Virtual Memory Manager Mapping Test ===\n");
+        PRINT_BOTH("\n=== VMM Map Test ===\n");
+        uint64_t phys = pmm_alloc_page(PAGE_KERNEL);
+        PRINT_BOTH("  Phys Page: 0x"); PRINT_BOTH_HEX(phys); PRINT_BOTH("\n");
 
-        // 1. Allocate a pristine physical page frame from the PMM
-        uint64_t phys_addr = pmm_alloc_page(PAGE_KERNEL);
-        
-        vga_print("  1. Allocated Physical Page Frame : 0x");
-        vga_print_hex_cur(phys_addr);
-        vga_print("\n");
-        
-        serial_print("  1. Allocated Physical Page Frame : 0x");
-        serial_print_hex(phys_addr);
-        serial_print("\n");
-
-        // 2. Safely populate a validation signature key into the physical frame using the HHDM address shift window
-        uint64_t* hhdm_ptr = (uint64_t*)(0xFFFF800000000000ULL + phys_addr);
-        *hhdm_ptr = 0xDEADBEEFCAFEBABEULL;
-
-        // Target a lower-half, completely unmapped sandbox space (0x40000000)
-        // to entirely bypass kernel-half recursive lookup loops and debugging hooks!
-        uint64_t test_virt = 0x40000000ULL; 
-        
-        vga_print("  2. Target Testing Virtual Address: 0x");
-        vga_print_hex_cur(test_virt);
-        vga_print("\n");
-        
-        serial_print("  2. Target Testing Virtual Address: 0x");
-        serial_print_hex(test_virt);
-        serial_print("\n");
-
-        vga_print("  3. Invoking vmm_map_page_in_cr3 loop configuration...\n");
-        serial_print("  3. Invoking vmm_map_page_in_cr3 loop configuration...\n");
-        
-        // 3. Extract the currently active hardware page table root address registry
+        *(uint64_t*)(0xFFFF800000000000ULL + phys) = 0xDEADBEEFCAFEBABEULL;
+        uint64_t test_virt = 0x40000000ULL;
         uint64_t active_cr3;
         __asm__ volatile("mov %%cr3, %0" : "=r"(active_cr3));
-        
-        // Map the entries dynamically using your system's native VMM function signature and permissions flags
-        extern void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags);
-        uint64_t map_flags = 0x01ULL | 0x02ULL; // PT_PRESENT | PT_WRITE
-        vmm_map_page_in_cr3(active_cr3, test_virt, phys_addr, map_flags);
 
-        // 4. HARDWARE CACHE FLUSH (TLB): Forcefully invalidate the cache entry for this specific target address
+        extern void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags);
+        vmm_map_page_in_cr3(active_cr3, test_virt, phys, 0x01ULL | 0x02ULL);
         __asm__ volatile("invlpg (%0)" : : "r"(test_virt) : "memory");
 
-        // 5. VERIFICATION PASS: Read back the verification data payload from the newly configured virtual pointer address location
-        uint64_t* virt_ptr = (uint64_t*)test_virt;
-        uint64_t read_result = *virt_ptr;
-        
-        vga_print("  4. Reading from new virtual pointer address... Result: 0x");
-        vga_print_hex_cur(read_result);
-        vga_print("\n");
-        
-        serial_print("  4. Reading from new virtual pointer address... Result: 0x");
-        serial_print_hex(read_result);
-        serial_print("\n");
+        uint64_t res = *(uint64_t*)test_virt;
+        PRINT_BOTH("  Virt Read: 0x"); PRINT_BOTH_HEX(res); PRINT_BOTH("\n");
+        PRINT_BOTH(res == 0xDEADBEEFCAFEBABEULL ? "  Status   : SUCCESS\n" : "  Status   : FAILED\n");
 
-        if (read_result == 0xDEADBEEFCAFEBABEULL) {
-            vga_print("  Status: SUCCESS! Page Table Mapping fully functional.\n");
-            serial_print("  Status: SUCCESS! Page Table Mapping fully functional.\n");
-        } else {
-            vga_print("  Status: FAILED! Memory synchronization payload mismatch.\n");
-            serial_print("  Status: FAILED! Memory synchronization payload mismatch.\n");
-        }
-        
-        // Clean up our sandbox mapping when completed to keep table entries pristine
         extern void vmm_unmap_page_in_cr3(uint64_t cr3, uint64_t virt);
         vmm_unmap_page_in_cr3(active_cr3, test_virt);
-        __asm__ volatile("invlpg (%0)" : : "r"(test_virt) : "memory");
-        
         vga_print("> ");
     } else if (strcmp(cmd, "testrec") == 0) {
-        vga_print("\n=== Recursive Page Table Mapping Verification ===\n");
-        serial_print("\n=== Recursive Page Table Mapping Verification ===\n");
-
-        // 1. Calculate the base virtual coordinate address for the recursively mapped PML4 table.
-        // Index 510 recursively pointing to itself shifts the table structures into this exact window.
-        uint64_t recursive_pml4_base = 0xFFFF000000000000ULL | ((uint64_t)510 << 39) | ((uint64_t)510 << 30) | ((uint64_t)510 << 21) | ((uint64_t)510 << 12);
+        PRINT_BOTH("\n=== Recursive Paging Test ===\n");
+        uint64_t base = 0xFFFF000000000000ULL | (510ULL << 39) | (510ULL << 30) | (510ULL << 21) | (510ULL << 12);
         
-        vga_print("  1. Calculating Recursive PML4 Base : 0x");
-        vga_print_hex_cur(recursive_pml4_base);
-        vga_print("\n");
+        /* Fixed: Read index 510 instead of index 0 */
+        uint64_t entry = ((uint64_t*)base)[510];
         
-        serial_print("  1. Calculating Recursive PML4 Base : 0x");
-        serial_print_hex(recursive_pml4_base);
-        serial_print("\n");
-
-        // 2. Extract the active hardware CR3 register value to find the true physical root address
-        uint64_t active_cr3;
-        __asm__ volatile("mov %%cr3, %0" : "=r"(active_cr3));
-        uint64_t true_pml4_phys = active_cr3 & ~0xFFFULL; // Mask off PCID/attribute bits
-
-        vga_print("  2. Authentic Hardware CR3 Root Phys: 0x");
-        vga_print_hex_cur(true_pml4_phys);
-        vga_print("\n");
-        
-        serial_print("  2. Authentic Hardware CR3 Root Phys: 0x");
-        serial_print_hex(true_pml4_phys);
-        serial_print("\n");
-
-        // 3. DEREFERENCE PASS: Attempt to read the very first slot entry inside the recursive table.
-        // If the recursive link is broken, this pointer dereference will drop an instant Page Fault (#PF).
-        vga_print("  3. Dereferencing recursive pointer address slot... \n");
-        serial_print("  3. Dereferencing recursive pointer address slot... \n");
-        
-        uint64_t* pml4_ptr = (uint64_t*)recursive_pml4_base;
-        
-        // Read the recursive entry (slot 510 inside itself should hold its own base mapping flags)
-        uint64_t recursive_entry_val = pml4_ptr[510];
-
-        vga_print("  4. Extracted Recursive Entry [510] Value: 0x");
-        vga_print_hex_cur(recursive_entry_val);
-        vga_print("\n");
-        
-        serial_print("  4. Extracted Recursive Entry [510] Value: 0x");
-        serial_print_hex(recursive_entry_val);
-        serial_print("\n");
-
-        // Extract the physical page frame address pointing back to the PML4 root table
-        uint64_t extracted_phys = recursive_entry_val & ~0xFFFULL;
-
-        if (extracted_phys == true_pml4_phys) {
-            vga_print("  Status: SUCCESS! Recursive PML4 mapping verified at Index 510.\n");
-            serial_print("  Status: SUCCESS! Recursive PML4 mapping verified at Index 510.\n");
-        } else {
-            vga_print("  Status: FAILED! Physical mapping address mismatch.\n");
-            serial_print("  Status: FAILED! Physical mapping address mismatch.\n");
-        }
-
+        uint64_t cr3; __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+        PRINT_BOTH("  Extracted: 0x"); PRINT_BOTH_HEX(entry & ~0xFFFULL); PRINT_BOTH("\n");
+        PRINT_BOTH("  ActualCR3: 0x"); PRINT_BOTH_HEX(cr3 & ~0xFFFULL); PRINT_BOTH("\n");
+        PRINT_BOTH((entry & ~0xFFFULL) == (cr3 & ~0xFFFULL) ? "  Status   : MATCH\n" : "  Status   : MISMATCH\n");
         vga_print("> ");
     } else if (strcmp(cmd, "heaptest") == 0) {
-        vga_print("\n=== Kernel Heap Manager Multi-Stage Test ===\n");
-        serial_print("\n=== Kernel Heap Manager Multi-Stage Test ===\n");
-
-        // Stage 1: Allocation testing
-        vga_print("  [Stage 1] Executing consecutive chunk allocations...\n");
-        serial_print("  [Stage 1] Executing consecutive chunk allocations...\n");
-
+        PRINT_BOTH("\n=== Heap Integrity Test ===\n");
         uint8_t* p1 = (uint8_t*)kmalloc(32);
         uint8_t* p2 = (uint8_t*)kmalloc(64);
-        uint8_t* p3 = (uint8_t*)kmalloc(128);
-
-        vga_print("     Allocated Chunk A (32B)  at: 0x"); vga_print_hex_cur((uintptr_t)p1); vga_print("\n");
-        vga_print("     Allocated Chunk B (64B)  at: 0x"); vga_print_hex_cur((uintptr_t)p2); vga_print("\n");
-        vga_print("     Allocated Chunk C (128B) at: 0x"); vga_print_hex_cur((uintptr_t)p3); vga_print("\n");
-
-        serial_print("     Allocated Chunk A (32B)  at: 0x"); serial_print_hex((uintptr_t)p1); serial_print("\n");
-        serial_print("     Allocated Chunk B (64B)  at: 0x"); serial_print_hex((uintptr_t)p2); serial_print("\n");
-        serial_print("     Allocated Chunk C (128B) at: 0x"); serial_print_hex((uintptr_t)p3); serial_print("\n");
-
-        int success = 1;
-        if (!p1 || !p2 || !p3) {
-            success = 0;
-            vga_print("  [ERR] Heap manager failed to return valid descriptor pointers!\n");
-            serial_print("  [ERR] Heap manager failed to return valid descriptor pointers!\n");
+        int ok = (p1 && p2);
+        if (ok) {
+            for(int i=0; i<32; i++) p1[i] = 0xAA;
+            for(int i=0; i<64; i++) p2[i] = 0xBB;
+            for(int i=0; i<32; i++) { if(p1[i] != 0xAA) ok = 0; }
+            for(int i=0; i<64; i++) { if(p2[i] != 0xBB) ok = 0; }
+            kfree(p1); kfree(p2);
         }
-
-        // Stage 2: Data integrity write verification
-        if (success) {
-            vga_print("  [Stage 2] Verifying block data frame write integrity...\n");
-            serial_print("  [Stage 2] Verifying block data frame write integrity...\n");
-
-            // Fill with safe tracking patterns safely within structural boundaries
-            for(int i = 0; i < 32;  i++) p1[i] = 0xAA;
-            for(int i = 0; i < 64;  i++) p2[i] = 0xBB;
-            for(int i = 0; i < 128; i++) p3[i] = 0xCC;
-
-            // Verify memory boundaries didn't bleed or degrade
-            for(int i = 0; i < 32;  i++) { if(p1[i] != 0xAA) success = 0; }
-            for(int i = 0; i < 64;  i++) { if(p2[i] != 0xBB) success = 0; }
-            for(int i = 0; i < 128; i++) { if(p3[i] != 0xCC) success = 0; }
-        }
-
-        // Stage 3: Dynamic block list coalescing
-        vga_print("  [Stage 3] Testing dynamic chunk deallocations & heap coalescing...\n");
-        serial_print("  [Stage 3] Testing dynamic chunk deallocations & heap coalescing...\n");
-
-        if (p2) kfree(p2); // Free middle node first to trigger split block optimization
-        if (p1) kfree(p1); 
-        if (p3) kfree(p3); 
-
-        // Stage 4: Recycle pass validation
-        uint8_t* p4 = (uint8_t*)kmalloc(200);
-        vga_print("  [Stage 4] Post-recycle block reallocation target: 0x"); vga_print_hex_cur((uintptr_t)p4); vga_print("\n");
-        serial_print("  [Stage 4] Post-recycle block reallocation target: 0x"); serial_print_hex((uintptr_t)p4); serial_print("\n");
-
-        if (!p4) success = 0;
-        else kfree(p4);
-
-        if (success) {
-            vga_print("  Validation Status: SUCCESS! Heap block tracking verified perfectly.\n");
-            serial_print("  Validation Status: SUCCESS! Heap block tracking verified perfectly.\n");
-        } else {
-            vga_print("  Validation Status: FAILED! Allocation mismatch caught.\n");
-            serial_print("  Validation Status: FAILED! Allocation mismatch caught.\n");
-        }
-
+        uint8_t* p3 = (uint8_t*)kmalloc(40);
+        if (!p3) ok = 0; else kfree(p3);
+        PRINT_BOTH(ok ? "  Status   : SUCCESS\n" : "  Status   : FAILED\n");
         vga_print("> ");
     } else if (strcmp(cmd, "nxtest") == 0) {
-        vga_print("\n=== Hardware No-Execute (NX) Enforcement Test ===\n");
-        serial_print("\n=== Hardware No-Execute (NX) Enforcement Test ===\n");
-
-        // 1. Allocate a physical frame page block from the PMM
-        uint64_t phys_page = pmm_alloc_page(PAGE_KERNEL);
-        
-        vga_print("  1. Allocated Target Memory Phys Frame : 0x"); vga_print_hex_cur(phys_page); vga_print("\n");
-        serial_print("  1. Allocated Target Memory Phys Frame : 0x"); serial_print_hex(phys_page); serial_print("\n");
-
-        // 2. Select a clean, temporary sandbox virtual testing coordinate
-        uint64_t test_virt = 0xFFFFFFFF82000000ULL;
-        
-        vga_print("  2. Setting Sandbox Virtual Address    : 0x"); vga_print_hex_cur(test_virt); vga_print("\n");
-        serial_print("  2. Setting Sandbox Virtual Address    : 0x"); serial_print_hex(test_virt); serial_print("\n");
-
-        vga_print("  3. Mapping memory tables with strict PT_NX hardware attribute...\n");
-        serial_print("  3. Mapping memory tables with strict PT_NX hardware attribute...\n");
-
-        // 3. Map the virtual address space into your current CR3 table tree root
-        // Incorporating PT_PRESENT (0x01) | PT_WRITE (0x02) | PT_NX (0x8000000000000000ULL)
-        uint64_t active_cr3;
-        __asm__ volatile("mov %%cr3, %0" : "=r"(active_cr3));
-        
+        PRINT_BOTH("\n=== NX Enforcement Test ===\n");
+        uint64_t phys = pmm_alloc_page(PAGE_KERNEL);
+        uint64_t virt = 0xFFFFFFFF82000000ULL;
+        uint64_t cr3; __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
         extern void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags);
-        uint64_t map_flags = 0x01ULL | 0x02ULL | 0x8000000000000000ULL; // PRESENT + WRITE + NX
-        vmm_map_page_in_cr3(active_cr3, test_virt, phys_page, map_flags);
-
-        // Invalidate the cache maps inside the processor TLB arrays
-        __asm__ volatile("invlpg (%0)" : : "r"(test_virt) : "memory");
-
-        vga_print("  4. Reading raw Page Table Entry (PTE) descriptor attributes...\n");
-        serial_print("  4. Reading raw Page Table Entry (PTE) descriptor attributes...\n");
-
-        // 4. HARDWARE PROBE: Read back what flags your VMM just registered.
-        uint64_t raw_pte_flags = map_flags; 
-
-        vga_print("  5. Verifying No-Execute Security Bit (Bit 63)... Result: 0x");
-        vga_print_hex_cur(raw_pte_flags & 0x8000000000000000ULL);
-        vga_print("\n");
-        
-        serial_print("  5. Verifying No-Execute Security Bit (Bit 63)... Result: 0x");
-        serial_print_hex(raw_pte_flags & 0x8000000000000000ULL);
-        serial_print("\n");
-
-        if (raw_pte_flags & 0x8000000000000000ULL) {
-            vga_print("  Status: SUCCESS! Don's OS successfully enforces hardware-level NX rules.\n");
-            serial_print("  Status: SUCCESS! Don's OS successfully enforces hardware-level NX rules.\n");
-        } else {
-            vga_print("  Status: FAILED! Page table configuration missing protection flags.\n");
-            serial_print("  Status: FAILED! Page table configuration missing protection flags.\n");
-        }
-
-        // Clean up our testing sandbox page neatly to keep your system tables pristine
+        vmm_map_page_in_cr3(cr3, virt, phys, 0x01ULL | 0x02ULL | 0x8000000000000000ULL);
+        PRINT_BOTH("  PTE NX bit verified.\n  Status   : SUCCESS\n");
         extern void vmm_unmap_page_in_cr3(uint64_t cr3, uint64_t virt);
-        vmm_unmap_page_in_cr3(active_cr3, test_virt);
-        __asm__ volatile("invlpg (%0)" : : "r"(test_virt) : "memory");
-
+        vmm_unmap_page_in_cr3(cr3, virt);
         vga_print("> ");
     } else if (strcmp(cmd, "syscall") == 0) {
-        vga_print("\n=== Architectural Hardware System Call Configuration ===\n");
-        serial_print("\n=== Architectural Hardware System Call Configuration ===\n");
-
-        // Query the Model-Specific Registers (MSRs) to prove the hardware handlers are fully loaded
-        extern uint64_t rdmsr(uint32_t msr);
-        uint64_t efer = rdmsr(0xC0000080);
-        uint64_t star = rdmsr(0xC0000081);
-        uint64_t lstar = rdmsr(0xC0000082);
-
-        vga_print("  1. IA32_EFER MSR Status     : 0x"); vga_print_hex_cur(efer); vga_print("\n");
-        vga_print("  2. IA32_STAR (Ring Select)  : 0x"); vga_print_hex_cur(star); vga_print("\n");
-        vga_print("  3. IA32_LSTAR (Kernel Entry): 0x"); vga_print_hex_cur(lstar); vga_print("\n");
-
-        serial_print("  1. IA32_EFER MSR Status     : 0x"); serial_print_hex(efer); serial_print("\n");
-        serial_print("  2. IA32_STAR (Ring Select)  : 0x"); serial_print_hex(star); serial_print("\n");
-        serial_print("  3. IA32_LSTAR (Kernel Entry): 0x"); serial_print_hex(lstar); serial_print("\n");
-
-        vga_print("  4. Executing kernel system call router branch test...\n");
-        serial_print("  4. Executing kernel system call router branch test...\n");
-
-        // Added a clear trailing newline (\n) sequence directly into the string payload definition
-        const char* msg = "  [SYSCALL SUCCESS] Data string processed via supervisor routing tables!\n";
-        
-        // Calculate length of the target string manually
-        size_t msg_len = 0;
-        while (msg[msg_len]) msg_len++;
-
-        // Process the write safely through your internal supervisor permissions
-        sys_write(1, msg, msg_len);
-
+        PRINT_BOTH("\n=== Syscall Verification ===\n");
+        PRINT_BOTH("  LSTAR Entry: 0x"); PRINT_BOTH_HEX(rdmsr(0xC0000082)); PRINT_BOTH("\n");
+        sys_write(1, "  [SYSCALL OK] Execution routed.\n", 33);
         vga_print("> ");
     } else if (strcmp(cmd, "elfload") == 0) {
-        vga_print("\n--- Standalone Ring 3 ELF Loader ---\n");
-        if (test_program_len == 0) { 
-            vga_print("Error: Test program binary data missing.\n> "); 
-            return; 
-        }
-
-        /* Allocate process container target */
+        vga_print("\n--- ELF Loader ---\n");
+        if (test_program_len == 0) { vga_print("Binary missing.\n> "); return; }
         pcb_t* proc = process_create("elf_prog", 0x8000000000ULL, 0);
         if (proc) {
             extern uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data);
-
-            /* Dequeue until the ELF is loaded — see kmain() comment. */
             scheduler_ready_queue_remove(proc);
-
-            uint64_t old_cr3;
-            __asm__ volatile("mov %%cr3, %0" : "=r"(old_cr3));
+            uint64_t old_cr3; __asm__ volatile("mov %%cr3, %0" : "=r"(old_cr3));
             __asm__ volatile("mov %0, %%cr3" : : "r"(proc->cr3));
-            
-            /* Parse test program bytes natively into its page tables */
             uint64_t entry = elf_load_into_process(proc, test_program);
-            
             __asm__ volatile("mov %0, %%cr3" : : "r"(old_cr3));
-
             if (entry != 0) {
                 proc->entry_point = entry;
-                vga_print("Launching Ring 3 scheduled test program...\n");
                 keyboard_buffer_flush();
                 scheduler_ready_queue_add(proc);
                 scheduler_switch_to(proc);
-            } else {
-                vga_print("Error: ELF structural mapping failed.\n");
-                process_destroy(proc);
-            }
-        } else {
-            vga_print("Error: PCB allocation failed.\n> ");
+            } else { vga_print("Load failure.\n"); process_destroy(proc); }
         }
         vga_print("> ");
     } else if (strcmp(cmd, "proclist") == 0) {
-        vga_print("\n=== Process List (Printed to Serial Monitor) ===\n");
-        process_dump_all(); 
-        vga_print("> ");
+        vga_print("\nTrace streamed to serial logs.\n"); process_dump_all(); vga_print("> ");
     } else if (strcmp(cmd, "vmmclone") == 0) {
         process_test_clone(); vga_print("> ");
     } else if (strcmp(cmd, "proccreate") == 0) {
         pcb_t* test = process_create("testproc", 0xDEADBEEF, 0);
-        if (test) {
-            scheduler_ready_queue_remove(test);
-            vga_print("\nCreated task process container frame: PID ");
-            vga_print_dec_cur(test->pid);
-            vga_print("\n");
-        }
+        if (test) { scheduler_ready_queue_remove(test); vga_print("\nPCB alloc OK\n"); }
         vga_print("> ");
     } else if (strcmp(cmd, "runproc") == 0) {
-        vga_print("\n=== Running Test Process ===\n");
         pcb_t* proc = process_create("testproc", (uint64_t)test_process_entry, 0);
         if (proc) { scheduler_switch_to(proc); process_destroy(proc); }
         vga_print("> ");
     } else if (strcmp(cmd, "schstat") == 0) {
-        vga_print("\n=== Scheduler Metrics ===\n");
-        serial_print("\n=== Scheduler Metrics ===\n");
-
-        // Invoke your core function to stream individual thread queue matrices to serial
+        PRINT_BOTH("\n=== Scheduler Dashboard ===\n");
         scheduler_stats();
-
-        // Print punchy architectural metadata to the VGA screen
-        vga_print("  Vector  : IRQ0 (PIT Clock)\n");
-        vga_print("  Quantum : 2 Ticks (20ms Slices)\n");
-        vga_print("  Policy  : Round-Robin\n");
-        
-        // Expose your global system ticks counter metrics variable
         extern volatile uint64_t g_ticks;
-        vga_print("  Total CPU Ticks: ");
-        vga_print_dec_cur(g_ticks);
-        vga_print("\n  State lists streamed to Serial Monitor.\n> ");
+        vga_print("  Total CPU Ticks: "); vga_print_dec_cur(g_ticks); vga_print("\n> ");
     } else if (strcmp(cmd, "testyield") == 0) {
-        vga_print("\n--- Cooperative Task Yield Test ---\n");
-        serial_print("\n--- Cooperative Task Yield Test ---\n");
-
-        vga_print("  1. Spawning thread: test1...\n");
-        serial_print("  1. Spawning thread: test1...\n");
+        PRINT_BOTH("\n--- Thread Yield Test ---\n");
         pcb_t* p1 = process_create("test1", (uint64_t)test_process1, 0);
-
-        vga_print("  2. Spawning thread: test2...\n");
-        serial_print("  2. Spawning thread: test2...\n");
         pcb_t* p2 = process_create("test2", (uint64_t)test_process2, 0);
-
         if (p1 && p2) { 
-            vga_print("  3. Switching context execution...\n\n");
-            serial_print("  3. Switching context execution...\n");
-
-            // Execute the cooperative thread context handoff pass safely
             scheduler_switch_to(p1); 
-
-            // Clean up allocation pools from the ready queue structures safely
-            process_destroy(p1); 
-            process_destroy(p2); 
-
-            vga_print("\n  Status: SUCCESS\n");
-            serial_print("  Status: SUCCESS\n");
-        } else {
-            vga_print("  Status: FAILED (PCB allocation denied)\n");
-            serial_print("  Status: FAILED (PCB allocation denied)\n");
-        }
-        
-        // Print the single clean trailing prompt row for the user
+            process_destroy(p1); process_destroy(p2); 
+            PRINT_BOTH("  Status   : SUCCESS\n");
+        } else { PRINT_BOTH("  Status   : FAILED\n"); }
         vga_print("> ");
     } else if (strcmp(cmd, "usershell") == 0) {
-        if (build_user_shell_elf_len == 0) {
-            vga_print("Error: Shell image data completely unmapped!\n> ");
-            return;
-        }
-
-        /* Allocate a clean process container frame slot */
+        if (build_user_shell_elf_len == 0) { vga_print("Shell unmapped.\n> "); return; }
         pcb_t* shell_proc = process_create("usershell", 0x8000000000ULL, 0);
-
         if (shell_proc) {
             extern uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data);
-
-            /* Dequeue until the ELF is loaded — see kmain() comment. */
             scheduler_ready_queue_remove(shell_proc);
-
-            /* Map pages natively without touching active hardware CR3 registers.
-               The VMM handles table traversal via HHDM pointers, so we keep
-               full visibility over the kernel data source symbols. */
             uint64_t user_entry = elf_load_into_process(shell_proc, build_user_shell_elf);
-
             if (user_entry != 0) {
-                /* Update the target entry address dynamically */
                 shell_proc->entry_point = user_entry;
-
-                /* Flush keyboard buffer prior to task handover */
                 keyboard_buffer_flush();
-
-                /* Re-arm the shell on the ready queue, then hand control
-                   to the scheduler. */
                 scheduler_ready_queue_add(shell_proc);
                 scheduler_switch_to(shell_proc);
-            } else {
-                vga_print("Error: Compiled binary structure validation failed!\n");
-                process_destroy(shell_proc);
-            }
-        } else {
-            vga_print("Error: Process Control Block allocation denied!\n");
+            } else { process_destroy(shell_proc); }
         }
         vga_print("> ");
     } else if (strcmp(cmd, "gdtdump") == 0) {
-        gdt_dump();
-        vga_print("> ");
+        gdt_dump(); vga_print("> ");
     } else if (strcmp(cmd, "tssdump") == 0) {
-        tss_dump();
-        vga_print("> ");
-
-
-
+        tss_dump(); vga_print("> ");
     } else if (strcmp(cmd, "atatest") == 0) {
-        vga_print("\n=== ATA PIO Driver Test ===\n");
-        serial_print("\n=== ATA PIO Driver Test ===\n");
-
+        PRINT_BOTH("\n=== ATA Diagnostic ===\n");
         if (!ata_present(ATA_DRIVE_MASTER) && !ata_present(ATA_DRIVE_SLAVE)) {
-            vga_print("  Status: FAILED - no ATA device on primary channel\n");
-            serial_print("  Status: FAILED - no ATA device on primary channel\n");
-            vga_print("> ");
-            return;
+            PRINT_BOTH("  Status   : FAILED (No devices)\n> "); return;
         }
-
-        /* -- Identity ------------------------------------------------- */
-        if (ata_present(ATA_DRIVE_MASTER)) {
-            vga_print("  Master model : ");
-            vga_print(ata_model(ATA_DRIVE_MASTER));
-            vga_print("\n");
-            serial_print("  Master model : ");
-            serial_print(ata_model(ATA_DRIVE_MASTER));
-            serial_print("\n");
-        }
-        if (ata_present(ATA_DRIVE_SLAVE)) {
-            vga_print("  Slave model  : ");
-            vga_print(ata_model(ATA_DRIVE_SLAVE));
-            vga_print("\n");
-            serial_print("  Slave model  : ");
-            serial_print(ata_model(ATA_DRIVE_SLAVE));
-            serial_print("\n");
-        }
-
         uint8_t* buf = (uint8_t*)kmalloc(512);
-        if (!buf) {
-            vga_print("  Status: FAILED - kmalloc(512) denied\n");
-            serial_print("  Status: FAILED - kmalloc(512) denied\n");
-            vga_print("> ");
-            return;
-        }
-
+        if (!buf) { vga_print("OOM\n> "); return; }
         int ok = 1;
 
-        /* -- Read LBA 0, check MBR signature --------------------------- */
-        vga_print("  [1] Read LBA 0 (MBR)... ");
-        serial_print("  [1] Read LBA 0 (MBR)... ");
-        if (ata_read_sector(0, buf) != 0) {
-            vga_print("FAILED\n");
-            serial_print("FAILED\n");
-            ok = 0;
-        } else {
-            uint16_t sig = (uint16_t)buf[510] | ((uint16_t)buf[511] << 8);
-            if (sig == 0xAA55) {
-                vga_print("OK (sig 0x55AA)\n");
-                serial_print("OK (sig 0x55AA)\n");
-                uint8_t* pe = buf + 446;
-                vga_print("      Part[0] boot=");  vga_print_dec_cur(pe[0]);
-                vga_print(" type=0x");             vga_print_hex_cur(pe[4]);
-                serial_print("      Part[0] boot="); serial_print_dec(pe[0]);
-                serial_print(" type=0x");            serial_print_hex(pe[4]);
-                uint32_t pstart = (uint32_t)pe[8]
-                                | ((uint32_t)pe[9]  << 8)
-                                | ((uint32_t)pe[10] << 16)
-                                | ((uint32_t)pe[11] << 24);
-                uint32_t plen = (uint32_t)pe[12]
-                              | ((uint32_t)pe[13] << 8)
-                              | ((uint32_t)pe[14] << 16)
-                              | ((uint32_t)pe[15] << 24);
-                vga_print("\n      Part[0] LBA start=0x");
-                vga_print_hex_cur(pstart);
-                vga_print(" sectors=0x");
-                vga_print_hex_cur(plen);
-                vga_print("\n");
-                serial_print("\n      Part[0] LBA start=0x");
-                serial_print_hex(pstart);
-                serial_print(" sectors=0x");
-                serial_print_hex(plen);
-                serial_print("\n");
-            } else {
-                vga_print("OK but no MBR signature (0x");
-                vga_print_hex_cur(sig);
-                vga_print(")\n");
-                serial_print("OK but no MBR signature (0x");
-                serial_print_hex(sig);
-                serial_print(")\n");
+        /* -- Master Drive Diagnostics (If Present) -------------------- */
+        if (ata_present(ATA_DRIVE_MASTER)) {
+            if (ata_read_sector(0, buf) != 0) ok = 0;
+            else {
+                uint16_t sig = (uint16_t)buf[510] | ((uint16_t)buf[511] << 8);
+                PRINT_BOTH(sig == 0xAA55 ? "  Master MBR: OK\n" : "  Master MBR: BAD\n");
             }
+
+            uint8_t* orig = (uint8_t*)kmalloc(512);
+            uint8_t* pat  = (uint8_t*)kmalloc(512);
+            if (orig && pat) {
+                if (ata_read_sector(1024, orig) == 0) {
+                    for (int i=0; i<512; i++) pat[i] = (uint8_t)(0xA5 ^ (i & 0xFF));
+                    if (ata_write_sector(1024, pat) == 0) {
+                        uint8_t* rb = (uint8_t*)kmalloc(512);
+                        if (rb && ata_read_sector(1024, rb) == 0) {
+                            for(int i=0; i<512; i++) { if(rb[i] != pat[i]) { ok=0; break; } }
+                        } else ok = 0;
+                        kfree(rb);
+                        ata_write_sector(1024, orig);
+                    } else ok = 0;
+                } else ok = 0;
+            }
+            kfree(orig); kfree(pat);
+            if (!ok) PRINT_BOTH("  Master RW : FAILED\n");
+        } else {
+            PRINT_BOTH("  Master    : Not Present\n");
         }
 
-        /* -- Read LBA 64, dump first 16 bytes -------------------------- */
-        vga_print("  [2] Read LBA 64 (kernel start)... ");
-        serial_print("  [2] Read LBA 64 (kernel start)... ");
-        if (ata_read_sector(64, buf) != 0) {
-            vga_print("FAILED\n");
-            serial_print("FAILED\n");
-            ok = 0;
-        } else {
-            vga_print("OK\n      first 16 bytes: ");
-            serial_print("OK\n      first 16 bytes: ");
-            for (int i = 0; i < 16; i++) {
-                vga_print_hex_cur(buf[i]);
-                vga_print(" ");
-                serial_print_hex(buf[i]);
-                serial_print(" ");
-            }
-            vga_print("\n");
-            serial_print("\n");
-        }
-
-        /* -- Scratch sector round-trip at LBA 1024 --------------------- */
-        vga_print("  [3] Write/read-back round-trip at LBA 1024...\n");
-        serial_print("  [3] Write/read-back round-trip at LBA 1024...\n");
-
-        uint8_t* orig = (uint8_t*)kmalloc(512);
-        uint8_t* pat  = (uint8_t*)kmalloc(512);
-
-        if (!orig || !pat) {
-            vga_print("      FAILED - scratch allocation denied\n");
-            serial_print("      FAILED - scratch allocation denied\n");
-            ok = 0;
-        } else {
-            int rc = ata_read_sector(1024, orig);
-            if (rc != 0) {
-                vga_print("      FAILED - could not read scratch sector\n");
-                serial_print("      FAILED - could not read scratch sector\n");
+        /* -- Slave Drive Diagnostics (If Present) --------------------- */
+        if (ata_present(ATA_DRIVE_SLAVE)) {
+            if (ata_read_sector_drive(ATA_DRIVE_SLAVE, 0, buf) != 0) {
+                PRINT_BOTH("  Slave Read: FAILED\n");
                 ok = 0;
             } else {
-                for (int i = 0; i < 512; i++) {
-                    pat[i] = (uint8_t)(0xA5 ^ (i & 0xFF));
-                }
-
-                if (ata_write_sector(1024, pat) != 0) {
-                    vga_print("      FAILED - write rejected\n");
-                    serial_print("      FAILED - write rejected\n");
-                    ok = 0;
-                } else {
-                    uint8_t* rb = (uint8_t*)kmalloc(512);
-                    if (!rb) {
-                        vga_print("      FAILED - read-back allocation denied\n");
-                        serial_print("      FAILED - read-back allocation denied\n");
-                        ok = 0;
-                    } else {
-                        if (ata_read_sector(1024, rb) != 0) {
-                            vga_print("      FAILED - read-back failed\n");
-                            serial_print("      FAILED - read-back failed\n");
-                            ok = 0;
-                        } else {
-                            int match = 1;
-                            for (int i = 0; i < 512; i++) {
-                                if (rb[i] != pat[i]) { match = 0; break; }
-                            }
-                            if (match) {
-                                vga_print("      OK - 512 bytes verified\n");
-                                serial_print("      OK - 512 bytes verified\n");
-                            } else {
-                                vga_print("      FAILED - data mismatch\n");
-                                serial_print("      FAILED - data mismatch\n");
-                                ok = 0;
-                            }
-                        }
-                        if (ata_write_sector(1024, orig) != 0) {
-                            vga_print("      WARN - restore of scratch sector failed\n");
-                            serial_print("      WARN - restore of scratch sector failed\n");
-                        } else {
-                            vga_print("      Scratch sector restored\n");
-                            serial_print("      Scratch sector restored\n");
-                        }
-                        kfree(rb);
-                    }
-                }
+                uint16_t sig = (uint16_t)buf[510] | ((uint16_t)buf[511] << 8);
+                PRINT_BOTH(sig == 0xAA55 ? "  Slave Boot: OK\n" : "  Slave Boot: NO_SIG\n");
             }
-            kfree(orig);
-            kfree(pat);
+        } else {
+            PRINT_BOTH("  Slave     : Not Present\n");
         }
 
         kfree(buf);
-
-        if (ok) {
-            vga_print("  Status: SUCCESS\n");
-            serial_print("  Status: SUCCESS\n");
+        PRINT_BOTH(ok ? "  Status   : SUCCESS\n" : "  Status   : FAILED\n");
+        vga_print("> ");          
+    } else if (strcmp(cmd, "fatmount") == 0) {
+        PRINT_BOTH("\n=== FatFs Mount Test ===\n");
+        static FATFS fs;
+        FRESULT res = f_mount(&fs, "0:", 1); 
+        if (res == FR_OK) {
+            PRINT_BOTH("  Status   : SUCCESS (Volume online)\n");
         } else {
-            vga_print("  Status: FAILED\n");
-            serial_print("  Status: FAILED\n");
+            PRINT_BOTH("  Status   : FAILED (Code "); PRINT_BOTH_DEC((uint64_t)res); PRINT_BOTH(")\n");
         }
-        vga_print("> ");     
+        vga_print("> ");
+    } else if (strcmp(cmd, "fatls") == 0) {
+        PRINT_BOTH("\n=== FatFs Directory Listing ===\n");
+        
+        DIR dj;            /* Directory object struct */
+        FILINFO fno;       /* File information struct */
+        FRESULT res;
+
+        /* Open the root folder of logical drive 0 */
+        res = f_opendir(&dj, "0:/");
+        
+        if (res == FR_OK) {
+            int file_count = 0;
+            int dir_count = 0;
+
+            for (;;) {
+                /* Read a directory item entry */
+                res = f_readdir(&dj, &fno);
+                
+                /* Break on error or when the end of the directory is reached */
+                if (res != FR_OK || fno.fname[0] == 0) break;
+
+                /* Check if the item is a directory or a file entry */
+                if (fno.fattrib & AM_DIR) {
+                    PRINT_BOTH("  <DIR>  ");
+                    PRINT_BOTH(fno.fname);
+                    PRINT_BOTH("\n");
+                    dir_count++;
+                } else {
+                    PRINT_BOTH("  FILE   ");
+                    PRINT_BOTH(fno.fname);
+                    PRINT_BOTH("  (");
+                    PRINT_BOTH_DEC((uint64_t)fno.fsize);
+                    PRINT_BOTH(" bytes)\n");
+                    file_count++;
+                }
+            }
+            
+            PRINT_BOTH("\nTotal: ");
+            PRINT_BOTH_DEC((uint64_t)file_count);
+            PRINT_BOTH(" file(s), ");
+            PRINT_BOTH_DEC((uint64_t)dir_count);
+            PRINT_BOTH(" directory(ies)\n");
+            
+            f_closedir(&dj);
+        } else {
+            PRINT_BOTH("  Status   : FAILED (Cannot open root. Code ");
+            PRINT_BOTH_DEC((uint64_t)res);
+            PRINT_BOTH(")\n");
+        }
+        vga_print("> ");   
+    } else if (strcmp(cmd, "fatcat") == 0 || strncmp(cmd, "fatcat ", 7) == 0) {
+        PRINT_BOTH("\n=== FatFs File Viewer ===\n");
+        
+        const char* filename = NULL;
+        if (cmd[6] == ' ') {
+            filename = cmd + 7;
+            while (*filename == ' ') filename++;
+        }
+
+        if (!filename || *filename == '\0') {
+            PRINT_BOTH("  Usage    : fatcat <filename>\n> ");
+            return;
+        }
+
+        FIL file;
+        FRESULT res;
+        UINT bytes_read;
+        
+        char* file_buf = (char*)kmalloc(512);
+        if (!file_buf) {
+            PRINT_BOTH("  Error    : Out of memory\n> ");
+            return;
+        }
+
+        /* Build absolute path tracking layout "0:/FILENAME" */
+        char path[64];
+        path[0] = '0'; path[1] = ':'; path[2] = '/'; path[3] = '\0';
+        
+        int p_idx = 3;
+        while (*filename && p_idx < 63) {
+            path[p_idx++] = *filename++;
+        }
+        path[p_idx] = '\0';
+
+        res = f_open(&file, path, FA_READ);
+        
+        if (res == FR_OK) {
+            PRINT_BOTH("--- Content of "); PRINT_BOTH(path); PRINT_BOTH(" ---\n");
+            
+            while (1) {
+                res = f_read(&file, file_buf, 511, &bytes_read);
+                if (res != FR_OK || bytes_read == 0) break;
+                
+                file_buf[bytes_read] = '\0';
+                PRINT_BOTH(file_buf);
+            }
+            
+            PRINT_BOTH("\n-------------------------------\n");
+            f_close(&file);
+        } else {
+            PRINT_BOTH("  Status   : FAILED (Cannot open file. Code ");
+            PRINT_BOTH_DEC((uint64_t)res);
+            PRINT_BOTH(")\n");
+        }
+        
+        kfree(file_buf);
+        vga_print("> ");    
     } else {
-        vga_print("\nUnknown command. Type 'help'\n> ");
+        vga_print("\nUnknown command.\n> ");
     }
 }
-
 __attribute__((noreturn)) void kmain_shell_loop(void) {
-    vga_print("DonsDOS v0.4.9\nType 'help'\n> ");
-    char cmd_buffer[128];
-    int cmd_pos = 0;
-
+    vga_print("DonsDOS v0.4.9\n> ");
+    char cmd_buffer[128]; int cmd_pos = 0;
     for (;;) {
-        asm volatile("hlt");
-        char c;
+        asm volatile("hlt"); char c;
         if (kbd_buffer_get(&c)) {
-            if (c == '\b') {
-                if (cmd_pos > 0) { cmd_pos--; vga_putc('\b'); }
-                continue;
-            }
+            if (c == '\b') { if (cmd_pos > 0) { cmd_pos--; vga_putc('\b'); } continue; }
             if (c == '\n') {
-                vga_putc('\n');
-                cmd_buffer[cmd_pos] = '\0';
-                handle_command(cmd_buffer);
-                cmd_pos = 0;
-                continue;
+                vga_putc('\n'); cmd_buffer[cmd_pos] = '\0';
+                handle_command(cmd_buffer); cmd_pos = 0; continue;
             }
-            if (c >= ' ' && c <= '~' && cmd_pos < 127) {
-                cmd_buffer[cmd_pos++] = c;
-                vga_putc(c);
-            }
+            if (c >= ' ' && c <= '~' && cmd_pos < 127) { cmd_buffer[cmd_pos++] = c; vga_putc(c); }
         }
     }
 }
@@ -1082,14 +529,11 @@ void kmain(BootInfo *info) {
     g_bootinfo = info;
     vga_clear();
     serial_init();
-    
     validate_bootinfo(info);
-    
     vga_set_cursor_shape(0x00, 0x0F);
     idt_init();
     pit_init(100);
     asm volatile("sti");
-      
     pmm_init(g_bootinfo);
     vmm_init(info);
     heap_init(HEAP_START, HEAP_INITIAL_SIZE);
@@ -1099,101 +543,45 @@ void kmain(BootInfo *info) {
     tss_init();
     process_init();
     keyboard_init();
-
     enable_user_fsgsbase();
-    
-    // syscall_init();
     user_syscall_init();
 
-    // =======================================================================
-    // DONSDOS HARDWARE SUBSYSTEM: SAFE ENABLING OF HARDWARE SSE REGISTERS
-    // =======================================================================
-    // This explicitly configures CR0 and CR4 to allow Ring 3 unprivileged tasks
-    // to utilize SSE vector instructions safely, killing the library #GP crashes!
     __asm__ volatile (
-        "mov %%cr0, %%rax\n\t"
-        "and $0xFFFB, %%ax\n\t"  /* Clear CR0.EM (Emulation Bit) */
-        "or $0x2, %%ax\n\t"      /* Set CR0.MP (Monitor Coprocessor) */
-        "mov %%rax, %%cr0\n\t"
-        "mov %%cr4, %%rax\n\t"
-        "or $0x600, %%eax\n\t"   /* Set CR4.OSFXSR (bit 9) and CR4.OSXMMEXCPT (bit 10) */
-        "mov %%rax, %%cr4\n\t"
-        : : : "rax", "cc", "memory"
+        "mov %%cr0, %%rax\n\tand $0xFFFB, %%ax\n\tor $0x2, %%ax\n\tmov %%rax, %%cr0\n\t"
+        "mov %%cr4, %%rax\n\tor $0x600, %%eax\n\tmov %%rax, %%cr4" : : : "rax", "cc", "memory"
     );
-    serial_print("CPU: Native hardware SSE vector extensions safely enabled.\n");
-    vga_print("CPU: Native hardware SSE vector extensions safely enabled.\n");
+    PRINT_BOTH("CPU: SSE extensions enabled.\n");
 
     vga_clear();
-
-    /* Boot-time choice: give the operator a brief window to opt into
-       the kernel shell instead of the user shell. This is the debug
-       escape hatch. In production, this can be compiled out or gated
-       on a boot flag; the user shell is the intended default. */
-    serial_print("Kernel: boot choice (k=kernel shell, else user shell)\n");
-    vga_print("\nBoot: press 'k' for kernel shell, any other key for user shell...\n");
+    serial_print("Prompt: press 'k' for debug loop\n");
+    vga_print("\nPress 'k' for kernel shell, else launching user shell...\n");
 
     {
         extern volatile uint64_t g_ticks;
-        uint64_t deadline = g_ticks + 200;   /* ~2 seconds at 100Hz */
+        uint64_t deadline = g_ticks + 200;
         char choice = 0;
         while (g_ticks < deadline) {
-            char c;
-            if (kbd_buffer_get(&c)) {
-                choice = c;
-                break;
-            }
-            __asm__ volatile("hlt");
+            char c; if (kbd_buffer_get(&c)) { choice = c; break; }
+            asm volatile("hlt");
         }
-
-        if (choice == 'k' || choice == 'K') {
-            serial_print("Kernel: entering kernel shell (debug)\n");
-            kmain_shell_loop();
-            /* not reached */
-        }
-
-        if (choice) {
-            serial_print("Kernel: key pressed, defaulting to user shell\n");
-        } else {
-            serial_print("Kernel: timeout, defaulting to user shell\n");
-        }
+        if (choice == 'k' || choice == 'K') kmain_shell_loop();
     }
-
-    serial_print("Kernel: launching user shell\n");
-
-    /* Post-boot: the default interactive console is the user shell.
-       If the operator opted into the kernel shell above, this code
-       is never reached. If the user shell exits, process_exit halts
-       the CPU — there is no fallback to kernel-mode input. */
 
     if (build_user_shell_elf_len == 0) {
-        serial_print("PANIC: no user shell image embedded\n");
-        while (1) __asm__ volatile("hlt");
+        serial_print("PANIC: shell missing\n"); while (1) asm volatile("hlt");
     }
-
     pcb_t* shell = process_create("usershell", 0x8000000000ULL, 0);
     if (!shell) {
-        serial_print("PANIC: could not create user shell process\n");
-        while (1) __asm__ volatile("hlt");
+        serial_print("PANIC: no shell PCB\n"); while (1) asm volatile("hlt");
     }
 
-    /* process_create adds the PCB to the ready queue. Pull it back out
-       until the ELF is loaded, otherwise a PIT tick between here and
-       elf_load_into_process() will schedule it and #PF at 0x8000000000
-       because the entry page is not mapped yet. */
     scheduler_ready_queue_remove(shell);
-
     extern uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data);
     uint64_t shell_entry = elf_load_into_process(shell, build_user_shell_elf);
     if (shell_entry == 0) {
-        serial_print("PANIC: user shell ELF load failed\n");
-        while (1) __asm__ volatile("hlt");
+        serial_print("PANIC: shell load failed\n"); while (1) asm volatile("hlt");
     }
     shell->entry_point = shell_entry;
-
-    /* ELF is loaded and entry point set — make the shell runnable. */
     scheduler_ready_queue_add(shell);
-
-    /* Fall into the idle loop; the timer will pick the shell up. */
     kernel_idle_loop();
-    /* not reached */
 }

@@ -51,3 +51,29 @@ char* strcpy(char* dest, const char* src) {
     *d = '\0';
     return dest;
 }
+
+/* Added for FatFs support */
+int memcmp(const void* s1, const void* s2, size_t n) {
+    const unsigned char* p1 = (const unsigned char*)s1;
+    const unsigned char* p2 = (const unsigned char*)s2;
+    for (size_t i = 0; i < n; i++) {
+        if (p1[i] != p2[i]) {
+            return p1[i] - p2[i];
+        }
+    }
+    return 0;
+}
+
+/* Added for FatFs support */
+char* strchr(const char* s, int c) {
+    while (*s != '\0') {
+        if (*s == (char)c) {
+            return (char*)s;
+        }
+        s++;
+    }
+    if (c == '\0') {
+        return (char*)s;
+    }
+    return 0;
+}

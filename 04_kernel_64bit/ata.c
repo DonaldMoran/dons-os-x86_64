@@ -362,29 +362,31 @@ static int ata_read_chunk(uint8_t drive, uint32_t lba, uint8_t count, void* buf)
     return 0;
 }
 
-int ata_read_sector(uint32_t lba, void* buf) {
-    if (!s_present[s_default_drive]) return -1;
-    return ata_read_chunk(s_default_drive, lba, 1, buf);
-}
+//~ int ata_read_sector(uint32_t lba, void* buf) {
+    //~ if (!s_present[s_default_drive]) return -1;
+    //~ return ata_read_chunk(s_default_drive, lba, 1, buf);
+//~ }
 
-int ata_read_sectors(uint32_t lba, uint32_t count, void* buf) {
-    if (!s_present[s_default_drive]) return -1;
-    if (count == 0) return 0;
 
-    uint8_t* p = (uint8_t*)buf;
-    while (count > 0) {
-        uint32_t chunk = (count > 256) ? 256 : count;
-        uint8_t sc = (chunk == 256) ? 0 : (uint8_t)chunk;
+//~ int ata_read_sectors(uint32_t lba, uint32_t count, void* buf) {
+    //~ if (!s_present[s_default_drive]) return -1;
+    //~ if (count == 0) return 0;
 
-        int rc = ata_read_chunk(s_default_drive, lba, sc, p);
-        if (rc != 0) return rc;
+    //~ uint8_t* p = (uint8_t*)buf;
+    //~ while (count > 0) {
+        //~ uint32_t chunk = (count > 256) ? 256 : count;
+        //~ uint8_t sc = (chunk == 256) ? 0 : (uint8_t)chunk;
 
-        lba   += chunk;
-        count -= chunk;
-        p     += chunk * ATA_SECTOR_SIZE;
-    }
-    return 0;
-}
+        //~ int rc = ata_read_chunk(s_default_drive, lba, sc, p);
+        //~ if (rc != 0) return rc;
+
+        //~ lba   += chunk;
+        //~ count -= chunk;
+        //~ p     += chunk * ATA_SECTOR_SIZE;
+    //~ }
+    //~ return 0;
+//~ }
+
 
 /* ------------------------------------------------------------------ *
  * WRITE
@@ -419,29 +421,99 @@ static int ata_write_chunk(uint8_t drive, uint32_t lba, uint8_t count,
     return 0;
 }
 
-int ata_flush_cache(void) {
-    if (!s_present[s_default_drive]) return -1;
+//~ int ata_flush_cache(void) {
+    //~ if (!s_present[s_default_drive]) return -1;
 
-    int rc = ata_poll_bsy_clear();
-    if (rc != 0) return rc;
+    //~ int rc = ata_poll_bsy_clear();
+    //~ if (rc != 0) return rc;
 
-    outb(ATA_PRIMARY_STATUS, ATA_CMD_FLUSH_CACHE);
-    ata_400ns_delay();
-    return ata_poll_bsy_clear();
+    //~ outb(ATA_PRIMARY_STATUS, ATA_CMD_FLUSH_CACHE);
+    //~ ata_400ns_delay();
+    //~ return ata_poll_bsy_clear();
+//~ }
+
+//~ int ata_write_sector(uint32_t lba, const void* buf) {
+    //~ return ata_write_sectors(lba, 1, buf);
+//~ }
+
+//~ int ata_write_sectors(uint32_t lba, uint32_t count, const void* buf) {
+    //~ if (!s_present[s_default_drive]) return -1;
+    //~ if (count == 0) return 0;
+
+    //~ if (lba < ATA_WRITE_PROTECT_LBAS) {
+        //~ serial_print("ATA: refuse write below LBA ");
+        //~ serial_print_dec(ATA_WRITE_PROTECT_LBAS);
+        //~ serial_print(" (requested LBA ");
+        //~ serial_print_dec(lba);
+        //~ serial_print(")\n");
+        //~ return -2;
+    //~ }
+    //~ if (lba + count <= lba) return -1;
+
+    //~ const uint8_t* p = (const uint8_t*)buf;
+    //~ while (count > 0) {
+        //~ uint32_t chunk = (count > 256) ? 256 : count;
+        //~ uint8_t sc = (chunk == 256) ? 0 : (uint8_t)chunk;
+
+        //~ int rc = ata_write_chunk(s_default_drive, lba, sc, p);
+        //~ if (rc != 0) return rc;
+
+        //~ lba   += chunk;
+        //~ count -= chunk;
+        //~ p     += chunk * ATA_SECTOR_SIZE;
+    //~ }
+    //~ return ata_flush_cache();
+//~ }
+
+/* ------------------------------------------------------------------ *
+ * Drive-parameterized API (for callers that need a specific device,
+ * e.g. FatFs on the slave disk)
+ * ------------------------------------------------------------------ */
+
+int ata_read_sector_drive(uint8_t drive, uint32_t lba, void* buf) {
+    if (drive > ATA_DRIVE_SLAVE) return -1;
+    if (!s_present[drive]) return -1;
+    return ata_read_chunk(drive, lba, 1, buf);
 }
 
-int ata_write_sector(uint32_t lba, const void* buf) {
-    return ata_write_sectors(lba, 1, buf);
-}
-
-int ata_write_sectors(uint32_t lba, uint32_t count, const void* buf) {
-    if (!s_present[s_default_drive]) return -1;
+int ata_read_sectors_drive(uint8_t drive, uint32_t lba, uint32_t count, void* buf) {
+    if (drive > ATA_DRIVE_SLAVE) return -1;
+    if (!s_present[drive]) return -1;
     if (count == 0) return 0;
 
-    if (lba < ATA_WRITE_PROTECT_LBAS) {
+    uint8_t* p = (uint8_t*)buf;
+    while (count > 0) {
+        uint32_t chunk = (count > 256) ? 256 : count;
+        uint8_t sc = (chunk == 256) ? 0 : (uint8_t)chunk;
+
+        int rc = ata_read_chunk(drive, lba, sc, p);
+        if (rc != 0) return rc;
+
+        lba   += chunk;
+        count -= chunk;
+        p     += chunk * ATA_SECTOR_SIZE;
+    }
+    return 0;
+}
+
+int ata_write_sector_drive(uint8_t drive, uint32_t lba, const void* buf) {
+    return ata_write_sectors_drive(drive, lba, 1, buf);
+}
+
+int ata_write_sectors_drive(uint8_t drive, uint32_t lba, uint32_t count, const void* buf) {
+    if (drive > ATA_DRIVE_SLAVE) return -1;
+    if (!s_present[drive]) return -1;
+    if (count == 0) return 0;
+
+    /*
+     * The write-protect floor protects the boot chain on the master
+     * disk. It does not apply to the slave (FatFs test disk), which
+     * starts at LBA 0.
+     */
+    if (drive == ATA_DRIVE_MASTER && lba < ATA_WRITE_PROTECT_LBAS) {
         serial_print("ATA: refuse write below LBA ");
         serial_print_dec(ATA_WRITE_PROTECT_LBAS);
-        serial_print(" (requested LBA ");
+        serial_print(" on master (requested LBA ");
         serial_print_dec(lba);
         serial_print(")\n");
         return -2;
@@ -453,12 +525,58 @@ int ata_write_sectors(uint32_t lba, uint32_t count, const void* buf) {
         uint32_t chunk = (count > 256) ? 256 : count;
         uint8_t sc = (chunk == 256) ? 0 : (uint8_t)chunk;
 
-        int rc = ata_write_chunk(s_default_drive, lba, sc, p);
+        int rc = ata_write_chunk(drive, lba, sc, p);
         if (rc != 0) return rc;
 
         lba   += chunk;
         count -= chunk;
         p     += chunk * ATA_SECTOR_SIZE;
     }
-    return ata_flush_cache();
+
+    /* FLUSH CACHE on the same drive we just wrote to. */
+    int rc = ata_poll_bsy_clear();
+    if (rc != 0) return rc;
+    outb(ATA_PRIMARY_STATUS, ATA_CMD_FLUSH_CACHE);
+    ata_400ns_delay();
+    return ata_poll_bsy_clear();
+}
+
+int ata_flush_cache_drive(uint8_t drive) {
+    if (drive > ATA_DRIVE_SLAVE) return -1;
+    if (!s_present[drive]) return -1;
+
+    /*
+     * FLUSH CACHE is not LBA-addressed; it flushes whatever drive is
+     * currently selected. Re-select via a dummy 0-LBA select so we
+     * flush the right device.
+     */
+    ata_select_drive(drive, 0);
+
+    int rc = ata_poll_bsy_clear();
+    if (rc != 0) return rc;
+
+    outb(ATA_PRIMARY_STATUS, ATA_CMD_FLUSH_CACHE);
+    ata_400ns_delay();
+    return ata_poll_bsy_clear();
+}
+
+
+int ata_read_sector(uint32_t lba, void* buf) {
+    return ata_read_sector_drive(s_default_drive, lba, buf);
+}
+
+int ata_read_sectors(uint32_t lba, uint32_t count, void* buf) {
+    return ata_read_sectors_drive(s_default_drive, lba, count, buf);
+}
+
+int ata_write_sector(uint32_t lba, const void* buf) {
+    return ata_write_sector_drive(s_default_drive, lba, buf);
+}
+
+int ata_write_sectors(uint32_t lba, uint32_t count, const void* buf) {
+    return ata_write_sectors_drive(s_default_drive, lba, count, buf);
+}
+
+int ata_flush_cache(void) {
+    return ata_flush_cache_drive(s_default_drive);
 }
