@@ -19,6 +19,13 @@ USER_CFLAGS := -target x86_64-unknown-elf -ffreestanding -O0 -Wall -Wextra \
 
 LDFLAGS := -nostdlib
 
+# Bootloader staging ceiling. stage2.asm can only deliver this many bytes
+# of kernel image to 0x100000: 128 KB staged at 0x80000 (PASS 1+2) plus
+# 48 KB from a second staging area at 0x20000 (PASS 3), for 176 KB total.
+# If kernel.bin exceeds this, the bootloader silently truncates the tail
+# and the kernel boots to garbage. See stage2.asm for the layout.
+KERNEL_SIZE_LIMIT := 180224
+
 .PHONY: all clean userland
 
 # Build both kernel and userland
@@ -44,6 +51,23 @@ kernel.elf: $(OBJS)
 
 kernel.bin: kernel.elf
 	$(OBJCOPY) -O binary kernel.elf kernel.bin
+	@sz=$$(stat -c %s kernel.bin); \
+	if [ $$sz -gt $(KERNEL_SIZE_LIMIT) ]; then \
+		echo "============================================================"; \
+		echo "ERROR: kernel.bin is $$sz bytes"; \
+		echo "       bootloader limit is $(KERNEL_SIZE_LIMIT) bytes"; \
+		echo "       overflow: $$((sz - $(KERNEL_SIZE_LIMIT))) bytes"; \
+		echo ""; \
+		echo "  stage2.asm can only stage 176 KB (128 KB at 0x80000 plus"; \
+		echo "  48 KB at 0x20000). The kernel image will be silently"; \
+		echo "  truncated and boot to garbage."; \
+		echo ""; \
+		echo "  Shrink the kernel: strip the user ELF, disable unused"; \
+		echo "  FatFs features, or restructure stage2 to stream reads."; \
+		echo "============================================================"; \
+		exit 1; \
+	fi; \
+	echo "kernel.bin: $$sz bytes / $(KERNEL_SIZE_LIMIT) (headroom: $$(($(KERNEL_SIZE_LIMIT) - sz)) bytes)"
 
 # ============================================================
 # TEST PROGRAM
