@@ -229,7 +229,6 @@ static void handle_command(const char *cmd) {
         PRINT_BOTH("\n=== Recursive Paging Test ===\n");
         uint64_t base = 0xFFFF000000000000ULL | (510ULL << 39) | (510ULL << 30) | (510ULL << 21) | (510ULL << 12);
         
-        /* Fixed: Read index 510 instead of index 0 */
         uint64_t entry = ((uint64_t*)base)[510];
         
         uint64_t cr3; __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
@@ -343,7 +342,6 @@ static void handle_command(const char *cmd) {
         if (!buf) { vga_print("OOM\n> "); return; }
         int ok = 1;
 
-        /* -- Master Drive Diagnostics (If Present) -------------------- */
         if (ata_present(ATA_DRIVE_MASTER)) {
             if (ata_read_sector(0, buf) != 0) ok = 0;
             else {
@@ -372,7 +370,6 @@ static void handle_command(const char *cmd) {
             PRINT_BOTH("  Master    : Not Present\n");
         }
 
-        /* -- Slave Drive Diagnostics (If Present) --------------------- */
         if (ata_present(ATA_DRIVE_SLAVE)) {
             if (ata_read_sector_drive(ATA_DRIVE_SLAVE, 0, buf) != 0) {
                 PRINT_BOTH("  Slave Read: FAILED\n");
@@ -401,11 +398,10 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "fatls") == 0) {
         PRINT_BOTH("\n=== FatFs Directory Listing ===\n");
         
-        DIR dj;            /* Directory object struct */
-        FILINFO fno;       /* File information struct */
+        DIR dj;
+        FILINFO fno;
         FRESULT res;
 
-        /* Open the root folder of logical drive 0 */
         res = f_opendir(&dj, "0:/");
         
         if (res == FR_OK) {
@@ -413,13 +409,9 @@ static void handle_command(const char *cmd) {
             int dir_count = 0;
 
             for (;;) {
-                /* Read a directory item entry */
                 res = f_readdir(&dj, &fno);
-                
-                /* Break on error or when the end of the directory is reached */
                 if (res != FR_OK || fno.fname[0] == 0) break;
 
-                /* Check if the item is a directory or a file entry */
                 if (fno.fattrib & AM_DIR) {
                     PRINT_BOTH("  <DIR>  ");
                     PRINT_BOTH(fno.fname);
@@ -472,7 +464,6 @@ static void handle_command(const char *cmd) {
             return;
         }
 
-        /* Build absolute path tracking layout "0:/FILENAME" */
         char path[64];
         path[0] = '0'; path[1] = ':'; path[2] = '/'; path[3] = '\0';
         
@@ -529,6 +520,7 @@ void kmain(BootInfo *info) {
     g_bootinfo = info;
     vga_clear();
     serial_init();
+    
     validate_bootinfo(info);
     vga_set_cursor_shape(0x00, 0x0F);
     idt_init();
@@ -552,7 +544,6 @@ void kmain(BootInfo *info) {
     );
     PRINT_BOTH("CPU: SSE extensions enabled.\n");
 
-    /* Automatically mount the FAT storage volume at boot for userland availability */
     static FATFS boot_fs;
     if (f_mount(&boot_fs, "0:", 1) == FR_OK) {
         serial_print("Storage filesystem mounted safely at boot.\n");
@@ -585,7 +576,9 @@ void kmain(BootInfo *info) {
 
     scheduler_ready_queue_remove(shell);
     extern uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data);
+
     uint64_t shell_entry = elf_load_into_process(shell, build_user_shell_elf);
+
     if (shell_entry == 0) {
         serial_print("PANIC: shell load failed\n"); while (1) asm volatile("hlt");
     }

@@ -28,7 +28,16 @@ SECTIONS
     .userelf : {
         *(.userelf)
     }
- 
+
+    /*
+     * Start of kernel .bss. entry.asm zeroes [__bss_start, _kernel_end)
+     * before calling kmain so that all kernel globals are initialized.
+     * The .bss section is NOBITS (not in kernel.bin), so without this
+     * zeroing the kernel would run with whatever the bootloader left in
+     * physical memory at those addresses.
+     */
+    __bss_start = .;
+
     .bss : {
         *(.bss*)
         *(COMMON)

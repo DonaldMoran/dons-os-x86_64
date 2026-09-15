@@ -117,50 +117,6 @@ long sys_close(int fd) {
 // ============================================================
 // CORE IO REDIRECTION PIPES
 // ============================================================
-//~ long sys_write(int fd, const void* buf, size_t count) {
-    //~ if (!buf || count == 0) return 0;
-    //~ pcb_t* self = process_get_current();
-    //~ if (!self) return -1;
-
-    //~ if (fd == 1 || fd == 2) {
-        //~ size_t remaining = count;
-        //~ const uint8_t* user_ptr = (const uint8_t*)buf;
-        //~ while (remaining > 0) {
-            //~ size_t chunk = remaining > WRITE_CHUNK ? WRITE_CHUNK : remaining;
-            //~ if (safe_copy_from_user(g_write_bounce, user_ptr, chunk) != 0) return -1;
-            //~ for (size_t i = 0; i < chunk; i++) {
-                //~ char c = g_write_bounce[i];
-                //~ serial_putc(c); vga_putc(c);
-            //~ }
-            //~ user_ptr += chunk; remaining -= chunk;
-        //~ }
-        //~ return (long)count;
-    //~ }
-
-    //~ if (fd >= 3 && fd < MAX_PROCESS_FILES && self->file_table[fd]) {
-        //~ FIL* file_obj = (FIL*)self->file_table[fd];
-        //~ char* bounce = (char*)kmalloc(512);
-        //~ if (!bounce) return -1;
-
-        //~ size_t total_written = 0;
-        //~ while (total_written < count) {
-            //~ size_t chunk = (count - total_written) > 512 ? 512 : (count - total_written);
-            //~ if (safe_copy_from_user(bounce, (const uint8_t*)buf + total_written, chunk) != 0) {
-                //~ kfree(bounce); return -1;
-            //~ }
-            //~ UINT written;
-            //~ if (f_write(file_obj, bounce, chunk, &written) != FR_OK) {
-                //~ kfree(bounce); return -1;
-            //~ }
-            //~ total_written += written;
-            //~ if (written < chunk) break;
-        //~ }
-        //~ kfree(bounce);
-        //~ return (long)total_written;
-    //~ }
-
-    //~ return (long)count;
-//~ }
 long sys_write(int fd, const void* buf, size_t count) {
     if (!buf || count == 0) return 0;
     pcb_t* self = process_get_current();
@@ -181,9 +137,53 @@ long sys_write(int fd, const void* buf, size_t count) {
         return (long)count;
     }
 
-    /* File writes not supported while FF_FS_READONLY is 1. */
-    return -1;
+    if (fd >= 3 && fd < MAX_PROCESS_FILES && self->file_table[fd]) {
+        FIL* file_obj = (FIL*)self->file_table[fd];
+        char* bounce = (char*)kmalloc(512);
+        if (!bounce) return -1;
+
+        size_t total_written = 0;
+        while (total_written < count) {
+            size_t chunk = (count - total_written) > 512 ? 512 : (count - total_written);
+            if (safe_copy_from_user(bounce, (const uint8_t*)buf + total_written, chunk) != 0) {
+                kfree(bounce); return -1;
+            }
+            UINT written;
+            if (f_write(file_obj, bounce, chunk, &written) != FR_OK) {
+                kfree(bounce); return -1;
+            }
+            total_written += written;
+            if (written < chunk) break;
+        }
+        kfree(bounce);
+        return (long)total_written;
+    }
+
+    return (long)count;
 }
+//~ long sys_write(int fd, const void* buf, size_t count) {
+    //~ if (!buf || count == 0) return 0;
+    //~ pcb_t* self = process_get_current();
+    //~ if (!self) return -1;
+
+    //~ if (fd == 1 || fd == 2) {
+        //~ size_t remaining = count;
+        //~ const uint8_t* user_ptr = (const uint8_t*)buf;
+        //~ while (remaining > 0) {
+            //~ size_t chunk = remaining > WRITE_CHUNK ? WRITE_CHUNK : remaining;
+            //~ if (safe_copy_from_user(g_write_bounce, user_ptr, chunk) != 0) return -1;
+            //~ for (size_t i = 0; i < chunk; i++) {
+                //~ char c = g_write_bounce[i];
+                //~ serial_putc(c); vga_putc(c);
+            //~ }
+            //~ user_ptr += chunk; remaining -= chunk;
+        //~ }
+        //~ return (long)count;
+    //~ }
+
+    //~ /* File writes not supported while FF_FS_READONLY is 1. */
+    //~ return -1;
+//~ }
 long sys_read(int fd, void* buf, size_t count) {
     if (!buf || count == 0) return 0;
     pcb_t* self = process_get_current();
