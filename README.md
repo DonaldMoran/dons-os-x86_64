@@ -1,10 +1,7 @@
 # dons‑os  
 ### Educational x86_64 Boot Chain + 64‑bit Interrupt‑Driven Kernel (MIT Licensed)
 
-**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU's reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher-half kernel** with working interrupts, timer, keyboard input, memory management, a preemptive round-robin scheduler, system calls, blocking I/O, a userland C library (newlib 4.x), and a Ring 3 user shell written in ordinary C.
-
-The project emphasizes clarity, correctness, and educational value.  
-Each stage is isolated, minimal, and fully bootable.
+**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU's reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher-half kernel** with working interrupts, timer, keyboard input, memory management, a preemptive round-robin scheduler, system calls, blocking I/O, a userland C library (newlib 4.x), a FAT16 filesystem, and a Ring 3 user shell written in ordinary C.
 
 ---
 
@@ -15,10 +12,14 @@ Each stage is isolated, minimal, and fully bootable.
 - **02_boot_32bit** — A20 enable, GDT, protected mode, VGA text  
 - **03_boot_64bit** — PAE paging, PML4/PDPT/PD/PT, IA32_EFER.LME, long‑mode entry  
 
-### Kernel Development 
-- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, kernel shell, heap allocator, system calls, ELF loader, process system, preemptive scheduler, blocking I/O, GDT/TSS diagnostics
+### Kernel Development
+- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, kernel shell, heap allocator, system calls, ELF loader, process system, preemptive scheduler, blocking I/O, ATA PIO driver, FatFs integration, GDT/TSS diagnostics
 - **04_kernel_64bit/userland/newlib** — Userland C library (newlib 4.x), syscall shims, `crt0`, reentrancy support, and the user shell application
+- **04_kernel_64bit/fatfs** — Vendored FatFs R0.15 plus the `diskio.c` shim that maps FatFs onto the ATA PIO driver
+- **04_kernel_64bit/include/fat_config.h** — The single compile-time switch that selects dual-drive vs single-drive storage
 - **05_boot_kernel64** — Full boot chain: stage2 loads kernel via multi-pass segment incrementing, enters long mode, jumps to `_start`
+- **test-files** — Files copied into the single-drive FAT partition at image-build time
+- **run** — One-line-per-option QEMU launch script; uncomment the option you want and run `./run`
 
 The top‑level Makefile builds and runs all components.
 
@@ -31,41 +32,60 @@ The top‑level Makefile builds and runs all components.
 make all
 ```
 
-**Run individual boot demos**
-```bash
-make run16
-make run32
-make run64
-```
+**Build + run the full long‑mode OS (dual-drive, the default)**
 
-**Build the 64‑bit kernel**
-```bash
-make kernel64
-```
-
-**Build + run the full long‑mode OS**
 ```bash
 make bootkernel64
 make runkernel64
 ```
 
-**Run with QEMU debug logging**
+**Build + run the single-drive layout**
+```bash
+make clean && make FAT_CONFIG=single && make runkernel64-kvm-single
+```
+
+**Or, with the convenience script at the repo root:**
+
+Edit ./run, uncomment one line in the menu, save, then:
+
+```bash
+./run
+```
+
+The run script does a full make clean && make and boots the selected target. It is the recommended way to iterate: one edit, one command.
+
+#### Run individual boot demos
+
+```bash
+make run16
+```
+
+```bash
+make run32
+```
+
+```bash
+make run64
+```
+Run with QEMU debug logging
+
 ```bash
 make logkernel64
 ```
 
 This boots:
-
-1. BIOS → stage1  
-2. stage1 loads stage2  
-3. stage2 builds page tables with **recursive mapping**  
-4. stage2 reads the 64-bit kernel off disk in safe **128-sector chunks (64 KB steps)** to completely bypass real-mode address wrap-around ceilings
-5. stage2 enters long mode  
-6. stage2 jumps to kernel at 0xFFFFFFFF80100000 (higher-half)  
-7. kernel executes `_start` → `kmain`  
-8. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM, Heap, Syscalls, ELF loader, Process System, Preemptive Scheduler
-9. kernel presents the **boot-time shell choice** (see below)
-10. Either the kernel shell or the user shell starts, depending on the operator's key
+    
+     1. BIOS → stage1
+     2. stage1 loads stage2
+     3. stage2 builds page tables with recursive mapping
+     4. stage2 reads the 64-bit kernel off disk in safe 128-sector chunks (64 KB steps) to completely bypass real-mode address wrap-around 
+        ceilings
+     5. stage2 enters long mode
+     6. stage2 jumps to kernel at 0xFFFFFFFF80100000 (higher-half)
+     7. kernel executes _start → kmain
+     8. kernel initializes IDT, PIC, PIT, keyboard, PMM, VMM, Heap, ATA, FatFs, Syscalls, ELF loader, Process System, Preemptive Scheduler
+     9. kernel presents the boot-time shell choice (see below)
+    10.Either the kernel shell or the user shell starts, depending on the operator's key
 
 ---
 
@@ -77,12 +97,73 @@ On boot, the kernel prints a boot prompt:
 Boot: press 'k' for kernel shell, any other key for user shell...
 ```
 
-- **Press `k`** within ~2 seconds → the **kernel shell** starts. It is a diagnostic console: it can list processes, run scheduler tests, dump the GDT and TSS, and launch the user shell via the `usershell` command.
+- **Press `k`** within ~2 seconds → the **kernel shell** starts. It is a diagnostic console: it can list processes, run scheduler tests, dump the GDT and TSS, list the FAT volume, and launch the user shell via the `usershell` command.
 - **Any other key, or no key within 2 seconds** → the **user shell** starts directly.
 
 The user shell is the default. It runs as an ordinary user process (Ring 3, its own page tables, its own user and kernel stacks). Once the user shell is running, **the kernel shell is not reachable again without a reboot**. This is intentional: after boot, the user shell is the only interactive console.
 
 If the user shell exits, `sys_exit` halts the CPU. There is no fallback to a kernel shell. Kernel diagnostic processes spawned by the kernel shell (`runproc`, `testyield`) do return to the kernel shell on exit, because that is where the operator needs to be.
+
+---
+
+## 💾 Two Storage Configurations
+
+The kernel supports two disk layouts. They are mutually exclusive at build time; the choice is a single make variable.
+
+**Dual-drive (default)**
+
+```table
+hdd.img (master)              fat.img (slave)
+───────────────               ───────────────
+LBA 0..127   boot chain       LBA 0..      FAT16 volume
+LBA 128..    kernel
+```
+
+The boot chain and kernel occupy the master disk. FatFs lives on a separate slave disk, a whole-disk FAT16 volume with no partition table. This layout is easy to debug because the OS disk and the data disk are physically separate.
+bash
+
+make clean && make && make runkernel64-kvm
+
+**Single-drive**
+
+```table
+hdd.img (master only)
+─────────────────────
+LBA 0..127       boot chain
+LBA 128..2047    kernel (up to 960 KB)
+LBA 2048..       FAT16 partition (hidden_sectors = 2048)
+```
+
+Everything lives on one disk. The FAT16 partition starts at LBA 2048. FatFs talks to the master drive and diskio.c adds the partition offset to every sector number it hands to the ATA layer.
+bash
+
+```bash
+make clean && make FAT_CONFIG=single && make runkernel64-kvm-single
+```
+
+**The switch**
+
+FAT_CONFIG=dual (default) or FAT_CONFIG=single selects the configuration. The Makefile passes -DFAT_CONFIG_SINGLE_DRIVE=0|1, and include/fat_config.h turns that into:
+
+    FAT_DRIVE — ATA_DRIVE_SLAVE in dual, ATA_DRIVE_MASTER in single.
+    FAT_PARTITION_OFFSET (in diskio.c) — 0 in dual, 2048 in single.
+    FAT_VOLUME_SECTORS — the size FatFs reports for free-space accounting.
+
+The kernel source is identical between the two configurations. Only the drive selection and partition offset differ.
+
+### Why the offset lives in diskio.c, not the BPB
+
+FF_MULTI_PARTITION is 0 in ffconf.h, which means FatFs is not partition-aware. It treats the FAT volume as starting at LBA 0 of the physical drive and does not consult the partition table or the BPB's hidden_sectors field. diskio.c is therefore the correct place to translate volume-relative sector numbers into device LBAs.
+
+An earlier iteration assumed FatFs would read hidden_sectors and skipped the offset. The mount then failed with FR_NO_FILESYSTEM (13), because FatFs read the boot sector at LBA 0 (which is the boot chain, not a FAT boot sector) instead of the FAT boot sector at LBA 2048. The offset must be applied in diskio.c for a partitioned volume with FF_MULTI_PARTITION = 0.
+
+### Design note: why the kernel isn't in the FAT filesystem
+
+A reader may wonder why the kernel lives at a fixed LBA rather than as a file in the FAT partition.
+
+The boot chain predates FatFs by roughly ten commits. Adding a FAT reader to stage2.asm would have meant writing a FAT12/16/32 reader in 16-bit real mode, in a 34 KB budget, without a heap. That was a multi-week detour for zero new features. The kernel is at a fixed LBA because the boot chain loads it before any driver exists — this is what every BIOS-boot OS does. FatFs is for data: test files now, user programs later. The kernel's existence is a bootloader concern, not a filesystem concern.
+
+If the project ever moves to Limine or GRUB2, the kernel becomes a file loaded by the bootloader, and this distinction disappears. It is on the roadmap but not urgent.
 
 ---
 
@@ -95,7 +176,7 @@ This is a substantial capability: it means user programs can use the standard C 
 ### What is wired up
 
 - **`crt0.S` (arc2)** — userland startup. Sets up the stack, initializes newlib's reentrancy structure, calls `main`, and invokes `exit` on return.
-- **`syscalls.c` (arc2)** — the syscall shims that newlib's internals call (`write`, `read`, `sbrk`, `_exit`, `fstat`, `isatty`, `close`, `lseek`, `getpid`, `kill`). Each is a thin wrapper around the `syscall` instruction with the appropriate syscall number.
+- **`syscalls.c` (arc2)** — the syscall shims that newlib's internals call (write, read, sbrk, _exit, fstat, isatty, open, close, lseek, getpid, kill). Each is a thin wrapper around the syscall instruction with the appropriate syscall number.
 - **`reent.c` (arc2)** — newlib reentrancy support. Sets `_impure_ptr = &_impure_data` so that newlib's global state is valid at startup. (Without this, the first `printf` faults.)
 - **`include/`** — newlib's headers, vendored. `stdio.h`, `stdlib.h`, `string.h`, `unistd.h`, etc.
 - **`lib/libc.a`** and **`lib/libm.a`** — the compiled newlib libraries, statically linked into each user program.
@@ -103,12 +184,13 @@ This is a substantial capability: it means user programs can use the standard C 
 
 ### What works end to end
 
-- ✅ `printf` — output reaches VGA and serial from Ring 3
-- ✅ `malloc` / `free` — backed by `sbrk` → `sys_brk` → page mapping (see the heap test in the user shell, menu option 3)
-- ✅ `memcpy`, `memset`, `strcmp`, and the rest of the string functions
-- ✅ `setvbuf` — user shell sets `stdout` unbuffered so every `printf` immediately hits `sys_write`
-- ✅ `errno` — newlib's error reporting is functional
+- ✅ printf — output reaches VGA and serial from Ring 3
+- ✅ malloc / free — backed by sbrk → sys_brk → page mapping (see the heap test in the user shell, menu option 3)
+- ✅ memcpy, memset, strcmp, and the rest of the string functions
+- ✅ setvbuf — user shell sets stdout unbuffered so every printf immediately hits sys_write
+- ✅ errno — newlib's error reporting is functional
 - ✅ Reentrancy — newlib's per-thread state is initialized and used
+- ✅ open / close / read / write on FAT files from Ring 3, via syscalls 3, 4, 6, and 1
 
 ### How to build a user program
 
@@ -123,8 +205,8 @@ New apps can be added by dropping a `.c` file in `apps/`, adding it to the Makef
 ### What's not there (yet)
 
 - **No dynamic linking.** Programs are statically linked against `libc.a`. A shared library / dynamic loader would be a separate project.
-- **No filesystem.** Programs are embedded in the kernel at build time; there's no way to load a program from disk yet.
-- **A subset of newlib is exercised.** `stdio`, `stdlib` (`malloc`), `string`, and `unistd` are the primary use; `math.h` (`libm.a`) is linked but not exercised by anything in the tree. `signal`, `pthread`, `dirent`, and other subsystems are compiled in but untested on this kernel.
+- **No filesystem for program loading.** The kernel has FatFs, but user programs are still embedded in the kernel image at build time. Loading them from disk is the next storage milestone.
+- **A subset of newlib is exercised.** `stdio`, `stdlib` (`malloc`), `string`, `unistd`, and `fcntl` are the primary use; `math.h` (`libm.a`) is linked but not exercised by anything in the tree. `signal`, `pthread`, `dirent`, and other subsystems are compiled in but untested on this kernel.
 
 ---
 
@@ -155,7 +237,7 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 |---------|-------------|
 | `help` | Show available commands |
 | `clear` | Clear the screen |
-| `version` | Show version information (`DonsDOS v0.4.9`) |
+| `version` | Show version information (DonsDOS v0.5.0) |
 | `info` | Display system information (PML4, kernel addresses, E820 entries) |
 | `mem` | Display memory information (usable/reserved RAM) |
 | `reboot` | Reboot the system (Ring 0 supervisor sequence) |
@@ -179,11 +261,15 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 | `usershell` | Launch the Ring 3 user shell |
 | `gdtdump` | Decode and print the current GDT descriptors |
 | `tssdump` | Print current TSS fields (rsp0, ist1–7, iopb_base, TR, g_syscall_stack_top) |
+| `atatest` | Read-only ATA diagnostic: MBR signature, kernel header, model strings |
+| `fatmount` | Mount the FAT volume and report status |
+| `fatls` | List the root directory of the FAT volume |
+| `fatcat <file>` | Dump the contents of a FAT file to VGA and serial |
 
 Example session:
 
 ```text
-DonsDOS v0.4.9
+DonsDOS v0.5.0 
 Type 'help'
 > help
 
@@ -214,6 +300,10 @@ Available commands:
   usershell  - Launch Ring 3 unprivileged shell interface
   gdtdump    - Decode and print the current GDT
   tssdump    - Print current TSS fields
+  atatest    - ATA read-only diagnostic
+  fatmount   - Mount the FAT volume
+  fatls      - List the root directory
+  fatcat     - Dump a file's contents (usage: fatcat <file>)
 ```
 
 ---
@@ -229,8 +319,16 @@ It runs as an ordinary Ring 3 process using newlib. Its menu currently offers:
 | 1 | Print a message via printf (exercises the syscall path and newlib stdout) |
 | 2 | Exit the user shell (halts the CPU; reboot to return) |
 | 3 | Test malloc/free via newlib (`malloc`, write pattern, read back, `free`, second allocation) |
+| 4 | Test FatFs: create, write, close, reopen, read back (round-trip byte-exact) |
+| 5 | Persistence check: verify USER.TXT written by a previous boot survived a reboot |
+| 6 | Multi-file test: create 3 files, verify contents (deletion is skipped; no SYS_UNLINK yet) |
+| 7 | Large write test: 4 KB round-trip through FatFs, catches multi-cluster bugs |
 
-The heap test in option 3 exercises `malloc` → `sbrk` → `sys_brk` → page mapping → user write → user read, confirming that user pages are correctly mapped and writable.
+Option 3 exercises malloc → sbrk → sys_brk → page mapping → user write → user read, confirming that user pages are correctly mapped and writable.
+
+Option 4 exercises open → write → close → open → read on the FAT volume from Ring 3. The round-trip is byte-exact.
+
+Option 5 is the strongest single test in the tree. It writes on boot N, and on boot N+1 (same image) it verifies the file is present and byte-exact. This is what proves writes are durable, not just buffered.
 
 ---
 
@@ -304,6 +402,18 @@ make runkernel64-headless
 ```bash
 make runkernel64-kvm
 ```
+***Run single-drive with KVM***
+```bash
+make runkernel64-kvm-single
+```
+***Run single-drive under TCG (no KVM)***
+```bash
+make runkernel64-single
+```
+***Telnet serial console (connect with telnet localhost 4444)***
+```bash
+make runkernel64-telnet
+```
 
 ---
 
@@ -338,8 +448,8 @@ This project is designed to be:
 - `v0.3.2-syscalls` — **System call interface implemented** (SYS_WRITE, SYS_EXIT), SYSCALL/SYSRET support via MSRs, `syscall` test command
 - `v0.4.0-elf-loader` — Fully functional ELF64 loader. Parses and maps ELF segments with correct user permissions, builds a user stack, transitions cleanly into Ring 3, executes embedded user programs (e.g., "Hello from Userland!"), and returns safely back to the Ring 0 shell via the syscall exit path. `elfload` command added.
 - `v0.4.1-syscall-stack-stable` — Stabilized SYSRET return path, corrected RCX/R11 handling, removed `simple`, and verified clean returns from ELF Ring 3 programs to the Ring 0 shell.
-- `v0.4.2-star-msr-fix` — **Fixed IA32_STAR MSR configuration** for SYSCALL/SYSRET. User CS = 0x30 → STAR[15:0] = 0x20. Enabled clean SYSRET return path.
-- `v0.4.3-elfloader-fixed` — **ELF loader fully stabilized on first boot + Process Foundation.**  
+- `v0.4.2` — **Fixed IA32_STAR MSR configuration** for SYSCALL/SYSRET. User CS = 0x30 → STAR[15:0] = 0x20. Enabled clean SYSRET return path.
+- `v0.4.3` — **ELF loader fully stabilized on first boot + Process Foundation.**  
   - Fixed bootloader identity‑mapping conflict (now detects and replaces bootloader mappings with proper user‑mode PTEs).  
   - Added safe HHDM‑based user‑space memory access in syscall handler (`safe_copy_from_user`).  
   - Corrected STAR MSR for SYSCALL/SYSRET (User CS = 0x30 → STAR[15:0] = 0x20).  
@@ -348,7 +458,7 @@ This project is designed to be:
   - **Dynamic HHDM mapping:** `ensure_hhdm_mapped()` for on‑demand physical memory access.  
   - **BootInfo validation:** Magic number and version checking.  
   - All existing commands remain fully functional.
-- `v0.4.4-process-stacks` — **Process Stack Setup complete.**  
+- `v0.4.4` — **Process Stack Setup complete.**  
   - Added static kernel stack pool for processes.  
   - Process creation with dedicated user and kernel stacks.  
   - Process execution via direct function call (kernel mode).  
@@ -356,7 +466,7 @@ This project is designed to be:
   - **`runproc` command** to create and execute a test process.  
   - Shell returns properly after process execution.  
   - All previous features (`proclist`, `proccreate`, `vmmclone`, `elfload`) remain fully functional.
-- `v0.4.5-cooperative-scheduler` — **Cooperative Scheduler complete.**  
+- `v0.4.5` — **Cooperative Scheduler complete.**  
   - Ready queue with round‑robin scheduling.  
   - `process_yield()` for voluntary context switching.  
   - `process_exit()` for clean process termination.  
@@ -365,12 +475,12 @@ This project is designed to be:
   - **`schstat` command** to show scheduler statistics.  
   - `runproc` now uses the scheduler.  
   - All previous features (`proclist`, `proccreate`, `vmmclone`, `elfload`) remain fully functional.
-- `v0.4.6-preemptive-unlocked` — **Preemptive Scheduler & Unlocked Core capacity complete.**
+- `v0.4.6` — **Preemptive Scheduler & Unlocked Core capacity complete.**
   - **Multi-Pass Segment Reader:** Configured `stage2.asm` to pull kernel blocks in safe 128-sector chunks, advancing segment offsets dynamically to entirely defeat real-mode 64 KB wrap limits.
   - **Kernel Size Limit Lifted:** Expanded kernel disk read thresholds up to 256 sectors (128 KB allocation ceiling).
   - **Userland Reboot System Call:** Added system call #25 (`SYS_REBOOT`) to cleanly wire Ring 3 Userland Shell option 4 right back into a Ring 0 hardware triple-fault motherboard reset.
   - **Preemptive Core Integration:** Validated PIT clock timer integration (`IRQ0` at 100Hz) enforcing forceful quantum task slicing across ready queues.
-- `v0.4.7-blocking-shell` **newlib in userland, blocking reads, boot-time shell choice, userland heap test.**
+- `v0.4.7` - **newlib in userland, blocking reads, boot-time shell choice, userland heap test.**
   - **newlib 4.x linked into user programs**: `printf` reaches VGA and serial from Ring 3, `malloc`/`free` are backed by `sbrk` → `sys_brk`, newlib reentrancy is initialized at startup (`_impure_ptr = &_impure_data`). Userland C is now standard C.
   - **Kernel-stack-on-syscall-entry** (from A2 tag `20260912I`): the syscall path runs on a per-process kernel stack, not the user stack. Fixes a class of frame-corruption bugs and enables proper blocking.
   - **Blocking `sys_read`**: reads no longer spin the CPU in the kernel. A shell waiting for input marks itself BLOCKED, yields via the timer, and is woken by `irq1`.
@@ -382,11 +492,11 @@ This project is designed to be:
   - **`testyield` fix**: `process_yield` no longer corrupts the ready queue by calling `scheduler_ready_queue_remove` on an off-queue process. Both test processes now alternate cleanly.
   - **TSS.RSP0 and `g_syscall_stack_top` in lockstep from boot**: `process_init` runs after `tss_init` and sets `rsp0` to idle's kernel stack top.
   - All prior commands and features remain functional.
-- `v0.4.8-process-cleanup` **Process cleanup on exit; `process_exit` race closed.**
+- `v0.4.8` - **Process cleanup on exit; `process_exit` race closed.**
   - **PCB reclaim.** `process_exit` now calls `process_reclaim`, which frees the exiting process's ELF segment pages and user stack pages, sets `state = PROC_STATE_UNUSED`, resets `pid = 0`, and decrements `process_count`. The PCB slot can be reused by a future `process_create`. Running `testyield` or `runproc` many times in one boot no longer exhausts the 32-slot pool.
   - **`process_exit` timer race closed.** Interrupts are disabled for the entire critical section — from the first state mutation through the `context_switch` call — so the timer cannot re-add the exiting process to the ready queue after `scheduler_ready_queue_remove`, nor save the current stack frame into `next->rsp` before `context_switch` switches stacks. Interrupts are re-enabled by the `iretq` in `context_switch`, or by an explicit `sti` before the jump to the kernel shell in the no-runnable-process fallback.
   - **Page-table teardown deferred.** The process's `cr3` page tables still leak (a few pages per process). The teardown requires walking the page tables and freeing only the user-space portion without touching shared kernel mappings; it is a follow-up.
-- `v0.4.9-stability` ⭐ NEW — **Six scheduler, TSS, and interrupt ABI bugs fixed; user shell exit path stabilized.**
+- `v0.4.9` — **Six scheduler, TSS, and interrupt ABI bugs fixed; user shell exit path stabilized.**
   - **ELF-load race at boot.** `process_create` adds the PCB to the ready queue before the ELF is loaded, so a PIT tick between create and `elf_load_into_process` could schedule a process whose entry page was not yet mapped. Fixed at all three call sites (`kmain` boot path, `elfload`, `usershell`) by removing the PCB from the ready queue until the ELF is loaded and `entry_point` is set. This eliminated the intermittent user-mode `#PF` at `CR2 == RIP == 0x8000000000` that reproduced when a key was pressed during the boot-choice window.
   - **`TSS.RSP0` / `g_syscall_stack_top` lockstep.** These two are documented to move in lockstep with `current`, unconditionally. The update was gated on `entry_point < KERNEL_BASE`, so kernel-mode switches left `g_syscall_stack_top` stale. Gate removed in `scheduler_switch_to`, `process_exit`, and `timer_preempt_handler`.
   - **`process_exit` fallback TSS restoration.** The no-runnable-process fallback zeroed only `g_syscall_stack_top`, leaving `TSS.RSP0` pointing at a dead process's stack. Now restores both to idle's kernel stack top.
@@ -396,6 +506,18 @@ This project is designed to be:
   - **`irq1_stub` ABI violation.** The keyboard interrupt stub called `irq1_handler` without preserving caller-saved registers. If an IRQ1 fired between the `sti` and a subsequent `jmp *%rax` in `process_exit`'s fallback, `irq1_handler` clobbered `%rax` and the jump landed mid-instruction inside `kmain_shell_loop`. Reproduced consistently after user shell exit. Fixed on two fronts: `irq1_stub` (and the other stubs that call C handlers) now preserve all 15 GPRs, and the fallback uses a direct `jmp kmain_shell_loop` (`rel32`) with no register involved.
   - **`process_dump_all` cosmetic fix.** Detached PCBs (e.g. placeholders left by the `proccreate` command) now display as `DETACHED` instead of `READY`.
   - **Frame validation in `context_switch.asm`.** `.kernel_task` validates the resume frame's `rip` (must be ≥ `KERNEL_BASE`) and `cs` (must be `0x18`) before popping. A corrupt frame now emits a single serial marker byte (`R` or `C`) and halts, instead of producing an opaque kernel-mode `#GP` at the stub's `iretq`.
+- `v0.5.0` ⭐ NEW — **Storage layer complete: ATA PIO driver, FatFs, single-drive and dual-drive layouts, persistence verified.**
+  - **ATA PIO block device driver** on the primary channel: `ata_init`, `ata_read_sector`, `ata_read_sectors`, `ata_write_sector`, `ata_write_sectors`, `ata_flush_cache`, per-drive entry points, and `atatest` diagnostics. Three bring-up bugs found and fixed (PIC mask restoration, exception frame offsets, LBA mode bit).
+  - **FatFs R0.15 vendored** with a `diskio.c` shim that maps FatFs onto the ATA PIO driver.
+  - **Dual-drive storage:** kernel on master `hdd.img`, FAT16 volume on slave `fat.img`. Kernel shell commands `fatmount`, `fatls`, `fatcat`.
+  - **Userland file I/O:** `SYS_OPEN` (4), `SYS_CLOSE` (6), and the `SYS_READ` fd branch, so newlib's `open`/`read`/`write`/`close` work from Ring 3. Verified with a create/write/close/reopen/read round-trip.
+  - **Single-drive layout:** `FAT_CONFIG=dual|single` at build time selects the storage layout. FAT16 partition at LBA 2048. `diskio.c` translates volume-relative sector numbers to device LBAs via `FAT_PARTITION_OFFSET` (2048 in single, 0 in dual).
+  - **`FF_MULTI_PARTITION = 0`** means FatFs is not partition-aware, so the offset lives in `diskio.c`, not the BPB.
+  - **Persistence across reboot verified** end-to-end by the user shell option 5.
+  - **Expanded user-shell regression harness:** options 4 (FS round-trip), 5 (persistence), 6 (multi-file), 7 (4 KB round-trip). `[FS TEST]` fixed: `msg_len` was hardcoded to 19 but the string is 20 bytes.
+  - **Config diagnostic at boot** (`kmain.c`): VGA and serial report which storage layout the kernel booted with.
+  - **Kernel-size tripwire** checks both the stage2 staging ceiling (176 KB) and the disk-layout ceiling (983 KB).
+  - `SYS_UNLINK` is not yet implemented; option 6's delete phase is skipped.
 
 ---
 
@@ -428,8 +550,17 @@ This project is designed to be:
 - ✅ PIT timer incrementing `g_ticks`
 - ✅ Serial (COM1) output for kernel debugging
 
+**Storage**
+- ✅ FatFs R0.15 integrated, read and write
+- ✅ Dual-drive layout: boot + kernel on master, FAT16 volume on slave
+- ✅ Single-drive layout: boot + kernel + FAT16 partition at LBA 2048 on master
+- ✅ Kernel-shell access: fatmount, fatls, fatcat
+- ✅ Userland access: open, close, read, write on FAT files, via syscalls 1, 3, 4, 6
+- ✅ Persistence across reboot verified end-to-end
+- ✅ Config diagnostic at boot (VGA + serial)
+
 **Shells / Console**
-- ✅ Kernel shell (diagnostic, reached via `k` at boot) with commands including `gdtdump` and `tssdump`
+- ✅ Kernel shell (diagnostic, reached via k at boot) with commands including gdtdump, tssdump, atatest, fatmount, fatls, fatcat
 - ✅ User shell (Ring 3, newlib) as the default interactive console
 - ✅ Unknown command handling
 - ✅ Serial console output (COM1) for debugging alongside VGA
@@ -440,6 +571,7 @@ This project is designed to be:
 - ✅ `malloc` / `free` backed by `sbrk` → `sys_brk`
 - ✅ `memcpy`, `memset`, `str*`, and the rest of the standard C string functions
 - ✅ newlib reentrancy initialized at startup (`_impure_ptr = &_impure_data`)
+- ✅ open / close / read / write on FAT files from Ring 3
 - ✅ Statically linked (`libc.a`, `libm.a`); no dynamic linking yet
 - ✅ User programs written in ordinary C, compiled with `x86_64-elf-gcc`, loaded from the kernel ELF image
 
@@ -470,10 +602,13 @@ This project is designed to be:
 
 **System Calls**
 - ✅ **SYSCALL/SYSRET support** via MSR (IA32_STAR, IA32_LSTAR, IA32_FMASK)
-- ✅ **SYS_WRITE** (syscall #1) — Writes to serial and VGA output, returns count
-- ✅ **SYS_EXIT** (syscall #2) — Terminates the current process. Kernel diagnostic processes return to the kernel shell; user processes halt the CPU
-- ✅ **SYS_READ** (syscall #3) — Blocking read from fd 0; see Blocking I/O below
-- ✅ **SYS_BRK** (syscall #10) — Grow or shrink the process heap
+- ✅ SYS_WRITE (syscall #1) — Writes to serial and VGA output, returns count
+- ✅ SYS_EXIT (syscall #2) — Terminates the current process
+- ✅ SYS_READ (syscall #3) — Blocking read from fd 0; file-descriptor read on fd ≥ 3
+- ✅ SYS_OPEN (syscall #4) — Opens a FAT file
+- ✅ SYS_CLOSE (syscall #6) — Closes a file descriptor
+- ✅ SYS_BRK (syscall #10) — Grow or shrink the process heap
+- ✅ SYS_REBOOT (syscall #25) — Ring 3 → Ring 0 hardware reset
 - ✅ **Syscall dispatcher** with argument handling (x86_64 syscall ABI)
 - ✅ **Proper register preservation** across syscalls
 - ✅ **Safe user‑space memory access** via `safe_copy_from_user()` / `safe_copy_to_user()` using HHDM
@@ -530,21 +665,25 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - Organized source tree with Makefile
 - QEMU bootable disk image
 - Clean Clang + NASM build
-- Multiple QEMU run modes (serial, debug, headless, KVM)
+- FAT_CONFIG=dual|single selects the storage layout
+- ./run convenience script with a menu of preconfigured targets
+- Multiple QEMU run modes (serial, debug, headless, KVM, single-drive)
 - Debug logging support with serial console
 
 ---
 
 ## ⚠️ Known Limitations
 
+- SYS_UNLINK is not implemented. FatFs has f_unlink, but there is no syscall for it. The user shell's multi-file test (option 6) creates and verifies files but skips the delete phase and reports the omission.
 - **Page tables are not freed on process exit.** `process_exit` reclaims the process's PCB slot and its ELF/user-stack pages, but the process's page tables (cr3) leak. This is a few pages per process. The teardown is deferred; it requires walking the page tables and freeing the user-space portion without touching shared kernel mappings.
 - **The boot stack address is hardcoded.** `process_exit`'s fallback to `kmain_shell_loop` sets `rsp = 0xFFFFFFFF8008FF00`. This address is in the low 1 MB region, currently mapped because the bootloader identity-maps it. Nothing in the kernel guarantees it stays mapped. A follow-up refactor will move the kernel shell onto a proper stack allocated from the kernel stack pool.
 - **No IST stack for `#DF`.** A real double fault triple-faults with no diagnostic. Adding a small IST stack and pointing the `#DF` IDT gate at it would turn future double faults into printed diagnostics.
 - **The keyboard buffer is shared.** Multiple shells reading from fd 0 will compete for bytes. Each keystroke goes to whichever blocked process the scheduler picks first. A per-process tty or a console-focus mechanism would be required to make multiple shells usable side by side.
 - **`sys_brk`'s `heap_base` is a single constant.** Each process's heap starts at the same *virtual* address (`0x8000200000`) and grows in its own address space (different `cr3`), so there is no address conflict. The shared constant is a code-cleanliness issue, not a functional one.
 - **`vmm_map_page_in_cr3` does not flush the TLB.** Callers must `invlpg` after mapping if the address may have a stale translation. `sys_brk` does this; new callers should too.
-- **No filesystem yet.** All user programs are embedded in the kernel ELF at build time and loaded from memory.
-- **A subset of newlib is exercised.** `stdio`, `stdlib` (`malloc`), `string`, and `unistd` are the primary use; `math.h` (`libm.a`) is linked but not exercised. `signal`, `pthread`, `dirent`, and other subsystems are compiled in but untested on this kernel.
+- **User programs are still embedded in the kernel ELF.** They are not loaded from the FAT volume. Loading programs from disk is the next storage milestone, and requires a `sys_exec`-style syscall.
+- **Single-drive vs dual-drive is a build-time choice.** One kernel binary cannot serve both layouts. The `FAT_CONFIG` variable selects which layout the kernel expects; running the wrong image under the wrong kernel will fail to mount FatFs.
+- **A subset of newlib is exercised.** `stdio`, `stdlib` (`malloc`), `string`, `unistd`, and `fcntl` are the primary use; `math.h` (`libm.a`) is linked but not exercised. `signal`, `pthread`, `dirent`, and other subsystems are compiled in but untested on this kernel.
 
 ---
 
@@ -559,16 +698,22 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - ~~newlib 4.x linked into user programs~~ ✅
 - ~~Process cleanup on exit (PCB reclaim)~~ ✅
 - ~~Scheduler / TSS / interrupt ABI stability pass~~ ✅ v0.4.9
-- **Permanent storage layer** — ATA PIO block device driver, then FatFs integration
+- ~~ATA PIO block device driver~~ ✅ v0.4.10
+- ~~FatFs integration, kernel-side and userland~~ ✅ v0.4.10
+- ~~Single-drive layout~~ ✅ v0.5.0
+- **`SYS_UNLINK` is not implemented.** FatFs has `f_unlink`, but there is no syscall for it. The user shell's multi-file test (option 6) creates and verifies files but skips the delete phase and reports the omission.
 
 ### Medium-term
 - **Move the kernel shell off the hardcoded boot stack** — allocate the shell's stack from the kernel stack pool, so `process_exit`'s fallback no longer depends on a specific low-memory address being mapped.
 - **IST for `#DF`** — turn future double faults into printed diagnostics.
+- **User programs from disk** — add a `sys_exec`-style syscall, load ELF files from the FAT volume, and stop embedding programs in the kernel image.
 - **Serial console debug access** — kernel shell reachable over COM1, physically separate from the user's keyboard. This is the right shape for runtime kernel-shell access; the magic-key-combo approach was tried and abandoned (it's a security backdoor and the kernel shell isn't a process the scheduler can suspend).
 
 ### Long-term
-- **User-space programs from disk** — once FatFs works, load programs from disk instead of embedding them in the kernel image
+- **File System (VFS)** — a VFS layer above FatFs, with mount points and path resolution
+- **Framebuffer graphics** — move off VGA text mode
 - **Page-table teardown on process exit** — walk the process's page tables and free the user-space portion, completing the cleanup story from the short-term item
+- **Bootloader migration to Limine** — replaces the hand-written stage2, removes the 176 KB kernel ceiling, and turns the kernel into a file loaded by the bootloader rather than a fixed-LBA blob
 
 ---
 

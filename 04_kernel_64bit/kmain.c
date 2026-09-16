@@ -129,9 +129,9 @@ static void handle_command(const char *cmd) {
     if (strcmp(cmd, "help") == 0) {
         vga_print("\nCmds:\n  help, clear, version, reboot, pmmtest, info, mem, test,\n  vmmtest, serialtest, heapstat, maptest, testrec, heaptest,\n  nxtest, syscall, elfload, proclist, proccreate, vmmclone,\n  runproc, schstat, testyield, usershell, gdtdump, tssdump, \n  atatest, fatmount, fatls, fatcat <file>\n> ");
     } else if (strcmp(cmd, "clear") == 0) {
-        vga_clear(); vga_print("DonsDOS v0.4.9\nType 'help'\n> ");
+        vga_clear(); vga_print("DonsDOS v0.5.0\nType 'help'\n> ");
     } else if (strcmp(cmd, "version") == 0) {
-        vga_print("\nDonsDOS v0.4.9 (64-bit Core)\n> ");
+        vga_print("\nDonsDOS v0.5.0 (64-bit Core)\n> ");
     } else if (strcmp(cmd, "info") == 0) {
         vga_print("\n=== Boot Telemetry ===\n");
         if (g_bootinfo) {
@@ -508,7 +508,7 @@ static void handle_command(const char *cmd) {
     }
 }
 __attribute__((noreturn)) void kmain_shell_loop(void) {
-    vga_print("DonsDOS v0.4.9\n> ");
+    vga_print("DonsDOS v0.5.0\n> ");
     char cmd_buffer[128]; int cmd_pos = 0;
     for (;;) {
         asm volatile("hlt"); char c;
