@@ -1,0 +1,4 @@
+Hello from the single-drive FAT partition.
+This file was copied in by mcopy at image-build time.
+If fatcat can read this, the partition offset and hidden_sectors
+are both correct.

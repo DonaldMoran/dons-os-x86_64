@@ -7,10 +7,25 @@ XXD     := xxd
 # Userland directory - only newlib now
 USERLAND_DIR := userland/newlib
 
+# Disk layout configuration. Selects which drive FatFs talks to and
+# which image layout the boot chain expects.
+#
+#   FAT_CONFIG=dual   (default) hdd.img master + fat.img slave
+#   FAT_CONFIG=single            hdd.img only, FAT partition at LBA 2048
+#
+# See include/fat_config.h for the layout descriptions.
+FAT_CONFIG ?= dual
+
+ifeq ($(FAT_CONFIG),single)
+FAT_CFLAGS := -DFAT_CONFIG_SINGLE_DRIVE=1
+else
+FAT_CFLAGS := -DFAT_CONFIG_SINGLE_DRIVE=0
+endif
+
 # Kernel CFLAGS - Added -Ifatfs here so all files can parse ff.h natively
 CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra \
 	-mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 \
-	-mno-avx -mno-mmx -Iinclude -Ifatfs
+	-mno-avx -mno-mmx -Iinclude -Ifatfs $(FAT_CFLAGS)
 
 # User-space CFLAGS (for kernel-side objects that need to embed user data)
 USER_CFLAGS := -target x86_64-unknown-elf -ffreestanding -O0 -Wall -Wextra \
@@ -19,12 +34,24 @@ USER_CFLAGS := -target x86_64-unknown-elf -ffreestanding -O0 -Wall -Wextra \
 
 LDFLAGS := -nostdlib
 
-# Bootloader staging ceiling. stage2.asm can only deliver this many bytes
-# of kernel image to 0x100000: 128 KB staged at 0x80000 (PASS 1+2) plus
-# 48 KB from a second staging area at 0x20000 (PASS 3), for 176 KB total.
-# If kernel.bin exceeds this, the bootloader silently truncates the tail
-# and the kernel boots to garbage. See stage2.asm for the layout.
-KERNEL_SIZE_LIMIT := 180224
+# Two limits apply to kernel.bin:
+#
+# 1. KERNEL_STAGING_LIMIT — the ceiling imposed by stage2.asm's staging
+#    layout. 128 KB staged at 0x80000 (PASS 1+2) plus 48 KB from a
+#    second staging area at 0x20000 (PASS 3), for 176 KB total. Exceed
+#    this and stage2 silently truncates the tail and the kernel boots
+#    to garbage. See stage2.asm.
+#
+# 2. KERNEL_DISK_LIMIT — the ceiling imposed by the disk layout. The
+#    kernel starts at LBA 128; the FAT partition starts at LBA 2048.
+#    The kernel region is therefore (2048 - 128) * 512 = 983040 bytes.
+#    Exceed this and the kernel would be overwritten by the FAT volume.
+#
+# The staging limit is the binding one today. When stage2 is extended
+# (Option 2 or 3 in the roadmap), the staging limit rises and the disk
+# limit becomes the binding one. Both are checked below.
+KERNEL_STAGING_LIMIT := 180224
+KERNEL_DISK_LIMIT    := 983040
 
 .PHONY: all clean userland
 
@@ -38,7 +65,6 @@ userland:
 # ============================================================
 # KERNEL OBJECTS
 # ============================================================
-# Appended fatfs/ff.o and fatfs/diskio.o to the operational link targets
 OBJS = entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o \
 	idt_load.o isr.o vga.o keyboard.o serial.o tss.o gdt.o \
 	elf.o test_program_data.o \
@@ -52,22 +78,35 @@ kernel.elf: $(OBJS)
 kernel.bin: kernel.elf
 	$(OBJCOPY) -O binary kernel.elf kernel.bin
 	@sz=$$(stat -c %s kernel.bin); \
-	if [ $$sz -gt $(KERNEL_SIZE_LIMIT) ]; then \
+	if [ $$sz -gt $(KERNEL_STAGING_LIMIT) ]; then \
 		echo "============================================================"; \
 		echo "ERROR: kernel.bin is $$sz bytes"; \
-		echo "       bootloader limit is $(KERNEL_SIZE_LIMIT) bytes"; \
-		echo "       overflow: $$((sz - $(KERNEL_SIZE_LIMIT))) bytes"; \
+		echo "       staging limit is $(KERNEL_STAGING_LIMIT) bytes"; \
+		echo "       overflow: $$((sz - $(KERNEL_STAGING_LIMIT))) bytes"; \
 		echo ""; \
 		echo "  stage2.asm can only stage 176 KB (128 KB at 0x80000 plus"; \
 		echo "  48 KB at 0x20000). The kernel image will be silently"; \
 		echo "  truncated and boot to garbage."; \
 		echo ""; \
-		echo "  Shrink the kernel: strip the user ELF, disable unused"; \
-		echo "  FatFs features, or restructure stage2 to stream reads."; \
+		echo "  Shrink the kernel, or restructure stage2.asm to stream"; \
+		echo "  reads (roadmap Option 2)."; \
 		echo "============================================================"; \
 		exit 1; \
 	fi; \
-	echo "kernel.bin: $$sz bytes / $(KERNEL_SIZE_LIMIT) (headroom: $$(($(KERNEL_SIZE_LIMIT) - sz)) bytes)"
+	if [ $$sz -gt $(KERNEL_DISK_LIMIT) ]; then \
+		echo "============================================================"; \
+		echo "ERROR: kernel.bin is $$sz bytes"; \
+		echo "       disk layout limit is $(KERNEL_DISK_LIMIT) bytes"; \
+		echo "       (kernel region is LBA 128..2047)"; \
+		echo "       overflow: $$((sz - $(KERNEL_DISK_LIMIT))) bytes"; \
+		echo ""; \
+		echo "  The kernel would overlap the FAT partition at LBA 2048."; \
+		echo "  Move the partition start in 05_boot_kernel64/Makefile"; \
+		echo "  and update FAT_DISK_TOTAL_SECTORS in include/fat_config.h."; \
+		echo "============================================================"; \
+		exit 1; \
+	fi; \
+	echo "kernel.bin: $$sz bytes / staging $(KERNEL_STAGING_LIMIT) / disk $(KERNEL_DISK_LIMIT) (staging headroom: $$(($(KERNEL_STAGING_LIMIT) - sz)) bytes)"
 
 # ============================================================
 # TEST PROGRAM

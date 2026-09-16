@@ -6,8 +6,13 @@
 	boot64 run64 \
 	kernel64 \
 	bootkernel64 \
-	runkernel64 runkernel64-log runkernel64-debug runkernel64-verbose runkernel64-headless runkernel64-kvm \
-	logkernel64
+	runkernel64 runkernel64-log runkernel64-debug runkernel64-verbose runkernel64-headless runkernel64-kvm runkernel64-telnet \
+	runkernel64-single runkernel64-kvm-single \
+	logkernel64 debugkernel64
+
+# Disk layout configuration; propagated to sub-makes.
+#   FAT_CONFIG=dual (default) or FAT_CONFIG=single
+FAT_CONFIG ?= dual
 
 # -------------------------
 # Default: build everything
@@ -45,16 +50,15 @@ run64:
 # 64-bit kernel build only (04)
 # -------------------------
 kernel64:
-	$(MAKE) -C 04_kernel_64bit
+	$(MAKE) -C 04_kernel_64bit FAT_CONFIG=$(FAT_CONFIG)
 
 # -------------------------
 # Full 64-bit boot + kernel pipeline (05)
 # -------------------------
 
-# PATCH: Forced 'bootkernel64' to explicitly depend on 'kernel64'.
-# This guarantees your user land and kernel binary images are fully
-# recompiled before QEMU packages them onto hdd.img.
-bootkernel64: kernel64
+# Build the kernel with the selected FAT config, then package it.
+bootkernel64:
+	$(MAKE) -C 04_kernel_64bit FAT_CONFIG=$(FAT_CONFIG)
 	$(MAKE) -C 05_boot_kernel64
 
 # ---- QEMU run targets ----
@@ -78,6 +82,17 @@ runkernel64-kvm:
 
 runkernel64-telnet:
 	$(MAKE) -C 05_boot_kernel64 run-telnet
+
+# ---- Single-drive targets ----
+# These rebuild the kernel with FAT_CONFIG=single before running, so the
+# diskio.c drive selection matches the single-drive image layout.
+runkernel64-single:
+	$(MAKE) -C 04_kernel_64bit FAT_CONFIG=single
+	$(MAKE) -C 05_boot_kernel64 run-single
+
+runkernel64-kvm-single:
+	$(MAKE) -C 04_kernel_64bit FAT_CONFIG=single
+	$(MAKE) -C 05_boot_kernel64 run-kvm-single
 
 # ---- Legacy / debug targets ----
 logkernel64:

@@ -48,12 +48,23 @@
 #define ATA_DRIVE_SLAVE_LBA     0xF0    /* 0xB0 | 0x40 */
 
 /*
- * Refuse to write below this LBA. hdd.img layout:
- *   LBA 0      : boot.bin  (stage1)
- *   LBA 1..63  : stage2.bin
- *   LBA 64+    : kernel.bin
+ * Refuse to write below this LBA on the master drive. The master
+ * carries the boot chain, the kernel, and (in single-drive mode) the
+ * FAT partition. The floor protects the entire pre-partition region:
+ *
+ *   LBA 0       : boot.bin     (stage1)
+ *   LBA 1..127  : stage2.bin   (128 sectors reserved; ~68 used)
+ *   LBA 128..   : kernel.bin   (up to ~960 KB before LBA 2048)
+ *   LBA 2048+   : FAT16 partition (single-drive mode)
+ *
+ * 2048 is chosen so the floor sits exactly at the FAT partition start.
+ * A stray write below it (from a corrupted BPB, say) is refused rather
+ * than allowed to silently overwrite the kernel.
+ *
+ * This floor applies only to the master. The slave drive (dual-drive
+ * mode's fat.img) is unrestricted.
  */
-#define ATA_WRITE_PROTECT_LBAS  64
+#define ATA_WRITE_PROTECT_LBAS  2048
 
 static int    s_present[2] = {0, 0};
 static char   s_model[2][41];
@@ -303,6 +314,23 @@ const char* ata_model(uint8_t drive) {
     return s_model[drive];
 }
 
+uint32_t ata_get_sector_count(uint8_t drive) {
+    if (drive > ATA_DRIVE_SLAVE) return 0;
+    if (!s_present[drive]) return 0;
+
+    uint16_t id[256];
+    if (ata_identify(drive, id) != 0) return 0;
+
+    /*
+     * Words 60-61 hold the 28-bit LBA max sector count.
+     * Words 100-103 hold the 48-bit value. We're LBA28-only, so use
+     * 60-61. The value is the number of addressable sectors, so the
+     * highest valid LBA is (count - 1).
+     */
+    uint32_t count = ((uint32_t)id[61] << 16) | id[60];
+    return count;
+}
+
 /* ------------------------------------------------------------------ *
  * READ
  * ------------------------------------------------------------------ */
@@ -362,32 +390,6 @@ static int ata_read_chunk(uint8_t drive, uint32_t lba, uint8_t count, void* buf)
     return 0;
 }
 
-//~ int ata_read_sector(uint32_t lba, void* buf) {
-    //~ if (!s_present[s_default_drive]) return -1;
-    //~ return ata_read_chunk(s_default_drive, lba, 1, buf);
-//~ }
-
-
-//~ int ata_read_sectors(uint32_t lba, uint32_t count, void* buf) {
-    //~ if (!s_present[s_default_drive]) return -1;
-    //~ if (count == 0) return 0;
-
-    //~ uint8_t* p = (uint8_t*)buf;
-    //~ while (count > 0) {
-        //~ uint32_t chunk = (count > 256) ? 256 : count;
-        //~ uint8_t sc = (chunk == 256) ? 0 : (uint8_t)chunk;
-
-        //~ int rc = ata_read_chunk(s_default_drive, lba, sc, p);
-        //~ if (rc != 0) return rc;
-
-        //~ lba   += chunk;
-        //~ count -= chunk;
-        //~ p     += chunk * ATA_SECTOR_SIZE;
-    //~ }
-    //~ return 0;
-//~ }
-
-
 /* ------------------------------------------------------------------ *
  * WRITE
  * ------------------------------------------------------------------ */
@@ -421,53 +423,8 @@ static int ata_write_chunk(uint8_t drive, uint32_t lba, uint8_t count,
     return 0;
 }
 
-//~ int ata_flush_cache(void) {
-    //~ if (!s_present[s_default_drive]) return -1;
-
-    //~ int rc = ata_poll_bsy_clear();
-    //~ if (rc != 0) return rc;
-
-    //~ outb(ATA_PRIMARY_STATUS, ATA_CMD_FLUSH_CACHE);
-    //~ ata_400ns_delay();
-    //~ return ata_poll_bsy_clear();
-//~ }
-
-//~ int ata_write_sector(uint32_t lba, const void* buf) {
-    //~ return ata_write_sectors(lba, 1, buf);
-//~ }
-
-//~ int ata_write_sectors(uint32_t lba, uint32_t count, const void* buf) {
-    //~ if (!s_present[s_default_drive]) return -1;
-    //~ if (count == 0) return 0;
-
-    //~ if (lba < ATA_WRITE_PROTECT_LBAS) {
-        //~ serial_print("ATA: refuse write below LBA ");
-        //~ serial_print_dec(ATA_WRITE_PROTECT_LBAS);
-        //~ serial_print(" (requested LBA ");
-        //~ serial_print_dec(lba);
-        //~ serial_print(")\n");
-        //~ return -2;
-    //~ }
-    //~ if (lba + count <= lba) return -1;
-
-    //~ const uint8_t* p = (const uint8_t*)buf;
-    //~ while (count > 0) {
-        //~ uint32_t chunk = (count > 256) ? 256 : count;
-        //~ uint8_t sc = (chunk == 256) ? 0 : (uint8_t)chunk;
-
-        //~ int rc = ata_write_chunk(s_default_drive, lba, sc, p);
-        //~ if (rc != 0) return rc;
-
-        //~ lba   += chunk;
-        //~ count -= chunk;
-        //~ p     += chunk * ATA_SECTOR_SIZE;
-    //~ }
-    //~ return ata_flush_cache();
-//~ }
-
 /* ------------------------------------------------------------------ *
- * Drive-parameterized API (for callers that need a specific device,
- * e.g. FatFs on the slave disk)
+ * Drive-parameterized API
  * ------------------------------------------------------------------ */
 
 int ata_read_sector_drive(uint8_t drive, uint32_t lba, void* buf) {
@@ -506,9 +463,10 @@ int ata_write_sectors_drive(uint8_t drive, uint32_t lba, uint32_t count, const v
     if (count == 0) return 0;
 
     /*
-     * The write-protect floor protects the boot chain on the master
-     * disk. It does not apply to the slave (FatFs test disk), which
-     * starts at LBA 0.
+     * The write-protect floor protects the boot chain, the kernel,
+     * and the gap before the FAT partition on the master disk. It
+     * does not apply to the slave (dual-drive mode's fat.img), which
+     * starts at LBA 0 and holds only a filesystem.
      */
     if (drive == ATA_DRIVE_MASTER && lba < ATA_WRITE_PROTECT_LBAS) {
         serial_print("ATA: refuse write below LBA ");
@@ -559,7 +517,6 @@ int ata_flush_cache_drive(uint8_t drive) {
     ata_400ns_delay();
     return ata_poll_bsy_clear();
 }
-
 
 int ata_read_sector(uint32_t lba, void* buf) {
     return ata_read_sector_drive(s_default_drive, lba, buf);

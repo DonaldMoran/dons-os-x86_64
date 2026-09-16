@@ -1,2 +1,37 @@
-#make clean && make && make runkernel64-kvm
-make clean && make && make runkernel64
+#!/usr/bin/env bash
+#
+# run — uncomment ONE line in the menu below, then ./run
+#
+
+menu() {
+    # Uncomment exactly one line. Never two.
+    #
+    # DUAL-DRIVE
+    # make clean && make && make runkernel64 > capture.txt
+    # make clean && make && make runkernel64-kvm > capture.txt
+    # make clean && make && make runkernel64-log > capture.txt
+    # make clean && make && make runkernel64-verbose > capture.txt
+    # make clean && make && make runkernel64-debug > capture.txt
+    # make clean && make && make runkernel64-headless > capture.txt
+    # make clean && make && make runkernel64-telnet > capture.txt
+    #
+    # SINGLE-DRIVE
+    make clean && make FAT_CONFIG=single && make -C 05_boot_kernel64 hdd-single.img && make runkernel64-single > capture.txt
+    # make clean && make FAT_CONFIG=single && make -C 05_boot_kernel64 hdd-single.img && make runkernel64-kvm-single > capture.txt
+
+    :  # no-op so an empty body is valid
+}
+
+set -e
+cd "$(dirname "$0")"
+
+CMD=$(sed -n '/^menu() {/,/^}/p' "$0" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' | grep -v '^menu()' | grep -v '^}' | head -1)
+
+if [ -z "$CMD" ]; then
+    echo "run: no command uncommented."
+    echo "run: edit this file, uncomment one line inside the menu() function."
+    exit 2
+fi
+
+echo "run: $CMD"
+eval "$CMD"

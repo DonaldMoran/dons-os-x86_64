@@ -1,22 +1,39 @@
 /* 04_kernel_64bit/fatfs/diskio.c */
 #include "ff.h"
 #include "diskio.h"
-#include "../include/ata.h" // Points to your include/ata.h header file
+#include "../include/ata.h"
+#include "../include/fat_config.h"
 
-/* Map physical drive 0 to your FatFs setup */
-#define DEV_FAT 0 
+/* Map physical drive 0 to the configured FatFs drive */
+#define DEV_FAT 0
+
+/*
+ * Partition offset. In single-drive mode the FAT volume starts at
+ * LBA 2048 of the master disk, and FF_MULTI_PARTITION is 0 in
+ * ffconf.h, so FatFs is NOT partition-aware: it treats the volume as
+ * starting at LBA 0 of the physical drive. diskio.c must translate
+ * every FatFs sector number (which is volume-relative) into a device
+ * LBA by adding this offset.
+ *
+ * In dual-drive mode the FAT volume is a whole-disk image (fat.img)
+ * with no partition table, so the offset is 0.
+ */
+#if FAT_CONFIG_SINGLE_DRIVE
+    #define FAT_PARTITION_OFFSET  2048
+#else
+    #define FAT_PARTITION_OFFSET  0
+#endif
 
 /*-----------------------------------------------------------------------*/
 /* Get Drive Status                                                      */
 /*-----------------------------------------------------------------------*/
 DSTATUS disk_status(BYTE pdrv) {
     if (pdrv != DEV_FAT) return STA_NOINIT;
-    
-    // Check hardware existence using your driver helper
-    if (!ata_present(ATA_DRIVE_SLAVE)) {
+
+    if (!ata_present(FAT_DRIVE)) {
         return STA_NODISK;
     }
-    return 0; // 0 means OK/Ready
+    return 0;
 }
 
 /*-----------------------------------------------------------------------*/
@@ -24,12 +41,11 @@ DSTATUS disk_status(BYTE pdrv) {
 /*-----------------------------------------------------------------------*/
 DSTATUS disk_initialize(BYTE pdrv) {
     if (pdrv != DEV_FAT) return STA_NOINIT;
-    
-    // Your ata_init() already handling checking the physical wire at boot
-    if (!ata_present(ATA_DRIVE_SLAVE)) {
+
+    if (!ata_present(FAT_DRIVE)) {
         return STA_NODISK;
     }
-    return 0; // 0 means Successfully Initialized
+    return 0;
 }
 
 /*-----------------------------------------------------------------------*/
@@ -38,9 +54,10 @@ DSTATUS disk_initialize(BYTE pdrv) {
 DRESULT disk_read(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count) {
     if (pdrv != DEV_FAT || count == 0) return RES_PARERR;
 
-    // Direct route to your drive-parameterized multi-sector read helper
-    int rc = ata_read_sectors_drive(ATA_DRIVE_SLAVE, (uint32_t)sector, (uint32_t)count, buff);
-    
+    uint32_t dev_lba = (uint32_t)sector + FAT_PARTITION_OFFSET;
+
+    int rc = ata_read_sectors_drive(FAT_DRIVE, dev_lba,
+                                    (uint32_t)count, buff);
     return (rc == 0) ? RES_OK : RES_ERROR;
 }
 
@@ -51,30 +68,33 @@ DRESULT disk_read(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count) {
 DRESULT disk_write(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count) {
     if (pdrv != DEV_FAT || count == 0) return RES_PARERR;
 
-    // Direct route to your drive-parameterized multi-sector write helper
-    int rc = ata_write_sectors_drive(ATA_DRIVE_SLAVE, (uint32_t)sector, (uint32_t)count, buff);
-    
+    uint32_t dev_lba = (uint32_t)sector + FAT_PARTITION_OFFSET;
+
+    int rc = ata_write_sectors_drive(FAT_DRIVE, dev_lba,
+                                     (uint32_t)count, buff);
     return (rc == 0) ? RES_OK : RES_ERROR;
 }
 #endif
 
 /*-----------------------------------------------------------------------*/
-/* Miscellaneous Functions (Required for FAT runtime state/sync)        */
+/* Miscellaneous Functions                                               */
 /*-----------------------------------------------------------------------*/
 DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff) {
     if (pdrv != DEV_FAT) return RES_PARERR;
 
     switch (cmd) {
         case CTRL_SYNC:
-            // Flush the specific slave drive's hardware write caches
-            if (ata_flush_cache_drive(ATA_DRIVE_SLAVE) != 0) {
+            if (ata_flush_cache_drive(FAT_DRIVE) != 0) {
                 return RES_ERROR;
             }
             return RES_OK;
 
         case GET_SECTOR_COUNT:
-            // Match your fat.img sizing geometry (40960 sectors for 20MB)
-            *(LBA_t*)buff = 40960; 
+            /*
+             * Return the size of the VOLUME, not the physical device.
+             * FatFs uses this for f_getfree() and cluster accounting.
+             */
+            *(LBA_t*)buff = FAT_VOLUME_SECTORS;
             return RES_OK;
 
         case GET_SECTOR_SIZE:
@@ -82,7 +102,7 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff) {
             return RES_OK;
 
         case GET_BLOCK_SIZE:
-            *(DWORD*)buff = 1; // Non-flash layout / standard erase blocks
+            *(DWORD*)buff = 1;
             return RES_OK;
     }
 
@@ -92,11 +112,11 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff) {
 #include <stdint.h>
 
 uint32_t get_fattime(void) {
-    /* Return a static fallback timestamp: Jan 1, 2026 00:00:00 */
-    return ((uint32_t)(2026 - 1980) << 25) | // Year
-           ((uint32_t)1 << 21)              | // Month
-           ((uint32_t)1 << 16)              | // Day
-           ((uint32_t)0 << 11)              | // Hour
-           ((uint32_t)0 << 5)               | // Min
-           ((uint32_t)0 >> 1);                // Sec
+    /* Static fallback: Jan 1, 2026 00:00:00 */
+    return ((uint32_t)(2026 - 1980) << 25) |
+           ((uint32_t)1 << 21)              |
+           ((uint32_t)1 << 16)              |
+           ((uint32_t)0 << 11)              |
+           ((uint32_t)0 << 5)               |
+           ((uint32_t)0 >> 1);
 }

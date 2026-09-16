@@ -1,8 +1,15 @@
 AS := nasm
 
-.PHONY: all clean run run-log run-debug run-verbose run-headless run-kvm run-telnet watch-serial clean-logs
+.PHONY: all clean run run-log run-debug run-verbose run-headless run-kvm run-telnet \
+        run-single run-kvm-single watch-serial clean-logs
 
 all: boot.bin stage2.bin hdd.img
+
+# ---------------------------------------------------------
+# Disk layout constants (must match include/fat_config.h)
+# ---------------------------------------------------------
+SINGLE_DRIVE_LBA := 2048
+DISK_SECTORS     := 40960
 
 # ---------------------------------------------------------
 # Build targets
@@ -13,6 +20,10 @@ boot.bin: boot.asm
 stage2.bin: stage2.asm
 	$(AS) -f bin stage2.asm -o stage2.bin
 
+# Dual-drive image: hdd.img (boot chain + kernel) + fat.img (slave).
+# fat.img is a committed binary in the tree. Rebuild it on the host with
+#   mkfs.vfat -F 16 -n DONSOS fat.img
+# and populate with mcopy as needed.
 hdd.img: boot.bin stage2.bin ../04_kernel_64bit/kernel.bin
 	rm -f hdd.img
 	qemu-img create -f raw hdd.img 20M
@@ -20,26 +31,49 @@ hdd.img: boot.bin stage2.bin ../04_kernel_64bit/kernel.bin
 	dd if=stage2.bin of=hdd.img bs=512 seek=1 conv=notrunc
 	dd if=../04_kernel_64bit/kernel.bin of=hdd.img bs=512 seek=128 conv=notrunc
 
+# Single-drive image: boot chain + kernel + FAT16 partition at LBA 2048.
+# Test files are copied from test-files/ via mcopy.
+hdd-single.img: boot.bin stage2.bin ../04_kernel_64bit/kernel.bin
+	rm -f hdd-single.img
+	qemu-img create -f raw hdd-single.img 20M
+	dd if=boot.bin of=hdd-single.img conv=notrunc
+	dd if=stage2.bin of=hdd-single.img bs=512 seek=1 conv=notrunc
+	dd if=../04_kernel_64bit/kernel.bin of=hdd-single.img bs=512 seek=128 conv=notrunc
+	mkfs.vfat -F 16 -h $(SINGLE_DRIVE_LBA) -n DONSOS \
+	    --offset=$(SINGLE_DRIVE_LBA) hdd-single.img
+	@for f in ../test-files/*; do \
+	    if [ -f "$$f" ]; then \
+	        echo "mcopy $$f"; \
+	        mcopy -i hdd-single.img@@$$(( $(SINGLE_DRIVE_LBA) * 512 )) "$$f" ::/ ; \
+	    fi \
+	done
+	@echo "--- verifying FAT boot sector at LBA $(SINGLE_DRIVE_LBA) ---"
+	@dd if=hdd-single.img bs=512 skip=$(SINGLE_DRIVE_LBA) count=1 2>/dev/null | \
+	    xxd | head -2
+	@echo "--- hidden_sectors field (BPB offset 0x1C), expect 0008 0000 ---"
+	@dd if=hdd-single.img bs=1 skip=$$(( $(SINGLE_DRIVE_LBA) * 512 + 28 )) \
+	    count=4 2>/dev/null | xxd
+
 # ---------------------------------------------------------
 # QEMU Run Targets
 # ---------------------------------------------------------
 
-# PATCH: Appended '-cpu max' to default run targets.
-# This unlocks modern instructions like wrfsbase/wrgsbase required by Newlib
-#~ run:
-#~ 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -monitor none
 run:
 	qemu-system-x86_64 -cpu max \
 		-drive file=hdd.img,format=raw,if=ide,index=0 \
 		-drive file=fat.img,format=raw,if=ide,index=1 \
 		-serial stdio -display sdl -monitor none
 
+run-single: hdd-single.img
+	qemu-system-x86_64 -cpu max \
+		-drive file=hdd-single.img,format=raw,if=ide,index=0 \
+		-serial stdio -display sdl -monitor none
 
-# Serial output to file (view later with 'cat serial.log')
+# Serial output to file
 run-log:
 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial file:serial.log -display sdl
 
-# Debug mode with GDB server (port 1234)
+# GDB server (port 1234)
 run-debug:
 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -s -S
 
@@ -52,24 +86,31 @@ run-verbose:
 		-no-reboot -no-shutdown \
 		-D qemu_debug.log
 
-# No graphics, serial to stdio (headless - good for servers)
+# Headless
 run-headless:
 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -nographic -monitor none
 
-# With KVM acceleration (faster, if available)
+# KVM acceleration
 run-kvm:
 	qemu-system-x86_64 -drive file=hdd.img,format=raw,if=ide,index=0 \
-	-drive file=fat.img,format=raw,if=ide,index=1 \
-	-serial stdio \
-	-display sdl \
-	-enable-kvm \
-	-cpu host
+		-drive file=fat.img,format=raw,if=ide,index=1 \
+		-serial stdio \
+		-display sdl \
+		-enable-kvm \
+		-cpu host
 
-# With telnet serial (connect with 'telnet localhost 4444')
+run-kvm-single: hdd-single.img
+	qemu-system-x86_64 -drive file=hdd-single.img,format=raw,if=ide,index=0 \
+		-serial stdio \
+		-display sdl \
+		-enable-kvm \
+		-cpu host
+
+# Telnet serial
 run-telnet:
 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial telnet::4444,server,nowait -display sdl
 
-# Legacy debug targets (kept for compatibility)
+# Legacy debug targets
 log:
 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw \
 		-d int,cpu_reset,guest_errors,unimp,page \
@@ -87,14 +128,12 @@ debug:
 		-monitor stdio
 
 # ---------------------------------------------------------
-# Utility targets
+# Utility
 # ---------------------------------------------------------
 
-# Watch serial log in real-time (run in another terminal)
 watch-serial:
 	tail -f serial.log
 
-# Clean up log files
 clean-logs:
 	rm -f serial.log qemu.log qemu_debug.log
 
@@ -102,4 +141,4 @@ clean-logs:
 # Clean
 # ---------------------------------------------------------
 clean: clean-logs
-	rm -f boot.bin stage2.bin hdd.img
+	rm -f boot.bin stage2.bin hdd.img hdd-single.img

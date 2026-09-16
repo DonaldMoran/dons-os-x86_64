@@ -19,6 +19,7 @@
 #include "include/process.h"
 #include "include/scheduler.h"
 #include "include/ata.h"
+#include "include/fat_config.h"
 #include "ff.h"
 
 extern void pit_init(uint32_t freq);
@@ -343,40 +344,46 @@ static void handle_command(const char *cmd) {
         int ok = 1;
 
         if (ata_present(ATA_DRIVE_MASTER)) {
-            if (ata_read_sector(0, buf) != 0) ok = 0;
-            else {
+            PRINT_BOTH("  Master    : ");
+            PRINT_BOTH(ata_model(ATA_DRIVE_MASTER));
+            PRINT_BOTH("\n");
+
+            if (ata_read_sector_drive(ATA_DRIVE_MASTER, 0, buf) != 0) {
+                PRINT_BOTH("  Master MBR: READ_FAILED\n");
+                ok = 0;
+            } else {
                 uint16_t sig = (uint16_t)buf[510] | ((uint16_t)buf[511] << 8);
-                PRINT_BOTH(sig == 0xAA55 ? "  Master MBR: OK\n" : "  Master MBR: BAD\n");
+                PRINT_BOTH(sig == 0xAA55 ? "  Master MBR: OK\n"
+                                         : "  Master MBR: BAD\n");
             }
 
-            uint8_t* orig = (uint8_t*)kmalloc(512);
-            uint8_t* pat  = (uint8_t*)kmalloc(512);
-            if (orig && pat) {
-                if (ata_read_sector(1024, orig) == 0) {
-                    for (int i=0; i<512; i++) pat[i] = (uint8_t)(0xA5 ^ (i & 0xFF));
-                    if (ata_write_sector(1024, pat) == 0) {
-                        uint8_t* rb = (uint8_t*)kmalloc(512);
-                        if (rb && ata_read_sector(1024, rb) == 0) {
-                            for(int i=0; i<512; i++) { if(rb[i] != pat[i]) { ok=0; break; } }
-                        } else ok = 0;
-                        kfree(rb);
-                        ata_write_sector(1024, orig);
-                    } else ok = 0;
-                } else ok = 0;
+            if (ata_read_sector_drive(ATA_DRIVE_MASTER, 128, buf) != 0) {
+                PRINT_BOTH("  Kernel hdr: READ_FAILED\n");
+                ok = 0;
+            } else {
+                PRINT_BOTH("  Kernel hdr: 0x");
+                PRINT_BOTH_HEX(((uint64_t)buf[0])       |
+                               ((uint64_t)buf[1] <<  8) |
+                               ((uint64_t)buf[2] << 16) |
+                               ((uint64_t)buf[3] << 24));
+                PRINT_BOTH("\n");
             }
-            kfree(orig); kfree(pat);
-            if (!ok) PRINT_BOTH("  Master RW : FAILED\n");
         } else {
             PRINT_BOTH("  Master    : Not Present\n");
         }
 
         if (ata_present(ATA_DRIVE_SLAVE)) {
+            PRINT_BOTH("  Slave     : ");
+            PRINT_BOTH(ata_model(ATA_DRIVE_SLAVE));
+            PRINT_BOTH("\n");
+
             if (ata_read_sector_drive(ATA_DRIVE_SLAVE, 0, buf) != 0) {
-                PRINT_BOTH("  Slave Read: FAILED\n");
+                PRINT_BOTH("  Slave Boot: READ_FAILED\n");
                 ok = 0;
             } else {
                 uint16_t sig = (uint16_t)buf[510] | ((uint16_t)buf[511] << 8);
-                PRINT_BOTH(sig == 0xAA55 ? "  Slave Boot: OK\n" : "  Slave Boot: NO_SIG\n");
+                PRINT_BOTH(sig == 0xAA55 ? "  Slave Boot: OK\n"
+                                         : "  Slave Boot: NO_SIG\n");
             }
         } else {
             PRINT_BOTH("  Slave     : Not Present\n");
@@ -384,7 +391,7 @@ static void handle_command(const char *cmd) {
 
         kfree(buf);
         PRINT_BOTH(ok ? "  Status   : SUCCESS\n" : "  Status   : FAILED\n");
-        vga_print("> ");          
+        vga_print("> ");
     } else if (strcmp(cmd, "fatmount") == 0) {
         PRINT_BOTH("\n=== FatFs Mount Test ===\n");
         static FATFS fs;
@@ -546,9 +553,13 @@ void kmain(BootInfo *info) {
 
     static FATFS boot_fs;
     if (f_mount(&boot_fs, "0:", 1) == FR_OK) {
-        serial_print("Storage filesystem mounted safely at boot.\n");
+#if FAT_CONFIG_SINGLE_DRIVE
+        PRINT_BOTH("Storage: single-drive, FAT@LBA 2048\n");
+#else
+        PRINT_BOTH("Storage: dual-drive, FAT@LBA 0 on slave\n");
+#endif
     } else {
-        serial_print("WARN: Auto-mounting boot device failed.\n");
+        PRINT_BOTH("WARN: Auto-mounting boot device failed.\n");
     }
 
     vga_clear();

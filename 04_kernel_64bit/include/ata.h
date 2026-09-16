@@ -10,9 +10,9 @@
 
 /*
  * Drive-parameterized read/write. Same semantics as the non-drive
- * variants above, but operate on the given drive instead of the
+ * variants below, but operate on the given drive instead of the
  * default. Intended for callers that need a specific device (e.g.
- * FatFs on the slave disk).
+ * FatFs on the FAT volume).
  *
  * Returns 0 on success, negative on error, or -1 if the drive is not
  * present.
@@ -46,6 +46,17 @@ int ata_present(uint8_t drive);
 const char* ata_model(uint8_t drive);
 
 /*
+ * Return the total addressable sector count of the given drive, as
+ * reported by IDENTIFY DEVICE words 60-61 (LBA28). Returns 0 if the
+ * drive is not present or IDENTIFY fails.
+ *
+ * Used by disk_ioctl(GET_SECTOR_COUNT) for FatFs free-space accounting.
+ * Not the same as FAT_VOLUME_SECTORS in fat_config.h, which subtracts
+ * the partition offset.
+ */
+uint32_t ata_get_sector_count(uint8_t drive);
+
+/*
  * Read a single 512-byte sector into buf.
  * buf must be at least 512 bytes and should be 2-byte aligned.
  * Returns 0 on success, negative on error.
@@ -64,8 +75,7 @@ int ata_read_sectors(uint32_t lba, uint32_t count, void* buf);
 /*
  * Write a single 512-byte sector from buf.
  * buf must be at least 512 bytes and should be 2-byte aligned.
- * Refuses to write below ATA_WRITE_PROTECT_LBAS (see ata.c) unless the
- * internal force path is used, which this API does not expose.
+ * Refuses to write below ATA_WRITE_PROTECT_LBAS (see ata.c).
  * Returns 0 on success, negative on error.
  */
 int ata_write_sector(uint32_t lba, const void* buf);
