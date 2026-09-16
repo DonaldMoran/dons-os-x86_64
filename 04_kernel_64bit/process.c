@@ -13,17 +13,7 @@
 #define DBG 0
 
 static uint8_t kernel_stack_pool[MAX_PROCESSES][PROC_STACK_SIZE] __attribute__((aligned(16)));
-
-/* Slot ownership map. slot_owner[i] is either NULL (slot i is free)
-   or a pointer to the PCB that owns kernel_stack_pool[i]. This is
-   what prevents two live PCBs from sharing the same 16 KB kernel
-   stack, which is what used to happen when the slot was computed as
-   pid % MAX_PROCESSES and pid exceeded MAX_PROCESSES.
-
-   Idle owns slot 0 (see kernel_stack_slot_alloc: it always picks the
-   lowest free index, and idle is created first). */
 static pcb_t* slot_owner[MAX_PROCESSES];
-
 static pcb_t pcb_pool[MAX_PROCESSES];
 static pcb_t* current_process = NULL;
 static uint64_t next_pid = 1;
@@ -34,23 +24,6 @@ static void process_initialize_pcb(pcb_t* pcb);
 
 #define KERNEL_BASE 0xFFFFFFFF80000000ULL
 
-/* Allocate a free kernel stack slot for pcb. Returns the slot index,
-   or KERNEL_STACK_SLOT_NONE if the pool is exhausted.
-
-   The previous scheme used `pcb->pid % MAX_PROCESSES`. That was
-   wrong: next_pid is monotonic and process_reclaim/process_destroy
-   set the PCB's pid to 0 but never decrement next_pid, so after
-   enough process churn the modulo wraps around and starts colliding
-   with slots still owned by live PCBs. The worst collision was
-   aliasing idle's slot: a new process would write its initial
-   iretq frame over idle's saved frame at the same address, and the
-   next time the scheduler resumed idle, it iretq'd from garbage
-   (observed symptom: kernel-mode #GP with a bogus selector in the
-   error code, after a dozen or so testyield runs).
-
-   The new allocator is O(MAX_PROCESSES) and keyed on slot_owner[],
-   which is the authoritative map of who owns what. Slots are freed
-   by kernel_stack_slot_free below. */
 static int kernel_stack_slot_alloc(pcb_t* pcb) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (slot_owner[i] == NULL) {
@@ -92,26 +65,12 @@ void process_init(void) {
         current_process = idle;
         scheduler_set_current(idle);
 
-        /* Seed the syscall entry stack top with idle's kernel stack.
-           tss_init() has already run and set rsp0 to the boot kernel
-           stack; this global is what user_syscall_entry.asm reads on
-           every syscall. */
         extern void tss_set_syscall_stack(uint64_t stack);
         tss_set_syscall_stack(idle->kernel_stack_top);
 
-        /* Keep TSS.RSP0 in lockstep with g_syscall_stack_top. From
-           here on, idle is the current process, and TSS.RSP0 must
-           point at idle's kernel stack top, not the boot kernel
-           stack tss_init set it to. The scheduler updates both
-           whenever it switches to a different process. */
         extern void tss_set_kernel_stack(uint64_t stack);
         tss_set_kernel_stack(idle->kernel_stack_top);
 
-        /* Remove idle from the ready queue. Idle is the fallback
-           process that process_find_by_pid(1) returns when nothing
-           else is runnable. If it stayed on the queue, it would sit
-           at the head and prevent any other process from being
-           scheduled. */
         scheduler_ready_queue_remove(idle);
     }
 
@@ -223,8 +182,6 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
         pcb->user_stack_top = 0;
     }
 
-    /* Allocate a private kernel stack slot. The slot index is now
-       decoupled from pid; see kernel_stack_slot_alloc for why. */
     int slot = kernel_stack_slot_alloc(pcb);
     if (slot == KERNEL_STACK_SLOT_NONE) {
         serial_print("PROCESS: kernel stack pool exhausted\n");
@@ -243,13 +200,6 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
         ensure_hhdm_mapped(pcb->user_stack_phys);
     }
 
-    /* Build the initial resume frame at kernel_stack_top, in the same
-       low -> high order irq0_stub / .kernel_task pop:
-           r15 r14 r13 r12 r11 r10 r9 r8 rbp rdi rsi rdx rcx rbx rax
-           rip cs rflags rsp ss
-       Mode determines CS/SS/RSP: a kernel process (idle) uses kernel
-       selectors and its kernel stack; a user process uses user
-       selectors and user_stack_top. */
     uint64_t* stack_ptr = (uint64_t*)pcb->kernel_stack_top;
     int is_user = (entry_point != 0 && entry_point < KERNEL_BASE);
 
@@ -287,10 +237,14 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
     pcb->next = NULL; pcb->prev = NULL;
     pcb->timeslice_ticks = 0; pcb->total_ticks = 0;
 
+    /* Initialize process file descriptor slots to NULL */
+    for (int i = 0; i < MAX_PROCESS_FILES; i++) {
+        pcb->file_table[i] = NULL;
+    }
+
     scheduler_ready_queue_add(pcb);
     return pcb;
 }
-
 pcb_t* process_get_current(void) {
     return current_process;
 }
@@ -309,9 +263,6 @@ pcb_t* process_find_by_pid(uint64_t pid) {
 }
 
 void process_wake_all_blocked(void) {
-    /* Move every BLOCKED process back to READY and onto the ready
-       queue. Called from irq1_handler when a key arrives. Does not
-       switch; the timer picks the woken process up on the next tick. */
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (pcb_pool[i].state == PROC_STATE_BLOCKED) {
             pcb_pool[i].state = PROC_STATE_READY;
@@ -334,11 +285,7 @@ void process_dump_all(void) {
         if (p->state == PROC_STATE_UNUSED) continue;
 
         const char* state_str;
-        /* A PCB that is READY but not on the ready queue is detached
-           (e.g. a placeholder from 'proccreate'). It is not runnable.
-           Idle is the exception: it is intentionally off-queue. */
-        if (p->state == PROC_STATE_READY && p->pid != 1 &&
-            p->prev == NULL && p->next == NULL) {
+        if (p->state == PROC_STATE_READY && p->pid != 1 && p->prev == NULL && p->next == NULL) {
             state_str = "DETACHED";
         } else {
             switch (p->state) {
@@ -441,27 +388,12 @@ void process_cleanup_elf_pages(pcb_t* pcb) {
     pcb->elf_num_pages = 0;
 }
 
-/* Reclaim an exited process's resources so its PCB slot can be
-   reused. Called from process_exit in scheduler.c, in the context of
-   the exiting process, before the scheduler switches away.
-
-   Frees the process's ELF segment pages and user stack pages, the
-   elf_page_list array, and the kernel stack slot. Does NOT free the
-   page tables (cr3); that teardown is deferred.
-
-   Does not remove the process from the ready queue or clear
-   current_process; the caller (process_exit) already did those
-   before calling here. */
 void process_reclaim(pcb_t* pcb) {
     if (!pcb) return;
     if (pcb->state == PROC_STATE_UNUSED) return;
 
     process_cleanup_elf_pages(pcb);
     pcb->user_stack_phys = 0;
-
-    /* Release the kernel stack slot before the PCB slot, so a
-       subsequent process_create in the same tick does not have to
-       scan past a slot still marked owned by this (dead) PCB. */
     kernel_stack_slot_free(pcb);
 
     pcb->state = PROC_STATE_UNUSED;
@@ -482,12 +414,7 @@ void process_destroy(pcb_t* pcb) {
     serial_print("PROCESS: Process destroyed\n");
 }
 
-/* =====================================================================
-   ABI LOCK: pcb_t layout must match context_switch.asm's hardcoded
-   offsets. If you change pcb_t, update both the asm AND these asserts.
-   These compile-time checks turn "silent ABI drift" into a build error,
-   which is what it should have been all along.
-   ===================================================================== */
+/* ABI LOCK COMPLIANCE VERIFICATION ASSERTS */
 _Static_assert(offsetof(pcb_t, cr3)              == 0x030, "context_switch.asm: cr3 offset");
 _Static_assert(offsetof(pcb_t, entry_point)      == 0x038, "context_switch.asm: entry_point offset");
 _Static_assert(offsetof(pcb_t, user_stack_top)   == 0x070, "context_switch.asm: user_stack_top offset");

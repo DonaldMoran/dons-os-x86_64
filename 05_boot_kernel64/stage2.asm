@@ -9,19 +9,52 @@ BOOTINFO_MAGIC equ 0x4F534F444E4F53
 BOOTINFO_VERSION equ 1
 
 ; ============================================
-; DAP entries - at the beginning for fixed offsets
-; Configured for isolated 128-sector passes to prevent segment wraps
+; Kernel staging and destination layout
+; --------------------------------------------
+;   Staging A : 0x80000 .. 0x9FFFF  (128 KB, PASS 1 + PASS 2)
+;   Staging B : 0x20000 .. 0x2FFFF  ( 64 KB, PASS 3)
+;   Destination : 0x100000 .. (128 KB from A, then 48 KB from B)
+;
+;   The previous layout staged PASS 3 at 0xA000:0000 (0xA0000..0xAFFFF),
+;   which is VGA graphics memory. Writes there are unreliable in
+;   QEMU/BIOS, so PASS 3's bytes were frequently 0xFF. Moving PASS 3
+;   to 0x20000 (plain RAM below stage2) fixes the corruption of
+;   .userelf that was clobbering build_user_shell_elf.
+;
+;   A single-pass staging area cannot exceed 128 KB in this memory map:
+;   0xA0000..0xBFFFF is VGA, 0xC0000..0xFFFFF is BIOS ROM. So the
+;   read/copy is split into two rounds, and long_mode_entry performs
+;   both rep movsq copies back-to-back.
+;
+; Kernel source: LBA 128 on the disk (was LBA 64).  The shift
+; is because boot.asm now reads 128 sectors (64 KB) for stage2;
+; 64 sectors were not enough once pt_low was added.
+; ============================================
+KERNEL_SECTORS_PER_PASS equ 128
+KERNEL_PASSES           equ 3
+KERNEL_TOTAL_SECTORS    equ KERNEL_SECTORS_PER_PASS * KERNEL_PASSES
+; Total bytes actually copied = 176 KB (128 KB from staging A + 48 KB from staging B).
+KERNEL_TOTAL_BYTES      equ 176 * 1024
+KERNEL_TOTAL_QWORDS     equ KERNEL_TOTAL_BYTES / 8          ; (unused after split; kept for reference)
+
+; First copy: 128 KB from 0x80000 -> 0x100000
+KERNEL_COPY1_QWORDS     equ (128 * 1024) / 8                ; 16384
+; Second copy: 48 KB from 0x20000 -> 0x120000 (fills total 176 KB)
+KERNEL_COPY2_QWORDS     equ (48 * 1024) / 8                 ; 6144
+
+; ============================================
+; DAP entries
 ; ============================================
 dap_kernel:
     db 16
     db 0
     dw 128            ; Read exactly 128 sectors (64 KB) per pass
-    dw 0x0000         ; Safe destination offset coord
+    dw 0x0000
 .segment:
-    dw 0x8000         ; Dynamically incremented! (Starts at 0x8000)
+    dw 0x8000         ; Dynamically modified below
 .lba:
-    dd 64             ; Lower 32-bits of starting LBA (Kernel starts at sector 64)
-    dd 0              ; Upper 32-bits of starting LBA
+    dd 128            ; Kernel starts at LBA 128
+    dd 0
 
 ; ============================================
 ; Real Mode Code
@@ -31,21 +64,35 @@ start:
     mov ax, 0x1000
     mov ds, ax
     mov es, ax
+
+    ; Real-mode stack below pt_low.
+    mov ax, 0x0000
     mov ss, ax
     mov sp, 0x7C00
 
-    ; --- Set VGA text mode 03h (MikeOS-style) ---
+    ; VGA text mode 03h
     mov ah, 0x00
     mov al, 0x03
     int 0x10
-    ; -------------------------------------------
 
     in  al, 0x92
     or  al, 00000010b
     out 0x92, al
 
     ; ----------------------------------------------------
-    ; PASS 1: Load first 128 sectors (64 KB) to 0x8000:0000
+    ; PASS 1: 128 sectors (64 KB) -> 0x8000:0000
+    ; ----------------------------------------------------
+    mov si, dap_kernel
+    mov dl, 0x80
+    mov ah, 0x42
+    int 0x13
+    jc disk_error
+
+    add word [dap_kernel.segment], 0x1000   ; -> 0x9000
+    add dword [dap_kernel.lba], 128         ; -> 256
+
+    ; ----------------------------------------------------
+    ; PASS 2: 128 sectors (64 KB) -> 0x9000:0000
     ; ----------------------------------------------------
     mov si, dap_kernel
     mov dl, 0x80
@@ -54,24 +101,19 @@ start:
     jc disk_error
 
     ; ----------------------------------------------------
-    ; THE TRICK: Advance your segment and LBA coordinates!
-    ; We shift the segment forward by 0x1000 to target 
-    ; the next 64 KB block, preventing segment wrap-around!
-    ; We use dword to keep the 16-bit compiler happy.
+    ; PASS 3: 128 sectors (64 KB) -> 0x2000:0000
+    ;   Note: reset segment to 0x2000, NOT +0x1000, to avoid VGA.
     ; ----------------------------------------------------
-    add word [dap_kernel.segment], 0x1000  ; Next target segment pointer: 0x9000
-    add dword [dap_kernel.lba], 128        ; Next target disk sector coordinate: 64 + 128 = 192
+    mov word [dap_kernel.segment], 0x2000
+    add dword [dap_kernel.lba], 128         ; -> 384
 
-    ; ----------------------------------------------------
-    ; PASS 2: Load next 128 sectors (64 KB) to 0x9000:0000
-    ; ----------------------------------------------------
     mov si, dap_kernel
     mov dl, 0x80
     mov ah, 0x42
     int 0x13
     jc disk_error
 
-    ; Get memory map
+    ; Memory map
     xor ebx, ebx
     mov di, e820_buffer
     mov dword [e820_count], 0
@@ -99,14 +141,12 @@ e820_done:
 disk_error:
     mov ax, 0xB800
     mov es, ax
-    xor di, di              ; ES:DI points to the very first char cell on screen
-    mov byte [es:di], 'E'   ; Write 'E' character to row 0, col 0
-    inc di                  ; Move to attribute byte color cell
-    mov byte [es:di], 0x0C  ; Write bright red error color
+    xor di, di
+    mov byte [es:di], 'E'
+    inc di
+    mov byte [es:di], 0x0C
     hlt
     jmp disk_error
-
-
 
 ; ============================================
 ; 32-bit Protected Mode
@@ -146,21 +186,23 @@ pm_entry:
 long_mode_entry:
     mov rsp, 0x80000
 
-    ; Fill BootInfo structure
+    ; Fill BootInfo
     mov rbx, bootinfo
-    
-    mov qword [rbx + 0x10], e820_buffer    ; memory_map_addr
+    mov qword [rbx + 0x10], e820_buffer
     movzx rax, word [e820_count]
-    mov qword [rbx + 0x18], rax            ; memory_map_count
+    mov qword [rbx + 0x18], rax
 
     ; ============================================
-    ; Copy kernel from 0x80000 to 0x100000
-    ; We scale the copy counter register loops up to 
-    ; 16384 quadwords to copy the full 128 KB data payload safely!
+    ; Copy kernel: 128 KB from staging A (0x80000), then 48 KB from staging B (0x20000).
     ; ============================================
     mov rsi, 0x00080000
     mov rdi, 0x00100000
-    mov rcx, 16384          
+    mov rcx, KERNEL_COPY1_QWORDS
+    rep movsq
+
+    mov rsi, 0x00020000
+    mov rdi, 0x00120000
+    mov rcx, KERNEL_COPY2_QWORDS
     rep movsq
 
     ; Jump to kernel
@@ -188,7 +230,7 @@ gdt_descriptor:
     dq gdt_start
 
 ; ============================================
-; Page Tables - ORIGINAL + HHDM mapping
+; Page Tables
 ; ============================================
 align 4096
 pml4:
@@ -218,47 +260,55 @@ pdpt_higher:
 
 align 4096
 pd:
-    %assign i 0
-    %rep 512
+    dq pt_low + 3
+    %assign i 1
+    %rep 511
         dq (i * 0x200000) + 0x83
         %assign i i+1
     %endrep
-    times (512 - 512) dq 0
 
 align 4096
 pd_hhdm:
-    %assign i 0
-    %rep 512
+    dq pt_low + 3
+    %assign i 1
+    %rep 511
         dq (i * 0x200000) + 0x83
         %assign i i+1
     %endrep
-    times (512 - 512) dq 0
+
+align 4096
+pt_low:
+    %assign i 0
+    %rep 512
+        dq (i * 0x1000) + 0x03
+        %assign i i+1
+    %endrep
 
 ; ============================================
-; BootInfo Structure (must match bootinfo.h)
+; BootInfo Structure
 ; ============================================
 align 16
 bootinfo:
-    dq BOOTINFO_MAGIC       ; 0x00: magic
-    dq BOOTINFO_VERSION     ; 0x08: version
-    dq e820_buffer          ; 0x10: memory_map_addr
-    dq 0                    ; 0x18: memory_map_count
-    dq 0x00100000           ; 0x20: kernel_phys_start
-    dq 0x00100000 + (256*512) ; 0x28: kernel_phys_end (256 sectors = 256*512 bytes = 128 KB)
-    dq pml4                 ; 0x30: pml4_addr
-    dq 0xFFFFFF7FBFDFE000   ; 0x38: pml4_virt
-    dq 0                    ; 0x40: framebuffer_addr
-    dd 0                    ; 0x48: framebuffer_width
-    dd 0                    ; 0x4C: framebuffer_height
-    dd 0                    ; 0x50: framebuffer_pitch
-    dd 0                    ; 0x54: framebuffer_bpp
-    dq 0x80                 ; 0x58: boot_drive
-    dq 0                    ; 0x60: acpi_rsdp
-    dq 0                    ; 0x68: smbios_addr
-    dq 0                    ; 0x70: cmdline
-    dq 0                    ; 0x78: cmdline_len
-    dq 0                    ; 0x80: flags
-    times 6 dq 0            ; 0x88 - 0xBF: reserved
+    dq BOOTINFO_MAGIC
+    dq BOOTINFO_VERSION
+    dq e820_buffer
+    dq 0
+    dq 0x00100000
+    dq 0x00100000 + KERNEL_TOTAL_BYTES
+    dq pml4
+    dq 0xFFFFFF7FBFDFE000
+    dq 0
+    dd 0
+    dd 0
+    dd 0
+    dd 0
+    dq 0x80
+    dq 0
+    dq 0
+    dq 0
+    dq 0
+    dq 0
+    times 6 dq 0
 
 ; ============================================
 ; Data Structures

@@ -68,6 +68,11 @@ void tss_init(void) {
    the full explanation of this boundary. */
 void __attribute__((noinline))
 tss_set_kernel_stack(uint64_t stack) {
+	if (stack & 0xF) {
+        serial_print("TSS: kernel_stack_top not 16-aligned: 0x");
+        serial_print_hex(stack);
+        serial_print("\n");
+    }
     tss->rsp0 = stack;
 }
 

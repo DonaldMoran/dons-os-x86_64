@@ -47,17 +47,30 @@ void pic_remap(void) {
     outb(PIC1_CMD, 0x11);
     outb(PIC2_CMD, 0x11);
 
-    outb(PIC1_DATA, 0x20);
-    outb(PIC2_DATA, 0x28);
+    outb(PIC1_DATA, 0x20);   /* master vector offset 32 */
+    outb(PIC2_DATA, 0x28);   /* slave vector offset 40 */
 
-    outb(PIC1_DATA, 0x04);
-    outb(PIC2_DATA, 0x02);
+    outb(PIC1_DATA, 0x04);   /* slave on IRQ2 */
+    outb(PIC2_DATA, 0x02);   /* cascade identity */
 
-    outb(PIC1_DATA, 0x01);
+    outb(PIC1_DATA, 0x01);   /* 8086 mode */
     outb(PIC2_DATA, 0x01);
 
-    outb(PIC1_DATA, a1);
-    outb(PIC2_DATA, a2);
+    /*
+     * Do NOT restore the BIOS mask values. The BIOS leaves IRQ14
+     * unmasked because it uses the ATA controller during boot. If we
+     * restore that mask, the first ATA command we send (IDENTIFY) makes
+     * the controller assert IRQ14, the PIC forwards it as vector 46, and
+     * the CPU takes a #GP because we have no gate at vector 46.
+     *
+     * Start from a known-good mask instead:
+     *   master: unmask IRQ0 (PIT) and IRQ1 (keyboard) only
+     *   slave:  mask everything (IRQ8-IRQ15, including IRQ14/15)
+     */
+    (void)a1;
+    (void)a2;
+    outb(PIC1_DATA, 0xFC);   /* 1111 1100 */
+    outb(PIC2_DATA, 0xFF);   /* 1111 1111 */
 }
 
 volatile uint64_t g_ticks = 0;
@@ -284,12 +297,126 @@ void isr8_handler(void) {
     while (1) __asm__ volatile("hlt");
 }
 
+/*
+ * Exception frame layout, as seen by C after the stub has pushed all GPRs:
+ *
+ *   offset 0x00: r15      } 
+ *   offset 0x08: r14      }
+ *   offset 0x10: r13      }
+ *   offset 0x18: r12      }
+ *   offset 0x20: r11      }
+ *   offset 0x28: r10      }  15 GPRs pushed by PUSH_ALL_GPRS
+ *   offset 0x30: r9       }  (120 bytes total)
+ *   offset 0x38: r8       }
+ *   offset 0x40: rbp      }
+ *   offset 0x48: rdi      }
+ *   offset 0x50: rsi      }
+ *   offset 0x58: rdx      }
+ *   offset 0x60: rcx      }
+ *   offset 0x68: rbx      }
+ *   offset 0x70: rax      }
+ *   offset 0x78: error_code   <- pushed by CPU (for #GP, #PF, #DF)
+ *   offset 0x80: rip          <- pushed by CPU
+ *   offset 0x88: cs           <- pushed by CPU
+ *   offset 0x90: rflags       <- pushed by CPU
+ *   offset 0x98: rsp          <- pushed by CPU
+ *   offset 0xA0: ss           <- pushed by CPU
+ *
+ * The old handlers read raw[0..4] as if the frame began at error_code,
+ * which meant they printed r15/r14/r13/r11 instead. That is why the #GP
+ * dump showed "RIP=0x0 CS=0x0 RSP=0x7FFF" regardless of the real fault.
+ * The fix is to index past the GPR save area.
+ */
+#define EXC_OFF_ERROR_CODE 15
+#define EXC_OFF_RIP        16
+#define EXC_OFF_CS         17
+#define EXC_OFF_RFLAGS     18
+#define EXC_OFF_RSP        19
+#define EXC_OFF_SS         20
+
+//~ void isr13_handler(exception_frame_t *frame) {
+    //~ uint64_t *raw = (uint64_t *)frame;
+    //~ uint64_t error_code = raw[EXC_OFF_ERROR_CODE];
+    //~ uint64_t fault_rip  = raw[EXC_OFF_RIP];
+    //~ uint64_t fault_cs   = raw[EXC_OFF_CS];
+    //~ uint64_t fault_rsp  = raw[EXC_OFF_RSP];
+
+    //~ vga_print("\n=== GENERAL PROTECTION FAULT (#GP) ===\n");
+    //~ vga_print("  Faulting RIP : 0x"); vga_print_hex_cur(fault_rip);  vga_print("\n");
+    //~ vga_print("  Code Seg (CS): 0x"); vga_print_hex_cur(fault_cs);   vga_print("\n");
+    //~ vga_print("  Stack (RSP)  : 0x"); vga_print_hex_cur(fault_rsp);  vga_print("\n");
+    //~ vga_print("  Error Code   : 0x"); vga_print_hex_cur(error_code); vga_print("\n");
+
+    //~ serial_print("\n=== GENERAL PROTECTION FAULT (#GP) ===\n");
+    //~ serial_print("  Faulting RIP : 0x"); serial_print_hex(fault_rip);  serial_print("\n");
+    //~ serial_print("  Code Seg (CS): 0x"); serial_print_hex(fault_cs);   serial_print("\n");
+    //~ serial_print("  Stack (RSP)  : 0x"); serial_print_hex(fault_rsp);  serial_print("\n");
+    //~ serial_print("  Error Code   : 0x"); serial_print_hex(error_code); serial_print("\n");
+
+    //~ /*
+     //~ * TSS.RSP0 diagnostic. When the CPU takes a user-mode interrupt or
+     //~ * exception, it switches to the stack at TSS.RSP0. If the fault
+     //~ * frame's SS slot is wrong, either TSS.RSP0 points at the wrong
+     //~ * stack (so the frame is being built on top of stale data) or
+     //~ * something wrote the wrong value into the slot.
+     //~ *
+     //~ * Reading TSS.RSP0 requires walking the GDT to find the TSS base.
+     //~ * The TSS descriptor is at GDT selector 0x38 (two 8-byte entries).
+     //~ */
+    //~ {
+        //~ struct __attribute__((packed)) {
+            //~ uint16_t limit;
+            //~ uint64_t base;
+        //~ } gdt_ptr;
+        //~ __asm__ volatile("sgdt %0" : "=m"(gdt_ptr));
+
+        //~ uint64_t* gdt = (uint64_t*)gdt_ptr.base;
+        //~ uint64_t tss_desc_low  = gdt[0x38 / 8];
+        //~ uint64_t tss_desc_high = gdt[0x38 / 8 + 1];
+        //~ uint64_t tss_base = ((tss_desc_low >> 16) & 0xFFFFFF)
+                          //~ | (((tss_desc_low >> 56) & 0xFF) << 24)
+                          //~ | ((tss_desc_high & 0xFFFFFFFF) << 32);
+
+        //~ serial_print("  TSS base   : 0x"); serial_print_hex(tss_base); serial_print("\n");
+        //~ if (tss_base) {
+            //~ uint64_t rsp0 = *(uint64_t*)(tss_base + 4);
+            //~ uint64_t rsp1 = *(uint64_t*)(tss_base + 12);
+            //~ uint64_t rsp2 = *(uint64_t*)(tss_base + 20);
+            //~ serial_print("  TSS.RSP0   : 0x"); serial_print_hex(rsp0); serial_print("\n");
+            //~ serial_print("  TSS.RSP1   : 0x"); serial_print_hex(rsp1); serial_print("\n");
+            //~ serial_print("  TSS.RSP2   : 0x"); serial_print_hex(rsp2); serial_print("\n");
+        //~ }
+    //~ }
+
+    //~ /*
+     //~ * Raw frame dump. The #GP stub (isr13_stub) pushes all 15 GPRs
+     //~ * before calling this handler, so `raw[0..14]` are the saved GPRs
+     //~ * and `raw[15..20]` are the CPU-pushed fault frame
+     //~ * (error_code, rip, cs, rflags, rsp, ss).
+     //~ *
+     //~ * We dump 48 slots so we can see several frames deep. This is the
+     //~ * only way to see what the CPU was actually trying to iretq to
+     //~ * when the fault fired.
+     //~ */
+    //~ serial_print("  --- raw frame dump ---\n");
+    //~ for (int i = 0; i < 48; i++) {
+        //~ serial_print("    [");
+        //~ serial_print_dec(i);
+        //~ serial_print("] 0x");
+        //~ serial_print_hex(raw[i]);
+        //~ serial_print("\n");
+    //~ }
+    //~ serial_print("  --- end frame dump ---\n");
+
+    //~ while (1) __asm__ volatile("hlt");
+//~ }
+
 void isr13_handler(exception_frame_t *frame) {
     uint64_t *raw = (uint64_t *)frame;
-    uint64_t error_code = raw[0];
-    uint64_t fault_rip  = raw[1];
-    uint64_t fault_cs   = raw[2];
-    uint64_t fault_rsp  = raw[4];
+    uint64_t error_code = raw[EXC_OFF_ERROR_CODE];
+    uint64_t fault_rip  = raw[EXC_OFF_RIP];
+    uint64_t fault_cs   = raw[EXC_OFF_CS];
+    uint64_t fault_rsp  = raw[EXC_OFF_RSP];
 
     vga_print("\n=== GENERAL PROTECTION FAULT (#GP) ===\n");
     vga_print("  Faulting RIP : 0x"); vga_print_hex_cur(fault_rip);  vga_print("\n");
@@ -303,15 +430,81 @@ void isr13_handler(exception_frame_t *frame) {
     serial_print("  Stack (RSP)  : 0x"); serial_print_hex(fault_rsp);  serial_print("\n");
     serial_print("  Error Code   : 0x"); serial_print_hex(error_code); serial_print("\n");
 
+    /*
+     * TSS.RSP0 diagnostic. When the CPU takes a user-mode interrupt or
+     * exception, it switches to the stack at TSS.RSP0. If the fault
+     * frame's SS slot is wrong, either TSS.RSP0 points at the wrong
+     * stack, or something wrote the wrong value into the slot.
+     */
+    {
+        struct __attribute__((packed)) {
+            uint16_t limit;
+            uint64_t base;
+        } gdt_ptr;
+        __asm__ volatile("sgdt %0" : "=m"(gdt_ptr));
+
+        uint64_t* gdt = (uint64_t*)gdt_ptr.base;
+        uint64_t tss_desc_low  = gdt[0x38 / 8];
+        uint64_t tss_desc_high = gdt[0x38 / 8 + 1];
+        uint64_t tss_base = ((tss_desc_low >> 16) & 0xFFFFFF)
+                          | (((tss_desc_low >> 56) & 0xFF) << 24)
+                          | ((tss_desc_high & 0xFFFFFFFF) << 32);
+
+        serial_print("  TSS base   : 0x"); serial_print_hex(tss_base); serial_print("\n");
+        if (tss_base) {
+            uint64_t rsp0 = *(uint64_t*)(tss_base + 4);
+            serial_print("  TSS.RSP0   : 0x"); serial_print_hex(rsp0); serial_print("\n");
+        }
+    }
+
+    /*
+     * Process-state diagnostic. Tells us what the scheduler thinks
+     * the current process's kernel stack top and saved RSP are.
+     * If TSS.RSP0 != cur->kernel_stack_top, the TSS is out of sync
+     * with the scheduler. If cur->rsp doesn't point at a valid frame,
+     * the saved frame is bad.
+     */
+    {
+        extern pcb_t* process_get_current(void);
+        pcb_t* cur = process_get_current();
+        if (cur) {
+            serial_print("  Current PID : "); serial_print_dec(cur->pid); serial_print("\n");
+            serial_print("  Name        : "); serial_print(cur->name); serial_print("\n");
+            serial_print("  entry_point : 0x"); serial_print_hex(cur->entry_point); serial_print("\n");
+            serial_print("  kernel_top  : 0x"); serial_print_hex(cur->kernel_stack_top); serial_print("\n");
+            serial_print("  user_stack  : 0x"); serial_print_hex(cur->user_stack_top); serial_print("\n");
+            serial_print("  saved rsp   : 0x"); serial_print_hex(cur->rsp); serial_print("\n");
+            serial_print("  saved rip   : 0x"); serial_print_hex(cur->rip); serial_print("\n");
+        } else {
+            serial_print("  Current PID : (null)\n");
+        }
+    }
+
+    /*
+     * Raw frame dump. The #GP stub (isr13_stub) pushes all 15 GPRs
+     * before calling this handler, so `raw[0..14]` are the saved GPRs
+     * and `raw[15..20]` are the CPU-pushed fault frame
+     * (error_code, rip, cs, rflags, rsp, ss).
+     */
+    serial_print("  --- raw frame dump ---\n");
+    for (int i = 0; i < 48; i++) {
+        serial_print("    [");
+        serial_print_dec(i);
+        serial_print("] 0x");
+        serial_print_hex(raw[i]);
+        serial_print("\n");
+    }
+    serial_print("  --- end frame dump ---\n");
+
     while (1) __asm__ volatile("hlt");
 }
 
 void isr14_handler(exception_frame_t *frame) {
     uint64_t *raw = (uint64_t *)frame;
-    uint64_t error_code = raw[0];
-    uint64_t fault_rip  = raw[1];
-    uint64_t fault_cs   = raw[2];
-    uint64_t fault_rsp  = raw[4];
+    uint64_t error_code = raw[EXC_OFF_ERROR_CODE];
+    uint64_t fault_rip  = raw[EXC_OFF_RIP];
+    uint64_t fault_cs   = raw[EXC_OFF_CS];
+    uint64_t fault_rsp  = raw[EXC_OFF_RSP];
     uint64_t fault_addr;
     __asm__ volatile("mov %%cr2, %0" : "=r"(fault_addr));
 
@@ -326,6 +519,143 @@ void isr14_handler(exception_frame_t *frame) {
     serial_print("  Raw Error Code    : 0x"); serial_print_hex(error_code); serial_print("\n");
     serial_print("  CS                : 0x"); serial_print_hex(fault_cs);   serial_print("\n");
     serial_print("  RSP               : 0x"); serial_print_hex(fault_rsp);  serial_print("\n");
+
+    /*
+     * Page-table walk diagnostic.
+     *
+     * Reads the four levels of the current page tables directly through
+     * the HHDM (0xFFFF800000000000 + phys) and prints the raw entry
+     * at each level for the faulting virtual address. This tells us
+     * whether the CPU is seeing a valid PTE, a 2 MB PDE, or something
+     * corrupted.
+     *
+     * If the HHDM mapping itself is broken, the first read of pml4[]
+     * will fault again and we'll see a nested fault (or a triple fault
+     * and reboot). That itself is diagnostic.
+     */
+    {
+        uint64_t cr3;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+        serial_print("  CR3               : 0x"); serial_print_hex(cr3); serial_print("\n");
+
+        uint64_t idx_pml4 = (fault_addr >> 39) & 0x1FF;
+        uint64_t idx_pdpt = (fault_addr >> 30) & 0x1FF;
+        uint64_t idx_pd   = (fault_addr >> 21) & 0x1FF;
+        uint64_t idx_pt   = (fault_addr >> 12) & 0x1FF;
+
+        serial_print("  Walk indices: pml4=");
+        serial_print_dec(idx_pml4);
+        serial_print(" pdpt=");
+        serial_print_dec(idx_pdpt);
+        serial_print(" pd=");
+        serial_print_dec(idx_pd);
+        serial_print(" pt=");
+        serial_print_dec(idx_pt);
+        serial_print("\n");
+
+        uint64_t* pml4 = (uint64_t*)(0xFFFF800000000000ULL + (cr3 & ~0xFFFULL));
+        uint64_t pml4e = pml4[idx_pml4];
+        serial_print("  pml4e             : 0x"); serial_print_hex(pml4e); serial_print("\n");
+        if (!(pml4e & 1)) {
+            serial_print("  PML4E NOT PRESENT - stopping walk\n");
+            while (1) __asm__ volatile("hlt");
+        }
+
+        uint64_t* pdpt = (uint64_t*)(0xFFFF800000000000ULL + (pml4e & ~0xFFFULL));
+        uint64_t pdpte = pdpt[idx_pdpt];
+        serial_print("  pdpte             : 0x"); serial_print_hex(pdpte); serial_print("\n");
+        if (!(pdpte & 1)) {
+            serial_print("  PDPTE NOT PRESENT - stopping walk\n");
+            while (1) __asm__ volatile("hlt");
+        }
+
+        uint64_t* pd = (uint64_t*)(0xFFFF800000000000ULL + (pdpte & ~0xFFFULL));
+        uint64_t pde = pd[idx_pd];
+        serial_print("  pde               : 0x"); serial_print_hex(pde); serial_print("\n");
+        if (!(pde & 1)) {
+            serial_print("  PDE NOT PRESENT - stopping walk\n");
+            while (1) __asm__ volatile("hlt");
+        }
+
+        if (pde & 0x80) {
+            uint64_t big_base = pde & ~0x1FFFFFULL;
+            uint64_t big_off  = fault_addr & 0x1FFFFFULL;
+            serial_print("  PDE IS 2 MB PAGE, phys base 0x");
+            serial_print_hex(big_base);
+            serial_print(" -> effective phys 0x");
+            serial_print_hex(big_base + big_off);
+            serial_print("\n");
+        } else {
+            uint64_t* pt = (uint64_t*)(0xFFFF800000000000ULL + (pde & ~0xFFFULL));
+            uint64_t pte = pt[idx_pt];
+            serial_print("  pte               : 0x"); serial_print_hex(pte); serial_print("\n");
+            if (pte & 1) {
+                uint64_t phys = (pte & ~0xFFFULL) | (fault_addr & 0xFFFULL);
+                serial_print("  PTE PRESENT, phys 0x"); serial_print_hex(phys); serial_print("\n");
+                if (pte & 0x80) {
+                    serial_print("  *** PTE HAS PS BIT SET (reserved in a PTE!) ***\n");
+                }
+                if (pte & 0x8000000000000000ULL) {
+                    serial_print("  *** PTE HAS NX BIT SET ***\n");
+                }
+            } else {
+                serial_print("  PTE NOT PRESENT\n");
+            }
+        }
+    }
+
+    while (1) __asm__ volatile("hlt");
+}
+
+/*
+ * Default interrupt handler, used for all vectors that do not have a
+ * dedicated stub.  Called from isr_default_common in isr.asm.
+ *
+ * The frame layout is:
+ *   [rsp+0]    r15
+ *   [rsp+8]    r14
+ *   ...
+ *   [rsp+112]  rax
+ *   [rsp+120]  vector
+ *   [rsp+128]  error_code
+ *   [rsp+136]  rip
+ *   [rsp+144]  cs
+ *   [rsp+152]  rflags
+ *   [rsp+160]  rsp
+ *   [rsp+168]  ss
+ *
+ * This handler does not attempt to recover.  An unexpected exception
+ * or spurious IRQ means the system is in an unknown state, and the
+ * safest thing is to print diagnostics and halt.  The point of the
+ * handler is to make the failure visible instead of silent (which is
+ * what happens when a #GP, #DF, or triple fault fires on an
+ * uninstalled gate).
+ */
+void isr_default_handler(default_frame_t *frame) {
+    uint64_t vec = frame->vector;
+
+    serial_print("\n*** UNHANDLED INTERRUPT: vector ");
+    serial_print_dec(vec);
+    serial_print(" ***\n");
+    serial_print("  error_code : 0x"); serial_print_hex(frame->error_code); serial_print("\n");
+    serial_print("  rip        : 0x"); serial_print_hex(frame->rip);        serial_print("\n");
+    serial_print("  cs         : 0x"); serial_print_hex(frame->cs);         serial_print("\n");
+    serial_print("  rflags     : 0x"); serial_print_hex(frame->rflags);     serial_print("\n");
+    serial_print("  rsp        : 0x"); serial_print_hex(frame->rsp);        serial_print("\n");
+    serial_print("  ss         : 0x"); serial_print_hex(frame->ss);         serial_print("\n");
+    serial_print("  rax        : 0x"); serial_print_hex(frame->rax);        serial_print("\n");
+    serial_print("  rbx        : 0x"); serial_print_hex(frame->rbx);        serial_print("\n");
+    serial_print("  rcx        : 0x"); serial_print_hex(frame->rcx);        serial_print("\n");
+    serial_print("  rdx        : 0x"); serial_print_hex(frame->rdx);        serial_print("\n");
+    serial_print("  rsi        : 0x"); serial_print_hex(frame->rsi);        serial_print("\n");
+    serial_print("  rdi        : 0x"); serial_print_hex(frame->rdi);        serial_print("\n");
+
+    vga_print("\n*** UNHANDLED INTERRUPT: vector ");
+    vga_print_dec_cur(vec);
+    vga_print(" ***\n");
+    vga_print("  rip = 0x");
+    vga_print_hex_cur(frame->rip);
+    vga_print("\n");
 
     while (1) __asm__ volatile("hlt");
 }

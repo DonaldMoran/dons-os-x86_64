@@ -20,7 +20,12 @@ start:
     mov es, ax           ; BIOS will use this from DAP
 
     ; ----------------------------------------------------
-    ; Load stage2 (40 sectors) from LBA 1 → 0x1000:0000
+    ; Load stage2 (128 sectors = 64 KB) from LBA 1 -> 0x1000:0000
+    ;
+    ; Was 64 sectors (32 KB).  Raised to 128 sectors to give
+    ; stage2 room for the shared 4 KB page table (pt_low) plus
+    ; any future boot-time tables.  The kernel now starts at
+    ; LBA 128, so stage2 has LBA 1..127 available (63.5 KB).
     ; ----------------------------------------------------
     mov si, dap_stage2   ; DS:SI -> DAP in boot sector
     mov dl, 0x80         ; first hard disk
@@ -44,7 +49,7 @@ disk_error:
 dap_stage2:
     db 16                 ; size of DAP
     db 0                  ; reserved
-    dw 64                 ; number of sectors to read
+    dw 128                ; number of sectors to read (was 64)
     dw 0x0000             ; offset
     dw 0x1000             ; segment (0x1000:0000 = 0x00010000)
     dq 1                  ; starting LBA (stage2 at LBA 1)

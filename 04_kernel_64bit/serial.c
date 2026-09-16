@@ -36,13 +36,23 @@ void serial_print(const char* str) {
     while (*str) serial_putc(*str++);
 }
 
+//~ void serial_print_hex(uint64_t value) {
+    //~ char hex[] = "0123456789ABCDEF";
+    //~ char buf[17]; buf[16] = 0;
+    //~ if (value == 0) { serial_putc('0'); return; }
+    //~ int i = 15;
+    //~ while (value > 0 && i >= 0) { buf[i--] = hex[value & 0xF]; value >>= 4; }
+    //~ for (int j = i + 1; j < 16; j++) serial_putc(buf[j]);
+//~ }
+
 void serial_print_hex(uint64_t value) {
     char hex[] = "0123456789ABCDEF";
-    char buf[17]; buf[16] = 0;
-    if (value == 0) { serial_putc('0'); return; }
-    int i = 15;
-    while (value > 0 && i >= 0) { buf[i--] = hex[value & 0xF]; value >>= 4; }
-    for (int j = i + 1; j < 16; j++) serial_putc(buf[j]);
+    char buf[16];
+    for (int i = 15; i >= 0; i--) {
+        buf[i] = hex[value & 0xF];
+        value >>= 4;
+    }
+    for (int i = 0; i < 16; i++) serial_putc(buf[i]);
 }
 
 void serial_print_dec(uint64_t value) {

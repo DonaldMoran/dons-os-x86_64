@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield**, **usershell**, **gdtdump**, **tssdump**
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield**, **usershell**, **gdtdump**, **tssdump**, **atatest**, **fatmount**, **fatls**, **fatcat**
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -131,7 +131,10 @@ Boot chain is complete and stable.
 - SYS_WRITE (syscall #1)
 - SYS_EXIT (syscall #2)
 - SYS_READ (syscall #3)
+- SYS_OPEN (syscall #4)
+- SYS_CLOSE (syscall #6)
 - SYS_BRK (syscall #10)
+- SYS_REBOOT (syscall #25)
 - Syscall dispatcher with x86_64 ABI
 - `syscall` test command
 - SYSRET returns to user mode
@@ -225,7 +228,7 @@ Boot chain is complete and stable.
 - `process_exit` now disables interrupts for the entire critical section (state transition + queue removal + reclaim + context switch), closing a timer race where the timer could re-add the exiting process to the ready queue or save the current stack frame into `next->rsp`
 - Page-table teardown deferred (a few pages per process)
 
-### ✔ 3.19 — Scheduler, TSS, and Interrupt ABI Stability Pass ⭐ NEW (v0.4.9)
+### ✔ 3.19 — Scheduler, TSS, and Interrupt ABI Stability Pass ⭐ v0.4.9
 - **ELF-load race at boot.** `process_create` queues the PCB before the ELF is loaded, so a PIT tick between create and `elf_load_into_process` could schedule a process whose entry page was not yet mapped. Fixed at the three call sites (`kmain` boot path, `elfload`, `usershell`): remove from queue, load ELF, set `entry_point`, add back.
 - **TSS.RSP0 / `g_syscall_stack_top` lockstep.** The update was gated on `entry_point < KERNEL_BASE`; kernel-mode switches left `g_syscall_stack_top` stale. Gate removed in `scheduler_switch_to`, `process_exit`, `timer_preempt_handler`.
 - **`process_exit` fallback TSS restoration.** The no-runnable fallback zeroed only `g_syscall_stack_top`, leaving `TSS.RSP0` pointing at a dead process's stack. Now restores both to idle's kernel stack top.
@@ -235,6 +238,49 @@ Boot chain is complete and stable.
 - **`irq1_stub` ABI violation.** `irq1_handler` was called without preserving caller-saved registers. A keyboard interrupt between `sti` and a subsequent indirect `jmp *%rax` corrupted `%rax` and landed mid-instruction inside `kmain_shell_loop`. Fixed on two fronts: all stubs that call C handlers now preserve all 15 GPRs, and the fallback uses a direct `jmp kmain_shell_loop`.
 - **`process_dump_all` cosmetic fix.** Detached PCBs show `DETACHED` instead of `READY`.
 - **Frame validation in `context_switch.asm`.** `.kernel_task` validates the resume frame's `rip` and `cs` before popping, and emits a serial marker byte on failure.
+
+### ✔ 3.20 — ATA PIO Block Device Driver
+- Primary-channel ATA in PIO (polled) mode, LBA28
+- `ata_init()` probes master and slave, IDENTIFY, model strings
+- Per-drive read/write entry points (`ata_read_sectors_drive`, `ata_write_sectors_drive`, etc.)
+- `ata_flush_cache_drive()` for durability
+- Write-protect floor on the master: refuses below `ATA_WRITE_PROTECT_LBAS` (2048)
+- `atatest` kernel shell diagnostic: MBR signature, kernel header bytes, model strings
+- Three bring-up bugs found and fixed: PIC mask restoration, exception frame offsets, LBA mode bit
+- Files: `04_kernel_64bit/ata.c`, `04_kernel_64bit/include/ata.h`, `04_kernel_64bit/include/io.h`
+
+### ✔ 3.21 — FatFs Integration (Read/Write)
+- FatFs R0.15 vendored in `04_kernel_64bit/fatfs/`
+- `diskio.c` shim maps FatFs `disk_read` / `disk_write` / `disk_ioctl` onto the ATA driver
+- `FF_FS_READONLY = 0`, `FF_FS_MINIMIZE = 0`, `FF_MULTI_PARTITION = 0`
+- `FF_USE_LFN = 0`, `FF_VOLUMES = 1`, `FF_MIN_SS = FF_MAX_SS = 512`
+- Kernel shell commands: `fatmount`, `fatls`, `fatcat <file>`
+- Dual-drive storage: kernel on master `hdd.img`, FAT16 volume on slave `fat.img`
+- `ata.c` drive-parameterized API so FatFs can target the slave independently of the boot chain
+- Kernel size grew by ~25–30 KB for FatFs; kernel-size tripwire added to the Makefile
+
+### ✔ 3.22 — Userland File I/O over FatFs
+- Per-process file table in the PCB: slots 0, 1, 2 reserved for stdin/stdout/stderr; slots 3..7 for `open`/`close`
+- Syscalls wired: `SYS_OPEN` (4), `SYS_CLOSE` (6), `SYS_GETPID` (20), and an fd branch in `SYS_READ` (3)
+- `sys_exit` closes any files still open
+- Userland `arc2/syscalls.c` exposes `open`, `close`, `read`, `write` shims over the syscall instruction
+- `sys_open` flag handling uses newlib BSD-style values (`O_CREAT = 0x200`, `O_TRUNC = 0x400`, etc.) with access mode in the low 2 bits
+- Verified end-to-end: create, write, close, reopen, read, byte-exact round trip from Ring 3
+- A latent bug was fixed along the way: `sys_open` only set `FA_WRITE` when `flags == 1`, so `O_WRONLY | O_CREAT | O_TRUNC` (0x601) never enabled write mode
+
+### ✔ 3.23 — Single-Drive Layout ⭐ v0.5.0
+- Boot chain, kernel, and FAT16 partition on one `hdd.img`
+- Partition starts at LBA 2048; kernel region is LBA 128..2047 (up to 960 KB)
+- `FAT_CONFIG=dual|single` at build time selects the layout
+- `include/fat_config.h` derives `FAT_DRIVE` (`ATA_DRIVE_MASTER` in single, `ATA_DRIVE_SLAVE` in dual) and `FAT_VOLUME_SECTORS` from `FAT_CONFIG_SINGLE_DRIVE`
+- `diskio.c` translates volume-relative sector numbers into device LBAs via `FAT_PARTITION_OFFSET` (2048 in single, 0 in dual)
+- **Key correction:** with `FF_MULTI_PARTITION = 0`, FatFs is not partition-aware. It treats the FAT volume as starting at LBA 0 of the physical drive and does not consult the partition table or the BPB `hidden_sectors` field. The offset therefore must live in `diskio.c`. An earlier iteration assumed FatFs would read `hidden_sectors` and skipped the offset; the mount failed with `FR_NO_FILESYSTEM` (13)
+- `atatest` write leg removed: LBA 1024 is inside the kernel region in single-drive mode. Read-only checks remain
+- `kmain.c` prints a config-specific boot-time storage line to VGA and serial
+- `hdd-single.img` built by `mkfs.vfat -F 16 -h 2048 --offset=2048` and populated by `mcopy` from `test-files/`
+- Image-build rule verifies the FAT boot sector and the BPB `hidden_sectors` field after assembly
+- Kernel-size tripwire now checks two limits: the stage2 staging ceiling (176 KB) and the disk-layout ceiling (983 KB, the region below LBA 2048)
+- User shell gains options 5 (persistence), 6 (multi-file), 7 (4 KB round-trip). `[FS TEST]` fixed: `msg_len` was hardcoded to 19 but the string is 20 bytes
 
 ---
 
@@ -361,7 +407,7 @@ Boot chain is complete and stable.
 
 ---
 
-## ⭐ v0.4.9 — Scheduler, TSS, and Interrupt ABI Stability Pass (September 2026) ⭐ NEW
+## ⭐ v0.4.9 — Scheduler, TSS, and Interrupt ABI Stability Pass (September 2026)
 
 **What was accomplished:**
 - **ELF-load race at boot.** Fixed at all three call sites (`kmain` boot path, `elfload`, `usershell`). Eliminated the intermittent user-mode `#PF` at `CR2 == RIP == 0x8000000000` that reproduced when a key was pressed during the boot-choice window.
@@ -382,13 +428,88 @@ Boot chain is complete and stable.
 
 ---
 
+## ⭐ v0.4.10 — ATA PIO + FatFs (September 2026)
+
+**What was accomplished:**
+- **ATA PIO block device driver** on the primary channel. `ata_init` probes master and slave via IDENTIFY, extracts model strings, and logs to serial.
+- **Per-drive API.** `ata_read_sector_drive`, `ata_read_sectors_drive`, `ata_write_sector_drive`, `ata_write_sectors_drive`, `ata_flush_cache_drive`. Default-drive wrappers remain for existing callers.
+- **Write-protect floor on master.** Refuses writes below `ATA_WRITE_PROTECT_LBAS` (initially 64, later raised to 2048 with single-drive). Slave is unrestricted.
+- **Three bring-up bugs found and fixed:**
+  - **PIC mask restoration.** `pic_remap` was saving and restoring the BIOS PIC mask values; the BIOS leaves IRQ14 unmasked, so the first IDENTIFY asserted IRQ14 → vector 46 → `#GP` (no gate). Fixed by writing a known-good mask.
+  - **Exception frame offsets.** `isr13_handler` and `isr14_handler` read the CPU-pushed error code / RIP / CS at offsets 0..4 from the frame base, but the frame base points at the top of the 15-GPR save area. Fixed by indexing from `EXC_OFF_ERROR_CODE = 15` upward.
+  - **LBA mode bit.** `ata_select_drive` wrote 0xA0/0xB0 to the drive/head register, leaving bit 6 (the "L" bit) clear. IDENTIFY ignores L, but READ/WRITE SECTORS interpret the LBA registers as a CHS tuple when L=0. Fixed by using `ATA_DRIVE_MASTER_LBA = 0xE0` / `ATA_DRIVE_SLAVE_LBA = 0xF0` in the read/write path.
+- **`atatest`** kernel shell diagnostic: read LBA 0 and verify the MBR signature, read LBA 64/128 and dump the kernel header, dump master and slave model strings.
+- **FatFs R0.15 vendored** in `04_kernel_64bit/fatfs/` with a `diskio.c` shim over the ATA driver. `FF_FS_READONLY = 0`, `FF_FS_MINIMIZE = 0`, `FF_MULTI_PARTITION = 0`, `FF_USE_LFN = 0`.
+- **Dual-drive storage.** Kernel on master `hdd.img`, FAT16 volume on slave `fat.img` (whole disk, no partition table).
+- **Kernel shell commands:** `fatmount`, `fatls`, `fatcat <file>`.
+- **Userland file I/O.** Per-process file table, `SYS_OPEN` (4), `SYS_CLOSE` (6), `SYS_GETPID` (20), and an fd branch in `SYS_READ` (3). `arc2/syscalls.c` wires newlib's `open`/`close`/`read`/`write` to the syscall instruction.
+- **Latent bug fixed:** `sys_open` only set `FA_WRITE` when `flags == 1`, so `O_WRONLY | O_CREAT | O_TRUNC` (0x601) never enabled write mode.
+- **`FF_FS_READONLY = 1 → 0`** exposed a `.userelf` corruption bug: `stage2.asm` was staging the third 64 KB read into VGA graphics memory (`0xA0000`), which QEMU did not reliably persist. Fixed by moving PASS 3 to `0x20000` (plain RAM). Also added `.bss` zeroing in `entry.asm` and stripped the embedded user ELF before `xxd -i`.
+
+**Key learnings:**
+- BIOS PIC mask values are not safe to restore; write a known-good mask instead
+- Exception frames from stubs that push 15 GPRs have the CPU-pushed fields at offset 15, not 0
+- The ATA drive/head "L" bit is required for LBA mode on READ/WRITE SECTORS
+- `0xA0000–0xAFFFF` is VGA graphics memory in any mode, including text mode 03h; it is not free RAM
+- `FF_MULTI_PARTITION = 0` in FatFs means FatFs is not partition-aware (see v0.4.11)
+
+---
+
+## ⭐ v0.4.11 — Single-Drive Layout (September 2026)
+
+**What was accomplished:**
+- **`FAT_CONFIG=dual|single`** at build time selects the storage layout. The Makefile passes `-DFAT_CONFIG_SINGLE_DRIVE=0|1`; `include/fat_config.h` derives the drive selection and volume-sector count.
+- **`diskio.c` partition offset.** `FAT_PARTITION_OFFSET` is 0 in dual, 2048 in single. `disk_read` and `disk_write` add it to every FatFs-supplied sector number before calling the ATA layer. `disk_ioctl(GET_SECTOR_COUNT)` returns `FAT_VOLUME_SECTORS` (the volume size, not the device size).
+- **Key correction to an earlier design.** With `FF_MULTI_PARTITION = 0`, FatFs reads the FAT boot sector at LBA 0 of the physical drive and does not consult the BPB `hidden_sectors` field. An earlier iteration assumed FatFs would read `hidden_sectors` and skipped the offset in `diskio.c`; the mount then failed with `FR_NO_FILESYSTEM` (13), because FatFs read the boot sector at LBA 0 (boot chain) instead of the FAT boot sector at LBA 2048.
+- **Write-protect floor raised** from LBA 64 to LBA 2048. In single-drive mode the kernel lives in LBA 128..2047, so a stray write below 2048 would corrupt the kernel. The floor also covers the boot chain and the gap.
+- **`atatest` write leg removed.** LBA 1024 is inside the kernel region in single-drive mode. The raw-sector round-trip was a footgun on a disk that now has a filesystem on it; the user shell's `[FS TEST]` exercises the write path through FatFs.
+- **`kmain.c` config diagnostic.** Boot-time mount prints a config-specific line to VGA and serial: `"Storage: single-drive, FAT@LBA 2048"` or `"Storage: dual-drive, FAT@LBA 0 on slave"`. Mount failures now appear on VGA, not just serial.
+- **`hdd-single.img`** built by `mkfs.vfat -F 16 -h 2048 --offset=2048` and populated by `mcopy` from `test-files/`. The image-build rule verifies the FAT boot sector and the BPB `hidden_sectors` field after assembly.
+- **Kernel-size tripwire** now checks two limits: the stage2 staging ceiling (176 KB) and the disk-layout ceiling (983 KB, the region below LBA 2048).
+- **User shell gains options 5, 6, 7.** Option 5 verifies persistence across reboot; option 6 creates 3 files and verifies contents (delete skipped, no `SYS_UNLINK`); option 7 is a 4 KB round-trip that catches multi-cluster bugs.
+- **`[FS TEST]` fixed.** `msg_len` was hardcoded to 19 but `"Hello from ring 3!\r\n"` is 20 bytes; the trailing `\n` was being silently truncated.
+
+**Key learnings:**
+- `FF_MULTI_PARTITION = 0` means the partition offset belongs in `diskio.c`, not the BPB
+- A write-protect floor must be maintained when the kernel or partition layout changes; a stale floor is a latent bug
+- The user shell is the right place for regression tests: it exercises the syscall path, the FatFs path, and the persistence path through the same code real programs use
+
+---
+
+## ⭐ v0.5.0 — Storage Layer Complete (September 2026) ⭐ NEW
+
+**What was accomplished:**
+- ATA PIO block device driver (see v0.4.10)
+- FatFs R0.15 vendored and integrated, read and write, kernel-side and userland (see v0.4.10)
+- Single-drive layout with FAT16 partition at LBA 2048 (see v0.4.11)
+- Persistence across reboot verified end-to-end
+- Expanded user-shell regression harness (options 4, 5, 6, 7)
+- Config-specific boot-time storage diagnostic on VGA and serial
+- Kernel-size tripwire checks both the stage2 staging ceiling (176 KB) and the disk-layout ceiling (983 KB)
+- A new `run` script at the repo root: one-line-per-option QEMU launcher
+
+**Key learnings:**
+- The storage layer is a natural milestone: it exercises the boot chain, the ATA driver, the FatFs shim, the syscall layer, the userland C library, and the file I/O path all at once
+- Two configurations (dual-drive, single-drive) with a single kernel source is achievable when the difference is expressed as compile-time constants and a small amount of `diskio.c` offset arithmetic
+- Persistence is the right shape for a storage test; buffered writes that pass in-memory round-trips are not proof of durability
+
+**Not yet implemented:**
+- `SYS_UNLINK` (option 6's delete phase is skipped)
+- Loading user programs from disk (`sys_exec`-style)
+
+---
+
 ## 4. User‑Facing Features
 
-### ☐ 4.1 — Permanent Storage Layer
-- ATA PIO block device driver (read/write sectors from long mode)
-- FatFs integration (FAT12/FAT16/FAT32)
-- Mount a filesystem, `f_open` / `f_read` / `f_write` / `f_close`
-- Load user programs from disk rather than embedding them
+### ✔ 4.1 — Permanent Storage Layer ⭐ v0.5.0
+- ~~ATA PIO block device driver (read/write sectors from long mode)~~ ✅
+- ~~FatFs integration (FAT12/FAT16/FAT32)~~ ✅
+- ~~Mount a filesystem, `f_open` / `f_read` / `f_write` / `f_close`~~ ✅
+- ~~Kernel shell commands: `fatmount`, `fatls`, `fatcat`~~ ✅
+- ~~Userland file I/O via `SYS_OPEN` (4), `SYS_CLOSE` (6), fd branch in `SYS_READ` (3)~~ ✅
+- ~~Single-drive layout with FAT16 partition at LBA 2048~~ ✅
+- ~~Persistence across reboot verified~~ ✅
+- ☐ Load user programs from disk rather than embedding them (next)
 
 ### ☐ 4.2 — Framebuffer Graphics
 - Switch from VGA text mode
@@ -421,6 +542,17 @@ Boot chain is complete and stable.
 - Eliminates the `process_exit` fallback's dependency on a specific low-memory address being mapped
 - Companion: IST stack for `#DF`, so double faults produce printed diagnostics instead of triple faults
 
+### ☐ 4.8 — `SYS_UNLINK`
+- Small syscall addition: `f_unlink` behind `SYS_UNLINK`
+- Wires `unlink()` in `arc2/syscalls.c`
+- Completes the multi-file test in the user shell (option 6's delete phase)
+
+### ☐ 4.9 — User Programs from Disk
+- `sys_exec`-style syscall
+- Load ELF files from the FAT volume
+- Stop embedding user programs in the kernel image
+- Enables a real shell with external commands (`ls`, `cat`, etc.)
+
 ---
 
 ## 5. Development Tools
@@ -430,7 +562,7 @@ Boot chain is complete and stable.
 - `-serial file:qemu.log` for saving serial output
 - `-d int,cpu_reset,guest_errors` for interrupt logging
 - `-no-reboot -no-shutdown` for debugging crashes
-- Multiple run modes: run, run-log, run-debug, run-verbose, run-headless, run-kvm
+- Multiple run modes: run, run-log, run-debug, run-verbose, run-headless, run-kvm, run-single, run-kvm-single, run-telnet
 
 ### ✔ GDB Remote Debugging
 - `make runkernel64-debug` for GDB server
@@ -439,6 +571,8 @@ Boot chain is complete and stable.
 ### ✔ Build Automation
 - Top‑level Makefile with debug targets  
 - `make logkernel64` for debug runs
+- `FAT_CONFIG=dual|single` selects the storage layout
+- `./run` convenience script with a menu of preconfigured targets
 
 ---
 
@@ -484,7 +618,13 @@ Boot chain is complete and stable.
 | **gdtdump / tssdump** | **✔ Complete ⭐ v0.4.7** |
 | **Process Cleanup on Exit** | **✔ Complete ⭐ v0.4.8** |
 | **Scheduler / TSS / Interrupt ABI Stability** | **✔ Complete ⭐ v0.4.9** |
-| Permanent Storage (ATA PIO + FatFs) | ☐ Planned (Next) |
+| **ATA PIO Driver** | **✔ Complete ⭐ v0.4.10** |
+| **FatFs Integration** | **✔ Complete ⭐ v0.4.10** |
+| **Userland File I/O over FatFs** | **✔ Complete ⭐ v0.4.10** |
+| **Single-Drive Layout** | **✔ Complete ⭐ v0.5.0** |
+| **Persistence Across Reboot** | **✔ Complete ⭐ v0.5.0** |
+| `SYS_UNLINK` | ☐ Planned |
+| User Programs from Disk (`sys_exec`) | ☐ Planned |
 | Serial Console Debug Access | ☐ Planned |
 | Framebuffer Graphics | ☐ Planned |
 | File System (VFS) | ☐ Planned |

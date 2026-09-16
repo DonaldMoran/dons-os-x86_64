@@ -56,10 +56,10 @@ context_switch:
     jae .ring0_save
 
     ; --- USER-PREEMPTED SAVE PATH ---
-    push qword 0x20                     ; SS       [0x98]
+    push qword 0x2B                     ; SS       [0x98]
     push qword [r15 + 0x110]            ; RSP      [0x90]
     push qword 0x202                    ; RFLAGS   [0x88]
-    push qword 0x18                     ; CS       [0x80]
+    push qword 0x33                     ; CS       [0x80]
     mov rax, [r15 + 0x118]              ; prev->rip
     test rax, rax
     jnz .have_rip
