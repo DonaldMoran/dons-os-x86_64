@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
 
 // PRESERVED: Retaining your system's original historic system call mapping vectors cleanly
 #define SYS_WRITE   1
@@ -101,7 +102,18 @@ void *_sbrk(ptrdiff_t incr) { return sbrk(incr); }
  * DONSDOS CUSTOM EXTENSION SYSTEM VECTORS
  * --------------------------------------------------------------------------- */
 
+/* Reboot the machine.
+ *
+ * Order matters:
+ *   1. fflush(NULL) drains every buffered stdio stream in userland.
+ *      Without this, data sitting in a FILE*'s buffer is lost when
+ *      the kernel resets — the kernel can close the fd, but it
+ *      cannot reach into userland memory to drain newlib's buffer.
+ *   2. SYS_REBOOT asks the kernel to close remaining file handles
+ *      (triggering f_sync -> FLUSH CACHE) and then fire the hardware
+ *      reset. The kernel does not return from this syscall. */
 void sys_reboot(void) {
+    fflush(NULL);
     syscall3(SYS_REBOOT, 0, 0, 0);
 }
 
