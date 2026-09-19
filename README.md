@@ -3,6 +3,11 @@
 
 **dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU's reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher-half kernel** with working interrupts, timer, keyboard input, memory management, a preemptive round-robin scheduler, system calls, blocking I/O, a userland C library (newlib 4.x), a FAT16 filesystem, and a Ring 3 user shell written in ordinary C.
 
+Related documents:
+- [`ROADMAP.md`](ROADMAP.md) — planned features and completed milestones
+- [`OSDev_Checklist.md`](OSDev_Checklist.md) — capability tracking
+- [`MAINTENANCE.md`](MAINTENANCE.md) — known debt, latent bugs, and cleanup work
+
 ---
 
 ## 📁 Repository Structure

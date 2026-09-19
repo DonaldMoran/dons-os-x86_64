@@ -37,20 +37,21 @@ LDFLAGS := -nostdlib
 # Two limits apply to kernel.bin:
 #
 # 1. KERNEL_STAGING_LIMIT — the ceiling imposed by stage2.asm's staging
-#    layout. 128 KB staged at 0x80000 (PASS 1+2) plus 48 KB from a
-#    second staging area at 0x20000 (PASS 3), for 176 KB total. Exceed
-#    this and stage2 silently truncates the tail and the kernel boots
-#    to garbage. See stage2.asm.
+#    layout. 128 KB staged at 0x80000 (PASS 1+2) plus 320 KB from
+#    staging B at 0x20000..0x7FFFF (PASS 3..7), for 448 KB total.
+#    Exceed this and stage2 silently truncates the tail and the kernel
+#    boots to garbage. See stage2.asm.
 #
 # 2. KERNEL_DISK_LIMIT — the ceiling imposed by the disk layout. The
 #    kernel starts at LBA 128; the FAT partition starts at LBA 2048.
 #    The kernel region is therefore (2048 - 128) * 512 = 983040 bytes.
 #    Exceed this and the kernel would be overwritten by the FAT volume.
 #
-# The staging limit is the binding one today. When stage2 is extended
-# (Option 2 or 3 in the roadmap), the staging limit rises and the disk
-# limit becomes the binding one. Both are checked below.
-KERNEL_STAGING_LIMIT := 180224
+# The staging limit is the binding one today at 448 KB. The disk limit
+# (983 KB) becomes the binding one only if the staging architecture is
+# changed again (Option 2 or Option 6 in the roadmap). Both are checked
+# below. See MAINTENANCE.md item 1 for the full set of options.
+KERNEL_STAGING_LIMIT := 458752
 KERNEL_DISK_LIMIT    := 983040
 
 .PHONY: all clean userland
@@ -84,12 +85,12 @@ kernel.bin: kernel.elf
 		echo "       staging limit is $(KERNEL_STAGING_LIMIT) bytes"; \
 		echo "       overflow: $$((sz - $(KERNEL_STAGING_LIMIT))) bytes"; \
 		echo ""; \
-		echo "  stage2.asm can only stage 176 KB (128 KB at 0x80000 plus"; \
-		echo "  48 KB at 0x20000). The kernel image will be silently"; \
-		echo "  truncated and boot to garbage."; \
+		echo "  stage2.asm can only stage 448 KB (128 KB at 0x80000 plus"; \
+		echo "  320 KB at 0x20000..0x7FFFF). The kernel image will be"; \
+		echo "  silently truncated and boot to garbage."; \
 		echo ""; \
 		echo "  Shrink the kernel, or restructure stage2.asm to stream"; \
-		echo "  reads (roadmap Option 2)."; \
+		echo "  reads (see MAINTENANCE.md item 1)."; \
 		echo "============================================================"; \
 		exit 1; \
 	fi; \

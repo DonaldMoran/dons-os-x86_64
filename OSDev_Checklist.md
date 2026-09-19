@@ -1,6 +1,8 @@
 # Full OSDev Milestone Checklist
 ## dons‑os (x86_64) — Project Progress
 
+For known debt and cleanup work, see [`MAINTENANCE.md`](MAINTENANCE.md).
+
 ### Legend
 - ✅ **Complete** — Feature implemented and stable
 - 🚧 **In Progress** — Partially implemented or in testing
