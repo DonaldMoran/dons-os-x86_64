@@ -73,7 +73,7 @@ make run32
 ```bash
 make run64
 ```
-Run with QEMU debug logging
+***Run with QEMU debug logging***
 
 ```bash
 make logkernel64

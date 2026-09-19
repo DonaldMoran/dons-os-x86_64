@@ -30,7 +30,6 @@ extern unsigned int build_user_shell_elf_len;
 
 static BootInfo *g_bootinfo = NULL;
 
-/* Consolidated Dual-Channel Printing Macros to cut binary bloat */
 #define PRINT_BOTH(str) do { vga_print(str); serial_print(str); } while(0)
 #define PRINT_BOTH_DEC(val) do { vga_print_dec_cur(val); serial_print_dec(val); } while(0)
 #define PRINT_BOTH_HEX(val) do { vga_print_hex_cur(val); serial_print_hex(val); } while(0)
@@ -118,6 +117,21 @@ void handle_reboot_sequence(void) {
     volatile uint16_t malformed_idt_struct[5] = {0, 0, 0, 0, 0};
     __asm__ volatile("lidt (%0)\n\t" "int $0" : : "r"(malformed_idt_struct) : "memory");
     while (1) { __asm__ volatile("hlt"); }
+}
+
+/*
+ * Suspend the calling process (the kernel shell) before yielding to a
+ * kernel-mode diagnostic process. Without this, scheduler_switch_to
+ * re-adds the shell to the ready queue because its state is still
+ * RUNNING, and the shell resumes as soon as the diagnostic yields
+ * once — long before the diagnostic has finished.
+ *
+ * The shell is only woken by process_exit's fallback when a kernel
+ * diagnostic exits with nothing else runnable. See scheduler.c.
+ */
+static void suspend_self_for_diagnostic(void) {
+    pcb_t* self = process_get_current();
+    if (self) self->state = PROC_STATE_BLOCKED;
 }
 
 static void handle_command(const char *cmd) {
@@ -284,6 +298,7 @@ static void handle_command(const char *cmd) {
                 proc->entry_point = entry;
                 keyboard_buffer_flush();
                 scheduler_ready_queue_add(proc);
+                suspend_self_for_diagnostic();
                 scheduler_switch_to(proc);
             } else { vga_print("Load failure.\n"); process_destroy(proc); }
         }
@@ -298,7 +313,10 @@ static void handle_command(const char *cmd) {
         vga_print("> ");
     } else if (strcmp(cmd, "runproc") == 0) {
         pcb_t* proc = process_create("testproc", (uint64_t)test_process_entry, 0);
-        if (proc) { scheduler_switch_to(proc); process_destroy(proc); }
+        if (proc) {
+            suspend_self_for_diagnostic();
+            scheduler_switch_to(proc);
+        }
         vga_print("> ");
     } else if (strcmp(cmd, "schstat") == 0) {
         PRINT_BOTH("\n=== Scheduler Dashboard ===\n");
@@ -309,11 +327,15 @@ static void handle_command(const char *cmd) {
         PRINT_BOTH("\n--- Thread Yield Test ---\n");
         pcb_t* p1 = process_create("test1", (uint64_t)test_process1, 0);
         pcb_t* p2 = process_create("test2", (uint64_t)test_process2, 0);
-        if (p1 && p2) { 
-            scheduler_switch_to(p1); 
-            process_destroy(p1); process_destroy(p2); 
+        if (p1 && p2) {
+            suspend_self_for_diagnostic();
+            scheduler_switch_to(p1);
             PRINT_BOTH("  Status   : SUCCESS\n");
-        } else { PRINT_BOTH("  Status   : FAILED\n"); }
+        } else {
+            PRINT_BOTH("  Status   : FAILED\n");
+            if (p1) process_destroy(p1);
+            if (p2) process_destroy(p2);
+        }
         vga_print("> ");
     } else if (strcmp(cmd, "usershell") == 0) {
         if (build_user_shell_elf_len == 0) { vga_print("Shell unmapped.\n> "); return; }
@@ -326,6 +348,7 @@ static void handle_command(const char *cmd) {
                 shell_proc->entry_point = user_entry;
                 keyboard_buffer_flush();
                 scheduler_ready_queue_add(shell_proc);
+                suspend_self_for_diagnostic();
                 scheduler_switch_to(shell_proc);
             } else { process_destroy(shell_proc); }
         }
@@ -574,7 +597,18 @@ void kmain(BootInfo *info) {
             char c; if (kbd_buffer_get(&c)) { choice = c; break; }
             asm volatile("hlt");
         }
-        if (choice == 'k' || choice == 'K') kmain_shell_loop();
+        if (choice == 'k' || choice == 'K') {
+            extern void kmain_shell_loop(void);
+            pcb_t* shell = process_create("kshell",
+                                          (uint64_t)kmain_shell_loop, 0);
+            if (!shell) {
+                serial_print("PANIC: no shell PCB\n");
+                while (1) asm volatile("hlt");
+            }
+            scheduler_ready_queue_remove(shell);
+            process_set_kernel_shell(shell);
+            scheduler_switch_to(shell);
+        }
     }
 
     if (build_user_shell_elf_len == 0) {

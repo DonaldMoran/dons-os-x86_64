@@ -19,6 +19,10 @@ static pcb_t* current_process = NULL;
 static uint64_t next_pid = 1;
 static uint64_t process_count = 0;
 
+/* The kernel shell's PCB. Set once at boot on the 'k' branch.
+ * Resumed by process_exit's fallback after a kernel diagnostic exits. */
+static pcb_t* g_kernel_shell_pcb = NULL;
+
 static pcb_t* get_free_pcb(void);
 static void process_initialize_pcb(pcb_t* pcb);
 
@@ -45,6 +49,14 @@ static void kernel_stack_slot_free(pcb_t* pcb) {
     pcb->kernel_stack_phys = 0;
     pcb->kernel_stack_virt = 0;
     pcb->kernel_stack_top  = 0;
+}
+
+pcb_t* process_get_kernel_shell(void) {
+    return g_kernel_shell_pcb;
+}
+
+void process_set_kernel_shell(pcb_t* shell) {
+    g_kernel_shell_pcb = shell;
 }
 
 void kernel_idle_loop(void) {
@@ -262,8 +274,18 @@ pcb_t* process_find_by_pid(uint64_t pid) {
     return NULL;
 }
 
+/*
+ * Wake every process blocked on input (BLOCKED).
+ *
+ * The kernel shell is deliberately excluded. Its BLOCKED state means
+ * "suspended pending a diagnostic's exit", not "waiting for a key".
+ * Waking it from irq1 causes it to resume at the same time as the
+ * user shell, which is how the earlier interleaved-banner bug
+ * happened. The shell is resumed only by process_exit's fallback.
+ */
 void process_wake_all_blocked(void) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (&pcb_pool[i] == g_kernel_shell_pcb) continue;
         if (pcb_pool[i].state == PROC_STATE_BLOCKED) {
             pcb_pool[i].state = PROC_STATE_READY;
             scheduler_ready_queue_add(&pcb_pool[i]);

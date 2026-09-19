@@ -4,8 +4,6 @@
 
 #define KERNEL_BASE 0xFFFFFFFF80000000ULL
 
-extern void kmain_shell_loop(void);
-
 static pcb_t* ready_queue_head = NULL;
 static pcb_t* ready_queue_tail = NULL;
 static pcb_t* current_process = NULL;
@@ -119,8 +117,8 @@ void __attribute__((noreturn)) process_exit(void) {
        Interrupts are re-enabled by the iretq in context_switch,
        which restores RFLAGS (IF=1) from the resumed process's
        frame. In the no-runnable-process fallback, we explicitly
-       sti before jumping to the kernel shell, since the shell
-       expects to run with interrupts on. */
+       sti before switching to the shell, since the shell expects
+       to run with interrupts on. */
     __asm__ volatile("cli");
 
     pcb_t* exiting = current_process;
@@ -143,21 +141,17 @@ void __attribute__((noreturn)) process_exit(void) {
     if (!next) {
         /* Nothing else runnable. Two cases:
            - exiting is a kernel process (diagnostic like runproc or
-             testyield): return to the kernel shell so the operator
-             can run more diagnostics.
+             testyield): resume the kernel shell so the operator can
+             run more diagnostics.
            - exiting is a user process (the user shell): halt. The
              user shell is the terminal interactive console; there is
              no kernel shell to fall back to by design. */
         scheduler_reset();
 
         /* Restore TSS.RSP0 and g_syscall_stack_top to idle's kernel
-           stack. The previous code zeroed only g_syscall_stack_top,
-           leaving TSS.RSP0 pointing at whichever process ran last.
-           The two must stay in lockstep (see tss.c); leaving RSP0
-           pointing at a dead process's stack (or at 0) is a latent
-           hazard for any Ring 3 -> Ring 0 transition that occurs
-           before the next scheduler switch. Idle's stack is always
-           mapped and always valid. */
+           stack. Idle's stack is always mapped and always valid, and
+           is the safe target for any subsequent Ring 3 -> Ring 0
+           transition that occurs before the next scheduler switch. */
         extern void tss_set_kernel_stack(uint64_t stack);
         extern void tss_set_syscall_stack(uint64_t stack);
         pcb_t* idle = process_find_by_pid(1);
@@ -170,25 +164,29 @@ void __attribute__((noreturn)) process_exit(void) {
         }
 
         if (exiting->entry_point >= KERNEL_BASE) {
-            /* Direct jump, not indirect through a register. The
-               previous version loaded kmain_shell_loop into RAX,
-               did sti, then jmp *RAX. If an IRQ1 fired between the
-               sti and the jmp — which is possible, since irq1_stub
-               historically did not preserve caller-saved registers —
-               RAX could be clobbered by irq1_handler and the jmp
-               would land at a garbage address. isr.asm now
-               preserves all GPRs in every stub, but the direct
-               jump is the belt-and-suspenders fix: no register is
-               involved, so no interrupt can corrupt the target.
-               The compiler emits jmp rel32; the CPU decodes it as
-               a single instruction with no memory operand. */
-            __asm__ volatile(
-                "sti\n"
-                "mov $0xFFFFFFFF8008FF00, %%rsp\n"
-                "jmp kmain_shell_loop\n"
-                : : : "memory"
-            );
-            /* not reached */
+            /* Kernel diagnostic exited. Resume the kernel shell.
+             *
+             * The shell is a real process (created at boot on the 'k'
+             * branch and recorded via process_set_kernel_shell). Its
+             * saved frame is in its own PCB, on its own kernel stack.
+             * The shell marked itself BLOCKED before yielding to the
+             * diagnostic, so it is not on the ready queue and not
+             * scheduled normally. Wake it and switch to it.
+             *
+             * If the shell is NULL (never created) or the switch
+             * somehow returns, we fall through to a halt. */
+            pcb_t* shell = process_get_kernel_shell();
+            if (shell && shell->state == PROC_STATE_BLOCKED) {
+                shell->state = PROC_STATE_RUNNING;
+                extern void scheduler_switch_to(pcb_t* next);
+                scheduler_switch_to(shell);
+                /* Not reached: scheduler_switch_to switches stacks
+                 * via context_switch and does not return to this
+                 * stack. */
+            }
+            serial_print("process_exit: no kernel shell to resume, halting\n");
+            __asm__ volatile("cli");
+            while (1) __asm__ volatile("hlt");
         }
 
         serial_print("process_exit: no runnable process, halting\n");
@@ -249,6 +247,10 @@ void scheduler_switch_to(pcb_t* next) {
         scheduler_ready_queue_remove(next);
     }
 
+    /* Only put the outgoing process back on the ready queue if it is
+       still RUNNING. A process that marked itself BLOCKED (e.g. the
+       kernel shell about to yield to the user shell) or that is
+       TERMINATED must not be re-added. */
     if (prev && prev->state == PROC_STATE_RUNNING) {
         prev->state = PROC_STATE_READY;
         if (prev->pid != 1) {
