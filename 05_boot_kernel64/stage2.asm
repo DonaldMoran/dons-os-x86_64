@@ -12,8 +12,10 @@ BOOTINFO_VERSION equ 1
 ; Kernel staging and destination layout
 ; --------------------------------------------
 ;   Staging A : 0x80000 .. 0x9FFFF  (128 KB, PASS 1 + PASS 2)
-;   Staging B : 0x20000 .. 0x7FFFF  (384 KB, PASS 3 .. PASS 7)
-;   Destination : 0x100000 .. (128 KB from A, then 320 KB from B)
+;   Staging B : 0x20000 .. 0x7FFFF  (384 KB, PASS 3 .. PASS 7,
+;                                    of which the first 320 KB is used)
+;   Destination: 0x100000 .. (128 KB from A, then 320 KB from B)
+;                for a total of 448 KB.
 ;
 ;   Low memory layout, from low to high:
 ;     0x00000 .. 0x004FF   IVT + BDA
@@ -26,17 +28,17 @@ BOOTINFO_VERSION equ 1
 ;     0xC0000 .. 0xFFFFF   BIOS ROM (unusable)
 ;     0x100000 ..          kernel destination + free RAM
 ;
-;   Historical note: an earlier layout staged PASS 3 at 0xA0000,
-;   which is VGA graphics memory. Writes there are unreliable in
-;   QEMU/BIOS, so PASS 3's bytes were frequently 0xFF. The current
-;   layout keeps all staging below the VGA hole, in plain RAM.
+;   Why two staging areas instead of one: the only low-memory window
+;   large enough for a single staging area is split by the VGA hole at
+;   0xA0000. So the kernel is read in two rounds:
+;     - 128 KB from staging A (PASS 1 + 2)
+;     - 320 KB from staging B (PASS 3..7)
+;   and long_mode_entry performs both rep movsq copies back-to-back.
 ;
-;   A single-pass staging area cannot exceed 128 KB because the only
-;   contiguous low-memory window big enough is split by VGA at
-;   0xA0000. So the read/copy is split into two rounds:
-;      - 128 KB from staging A (PASS 1+2)
-;      - 320 KB from staging B (PASS 3..7)
-;   long_mode_entry performs both rep movsq copies back-to-back.
+;   Historical note: an early version staged PASS 3 at 0xA0000, which
+;   is VGA graphics memory. Writes there are unreliable in QEMU/BIOS,
+;   so PASS 3's bytes were frequently 0xFF and corrupted the kernel
+;   image. All staging is now below the VGA hole.
 ;
 ; Kernel source: LBA 128 on the disk. Each PASS reads 128 sectors
 ; (64 KB) starting at LBA 128, 256, 384, 512, 640, 768, 896.
@@ -46,17 +48,12 @@ KERNEL_PASSES           equ 7
 KERNEL_TOTAL_SECTORS    equ KERNEL_SECTORS_PER_PASS * KERNEL_PASSES
 
 ; Total bytes actually copied = 448 KB
-;   = 128 KB from staging A (PASS 1+2, 2 passes)
-;   + 320 KB from staging B (PASS 3..7, 5 passes)
-;   (PASS 7 reads 64 KB but only 320 KB of staging B's 384 KB is used;
-;    the extra 64 KB sector is deliberately left unread to keep the
-;    read count at 7 * 128 = 896 sectors, matching KERNEL_TOTAL_BYTES.)
-;
-; Actually, re-reading: staging B is 0x20000..0x7FFFF = 384 KB, and
-; PASS 3..7 are 5 passes of 64 KB = 320 KB. So we only use 320 KB of
-; the 384 KB window. That's fine; the last 64 KB is unused.
+;   128 KB from staging A (PASS 1+2) + 320 KB from staging B (PASS 3..7).
+; Staging B is 384 KB (0x20000..0x7FFFF), so the final 64 KB of that
+; window is unused. The read count is still 7 * 128 = 896 sectors, which
+; matches KERNEL_TOTAL_BYTES.
 KERNEL_TOTAL_BYTES      equ 448 * 1024
-KERNEL_TOTAL_QWORDS     equ KERNEL_TOTAL_BYTES / 8          ; (unused after split)
+KERNEL_TOTAL_QWORDS     equ KERNEL_TOTAL_BYTES / 8
 
 ; First copy: 128 KB from 0x80000 -> 0x100000
 KERNEL_COPY1_QWORDS     equ (128 * 1024) / 8                ; 16384

@@ -42,8 +42,9 @@ void exit(int status) {
     }
 }
 
-// FIXED: Dynamic memory allocator tracker that queries your kernel's native 
-// 0x8000200000 heap base location automatically to eliminate address pointer gaps.
+/* Dynamic memory allocator tracker. On first call, queries the kernel's
+ * native heap base (0x8000200000) via sys_brk(0) so the userland heap
+ * starts where the kernel expects it. */
 void *sbrk(ptrdiff_t incr) {
     static int64_t heap_end_cached = 0;
 
@@ -121,8 +122,8 @@ void sys_reboot(void) {
  * REQUIRED STRUCTURAL LINKS TO SATISFY LINKER SCHEMATICS
  * --------------------------------------------------------------------------- */
 
-// FIXED: Explicitly populates the character device attribute flag (S_IFCHR)
-// to verify to Newlib that stdout/stderr are active interactive console streams.
+/* Report stdout/stderr as character devices (S_IFCHR) so newlib's stdio
+ * treats them as interactive streams rather than regular files. */
 int fstat(int fd, struct stat *st) { 
     if (fd == 1 || fd == 2) {
         st->st_mode = S_IFCHR; 
