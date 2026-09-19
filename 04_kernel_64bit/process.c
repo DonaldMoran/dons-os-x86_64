@@ -86,9 +86,11 @@ void process_init(void) {
         scheduler_ready_queue_remove(idle);
     }
 
+    serial_lock();
     serial_print("PROCESS: init OK, ");
     serial_print_dec(process_count);
     serial_print(" process(es)\n");
+    serial_unlock();
 }
 
 static pcb_t* get_free_pcb(void) {
@@ -116,10 +118,12 @@ pcb_t* process_create(const char* name, uint64_t entry_point, uint64_t flags) {
 
     pcb_t* pcb = get_free_pcb();
     if (!pcb) {
+        serial_lock();
         serial_print("PROCESS: Failed to allocate PCB for ");
         if (name) serial_print(name);
         else serial_print("unnamed");
         serial_print("\n");
+        serial_unlock();
         return NULL;
     }
 
@@ -294,9 +298,11 @@ void process_wake_all_blocked(void) {
 }
 
 void process_dump_all(void) {
+    serial_lock();
     serial_print("\n=== PROCESS LIST ===\n");
     serial_print("PID  Name                State    Entry     Kernel Stack\n");
     serial_print("---  -------------------  -------  ----------  ----------\n");
+    serial_unlock();
 
     vga_print("=== PROCESS LIST ===\n");
     vga_print("PID  Name                State    Entry       Kernel Stack\n");
@@ -319,6 +325,7 @@ void process_dump_all(void) {
             }
         }
 
+        serial_lock();
         serial_print_dec(p->pid); serial_print("  ");
         serial_print(p->name);
         int len = strlen(p->name);
@@ -328,6 +335,7 @@ void process_dump_all(void) {
         serial_print("0x"); serial_print_hex(p->entry_point); serial_print("  ");
         serial_print("0x"); serial_print_hex(p->kernel_stack_top);
         serial_print("\n");
+        serial_unlock();
 
         vga_print_dec_cur(p->pid); vga_print("  ");
         vga_print(p->name);
@@ -340,7 +348,11 @@ void process_dump_all(void) {
         vga_print(" 0x"); vga_print_hex_cur(p->kernel_stack_top);
         vga_print("\n");
     }
+
+    serial_lock();
     serial_print("=== END PROCESS LIST ===\n\n");
+    serial_unlock();
+
     vga_print("=== END PROCESS LIST ===\n");
 }
 

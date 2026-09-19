@@ -131,20 +131,26 @@ this becomes a crash.~~
 exit. The fallback path in `process_exit` then sets `rsp` to the pool
 stack instead of a hardcoded address.~~
 
-### 3b. No IST for `#DF`
+### 3b. ~~No IST for `#DF`~~ ✅
 
-**Status:** latent; a real double fault triple-faults with no diagnostic
-**Effort:** ~1 hour
+**Status:** ✅ **DONE (commit f4d7df3).** A dedicated 4 KB IST1 stack is
+allocated in `.bss`, `TSS.IST1` is populated with its top, and the `#DF`
+gate's IST field is set to 1 in `idt.c`. The CPU now switches to the IST
+stack before pushing the `#DF` frame, so `isr8_handler` prints RIP, CS,
+RSP, SS, and the error code even if the original kernel stack was the
+thing that faulted. Text below kept for history.
 
-Double faults currently produce a triple fault, which resets the CPU
+~~**Effort:** ~1 hour~~
+
+~~Double faults currently produce a triple fault, which resets the CPU
 without printing anything. QEMU shows the reset; on real hardware you'd
 get a silent reboot. A small IST stack and an IST entry on the `#DF` IDT
-gate turns this into a printed diagnostic.
+gate turns this into a printed diagnostic.~~
 
-**Fix:** add an IST stack (4 KB is plenty) to the TSS, set the `#DF`
+~~**Fix:** add an IST stack (4 KB is plenty) to the TSS, set the `#DF`
 gate's IST field to the new slot in `idt.c`, and have `isr8_handler`
 print RIP, CS, and the error code before halting. The setup is very
-similar to the current TSS `rsp0` handling.
+similar to the current TSS `rsp0` handling.~~
 
 ### 3c. Page tables leak on process exit
 
@@ -190,55 +196,117 @@ tradeoffs. Leave as-is; it's documented.
 
 ## 4. Code hygiene
 
-**Status:** cosmetic, not urgent
-**Effort:** ~1 hour total
+**Status:** ✅ **DONE for 4a–4d.** Item 4e is architectural debt,
+deferred until the console subsystem is built.
 
-### 4a. Dead declarations
+### 4a. ~~Dead declarations~~ ✅
 
-`include/syscall.h` declares `void sys_reboot(void);`. The kernel-side
+**Status:** ✅ **DONE (commit 20260919F).** Removed the orphaned
+`sys_reboot` and `sys_proclist` declarations from `include/syscall.h`.
+`sys_reboot` is defined in `arc2/syscalls.c` (userland) and the
+kernel-side handler is `kernel_do_reboot` (static in `user_syscall.c`);
+nothing in the kernel called the declared prototype. `sys_proclist`
+was not defined anywhere — the shell's `proclist` command calls
+`process_dump_all` directly.
+
+~~`include/syscall.h` declares `void sys_reboot(void);`. The kernel-side
 handler is now `kernel_do_reboot` (static, in `user_syscall.c`). The
-declaration in `syscall.h` is likely unused. Check and remove.
+declaration in `syscall.h` is likely unused. Check and remove.~~
 
-### 4b. The double-build in `run`
+### 4b. ~~The double-build in `run`~~ ✅
 
-The single-drive menu line rebuilds the kernel twice: once explicitly
+**Status:** ✅ **DONE (commit 20260919F).** The single-drive menu line
+now calls `make -C 05_boot_kernel64 run-single` directly instead of
+`make runkernel64-single`, so the kernel is built once, not twice.
+
+~~The single-drive menu line rebuilds the kernel twice: once explicitly
 in the line, and once via `runkernel64-single`, which itself does
 `make -C 04_kernel_64bit FAT_CONFIG=single`. Two-line fix: either
 drop the explicit rebuild from the menu line, or drop it from the
 target. The `run` script's echoed `run: <cmd>` makes this visible in
-the log.
+the log.~~
 
-### 4c. Stale comments
+### 4c. ~~Stale comments~~ ✅
 
-- `arc2/syscalls.c` has several `FIXED:` comments from earlier sessions.
+**Status:** ✅ **DONE (commit 20260919F).** Removed the two stale
+`FIXED:` markers from `arc2/syscalls.c`. Deleted the commented-out
+`file_exists` helper from `user_shell.c`. Tidied the header comment
+block in `stage2.asm` (consolidated the low-memory layout and history
+into one readable block, removed the mid-thought narrative about
+`KERNEL_TOTAL_BYTES`).
+
+~~- `arc2/syscalls.c` has several `FIXED:` comments from earlier sessions.
   They were fixed long ago; the labels are noise now. Remove them.
 - `user_shell.c` has a `file_exists` helper that is currently unused.
   Delete it.
 - `stage2.asm`'s comments about "was 64 sectors" are accurate but
   accumulate cruft every time the layout changes. Consider a single
-  "history" section rather than inline archaeology.
+  "history" section rather than inline archaeology.~~
 
-### 4d. Serial output is not atomic
+### 4d. ~~Serial output is not atomic~~ ✅
 
-**Status:** cosmetic; observed during the kernel shell debugging session
-**Effort:** ~1 hour
+**Status:** ✅ **DONE (commit 20260919F).** Multi-part boot messages are
+wrapped in `serial_lock()` / `serial_unlock()`, and the ATA read-path
+prints are gated behind `#define ATA_DEBUG 0`. The timer's boot trace
+is locked. The boot log now has no interleaved characters. What remains
+is the architectural question — see item 4e.
 
-`PRINT_BOTH(str)` does `vga_print(str); serial_print(str);` as two
+~~`PRINT_BOTH(str)` does `vga_print(str); serial_print(str);` as two
 separate calls. If a timer tick fires between them (or between two
 adjacent `PRINT_BOTH` calls in a multi-part message), the timer's own
 serial output interleaves. Observed as `Storage: single-drive, FAT@Å
 Prompt: press 'k' ...` and `ATA: probe driveTIMER[2] ...` in the
 boot log. Cosmetic, but a real exception dump interleaved with another
-process's output is very confusing.
+process's output is very confusing.~~
 
-**Fix options:**
-- Wrap `PRINT_BOTH` bodies in `cli`/`sti`. Simple, but blocks the timer
-  for the duration of the print. At 115200 baud a 40-char line takes
-  ~3.5 ms; you'd miss roughly one 10 ms tick in three.
-- Use a single kernel-wide print lock (or, since this is single-core,
-  a `cli`/`sti` critical section) around a whole line, and build the
-  line in a local buffer first. Buffered lines are cheaper than
-  interrupts-off for long strings.
+### 4e. Print lock is a pragmatic fix, not the console design
+
+**Status:** works for boot messages; not the right shape for a tty
+**Effort:** 1–2 hours to replace with a ring buffer
+**When:** before the console subsystem (tty, per-user output routing)
+is built
+
+The fix for item 4d wraps multi-part boot messages in a global
+`serial_lock()` / `serial_unlock()` pair, which is a `cli`/`sti`
+critical section with a nesting counter. It is simple, correct for
+boot messages, and honest about its limitations (documented in
+`include/serial.h`).
+
+But it is a **global** lock, held with interrupts disabled, and this
+has two real costs:
+
+1. **Scheduling fairness.** While any kernel code is printing, the
+   timer does not fire. A 40-char line at 115200 baud is ~3.5 ms with
+   interrupts off; a round-robin quantum of 10 ms (100 Hz tick) is
+   silently stretched by that much for whichever process was running
+   when the print started. Fine during boot. Not fine if the kernel
+   ever prints from a scheduled context during normal operation.
+
+2. **SMP and multi-user scale.** `cli`/`sti` is meaningless across
+   CPUs, and a single global lock serializes output from unrelated
+   users. Once the kernel supports multiple users or cores, this
+   needs to become a per-console lock, or a proper tty.
+
+The right design is a **ring buffer with a console task**:
+
+- `serial_print` memcpy's its bytes into a fixed-size FIFO under a
+  very short lock (microseconds, not milliseconds).
+- A drain routine — a low-priority kernel task, a serial TX-ready
+  IRQ handler, or a periodic tick — pulls bytes out of the FIFO and
+  writes them to the UART.
+- Producers never wait on the UART. Interrupts are off for the
+  memcpy only.
+- Ordering is preserved by the FIFO's single consumer.
+
+Once per-user ttys exist, each tty gets its own ring and its own
+drain path, and the output of user A's process cannot block or
+interleave with user B's.
+
+This is not urgent — nothing in the current code prints during
+normal operation after boot, now that the ATA read-path prints are
+gated off. But it is the design the console subsystem should be
+built on, and it should be in place before per-user tty support is
+added.
 
 ---
 
@@ -270,9 +338,10 @@ watching the boot.
 
 ### When to do this
 
-After items 3b–3c. The self-test only matters when there's something
-worth testing, and those items change the kernel in ways that would
-break any test written beforehand.
+Nothing is blocking this. The remaining items on this list are either
+deferred (3c, 3d) or architectural (4e), and none of them change the
+kernel in ways that would break a self-test written today. It can be
+built on the current code.
 
 ---
 
@@ -283,22 +352,29 @@ break any test written beforehand.
 | 1 | Kernel size Option 3 | 30 min | ✅ Done (09a6f79) |
 | 2 | Documentation gaps | 2 hrs | ✅ Done (9b62d46) |
 | 3a | Boot stack off hardcoded address | 1–2 hrs | ✅ Done (e246db6) |
-| 3b | IST for `#DF` | 1 hr | Next |
+| 3b | IST for `#DF` | 1 hr | ✅ Done (f4d7df3) |
 | 3c | Page table teardown | 2–3 hrs | Defer until multiple processes |
 | 3d | `heap_base` per-process | 15 min | Whenever |
 | 3e | TLB flush in VMM | — | Leave as-is, documented |
-| 4a | Dead declarations | 15 min | Batch with 4b, 4c |
-| 4b | Double-build in `run` | 15 min | Batch with 4a, 4c |
-| 4c | Stale comments | 30 min | Batch with 4a, 4b |
-| 4d | Serial output atomicity | 1 hr | Whenever |
-| 5a | Kernel-shell self-test | 1 hr | After 3b |
+| 4a | Dead declarations | 15 min | ✅ Done (20260919F) |
+| 4b | Double-build in `run` | 15 min | ✅ Done (20260919F) |
+| 4c | Stale comments | 30 min | ✅ Done (20260919F) |
+| 4d | Serial output atomicity | 1 hr | ✅ Done (20260919F) |
+| 4e | Print lock → ring buffer | 1–2 hrs | Before tty/per-user console |
+| 5a | Kernel-shell self-test | 1 hr | Next available slot |
 | 5b | Boot-time self-test | 1 hr | After 5a |
 | 5c | `make test` target | 1 hr | After 5b |
 
-Items 3b is the natural next session — it's small, it's related to the
-work just completed on the kernel shell, and it closes a real diagnostic
-gap. Items 4a/4b/4c/4d are a good batch for a single cleanup session.
-Everything after that is optional.
+Everything on this list is either done, deferred, or architectural.
+Nothing urgent remains. The natural next steps, in order of value:
+
+1. **Testing infrastructure (5a–5c)** — three sessions, and it pays off
+   every time you change the kernel afterward. Do this before starting
+   new features.
+2. **The ring buffer (4e)** — the correct long-term design for the print
+   path. Do this before the tty subsystem lands.
+3. **`sys_exec`** — the next feature milestone (user programs from disk).
+   Not on this list because it's a feature, not maintenance.
 
 ---
 
@@ -307,7 +383,7 @@ Everything after that is optional.
 This file is not a wish list. Everything in it is either:
 
 - **Known debt:** the design has an acknowledged limitation (the size
-  ceiling, the page table leak, serial-output atomicity).
+  ceiling, the page table leak, the print lock).
 - **Missing documentation:** the code is correct but the reader can't
   find out what it does.
 - **Cosmetic:** it works, it's just ugly.
@@ -316,7 +392,7 @@ If you fix something, strike it through and mark it with a ✅ rather
 than deleting it. The history of what was wrong is useful to a reader.
 
 If you find a new problem, add it here with the same format. The point
-is to keep the list of "things we know are wrong" honest and short.
+is to keep the list of "things we know we're wrong about" honest and short.
 
 Feature work goes in `ROADMAP.md`. Capability tracking goes in
 `OSDev_Checklist.md`. Debt and maintenance go here.

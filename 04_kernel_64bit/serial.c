@@ -1,6 +1,6 @@
 #include "include/serial.h"
-#include <stddef.h>    // ADD THIS for size_t
-#include <stdint.h>    // ADD THIS for uint64_t
+#include <stddef.h>
+#include <stdint.h>
 
 static inline void outb(uint16_t port, uint8_t val) {
     __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
@@ -9,6 +9,23 @@ static inline uint8_t inb(uint16_t port) {
     uint8_t ret;
     __asm__ volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));
     return ret;
+}
+
+/* Reentrant print lock. See include/serial.h for the contract. */
+static uint32_t g_print_lock_depth = 0;
+
+void serial_lock(void) {
+    __asm__ volatile("cli" ::: "memory");
+    g_print_lock_depth++;
+}
+
+void serial_unlock(void) {
+    if (g_print_lock_depth > 0) {
+        g_print_lock_depth--;
+        if (g_print_lock_depth == 0) {
+            __asm__ volatile("sti" ::: "memory");
+        }
+    }
 }
 
 void serial_init(void) {
@@ -35,15 +52,6 @@ void serial_write(const char* buf, size_t count) {
 void serial_print(const char* str) {
     while (*str) serial_putc(*str++);
 }
-
-//~ void serial_print_hex(uint64_t value) {
-    //~ char hex[] = "0123456789ABCDEF";
-    //~ char buf[17]; buf[16] = 0;
-    //~ if (value == 0) { serial_putc('0'); return; }
-    //~ int i = 15;
-    //~ while (value > 0 && i >= 0) { buf[i--] = hex[value & 0xF]; value >>= 4; }
-    //~ for (int j = i + 1; j < 16; j++) serial_putc(buf[j]);
-//~ }
 
 void serial_print_hex(uint64_t value) {
     char hex[] = "0123456789ABCDEF";

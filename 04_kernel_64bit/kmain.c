@@ -179,7 +179,7 @@ static void handle_command(const char *cmd) {
         uint64_t phys_page = pmm_alloc_page(PAGE_KERNEL);
         if (phys_page != 0) {
             PRINT_BOTH("  Allocated  : 0x"); PRINT_BOTH_HEX(phys_page); PRINT_BOTH("\n");
-            PRINT_BOTH("  Zone       : "); vga_print(phys_page < 0x2000000 ? "LOW\n" : "HIGH\n");
+            PRINT_BOTH("  Zone       : "); PRINT_BOTH(phys_page < 0x2000000 ? "LOW\n" : "HIGH\n");
             PRINT_BOTH("  Status     : SUCCESS\n");
             pmm_dump_stats();
         } else {
