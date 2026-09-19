@@ -196,8 +196,8 @@ tradeoffs. Leave as-is; it's documented.
 
 ## 4. Code hygiene
 
-**Status:** ✅ **DONE for 4a–4d.** Item 4e is architectural debt,
-deferred until the console subsystem is built.
+**Status:** ✅ **DONE for 4a–4d.** Items 4e, 4f, 4g are architectural
+or documentation-only and deferred.
 
 ### 4a. ~~Dead declarations~~ ✅
 
@@ -245,11 +245,22 @@ into one readable block, removed the mid-thought narrative about
 
 ### 4d. ~~Serial output is not atomic~~ ✅
 
-**Status:** ✅ **DONE (commit 20260919F).** Multi-part boot messages are
-wrapped in `serial_lock()` / `serial_unlock()`, and the ATA read-path
-prints are gated behind `#define ATA_DEBUG 0`. The timer's boot trace
-is locked. The boot log now has no interleaved characters. What remains
-is the architectural question — see item 4e.
+**Status:** ✅ **DONE (commits 20260919G, 20260919H).** Two commits:
+
+- `20260919G` wrapped multi-part boot messages in `serial_lock()` /
+  `serial_unlock()` and gated the ATA read-path prints behind
+  `#define ATA_DEBUG 0`.
+- `20260919H` made the lock shared between the serial and VGA drivers,
+  made `serial_print` / `serial_print_hex` / `serial_print_dec` /
+  `serial_write` take the lock around their whole operation, and did
+  the same for `vga_print` and friends. `serial_lock` now saves
+  `RFLAGS` on the outermost acquisition and `serial_unlock` restores
+  it, so the lock is safe inside interrupt context.
+
+The result: `vga_print("DonsDOS v0.5.0\n> ")` is atomic against timer
+preemption. The `DonsDOS v` truncation is fixed. `serial_print` is
+atomic; `**RING** 3 syscalls active` no longer gets split by the
+timer's boot trace.
 
 ~~`PRINT_BOTH(str)` does `vga_print(str); serial_print(str);` as two
 separate calls. If a timer tick fires between them (or between two
@@ -261,19 +272,16 @@ process's output is very confusing.~~
 
 ### 4e. Print lock is a pragmatic fix, not the console design
 
-**Status:** works for boot messages; not the right shape for a tty
+**Status:** works for boot messages and single-console operation; not
+the right shape for a tty
 **Effort:** 1–2 hours to replace with a ring buffer
 **When:** before the console subsystem (tty, per-user output routing)
 is built
 
-The fix for item 4d wraps multi-part boot messages in a global
-`serial_lock()` / `serial_unlock()` pair, which is a `cli`/`sti`
-critical section with a nesting counter. It is simple, correct for
-boot messages, and honest about its limitations (documented in
-`include/serial.h`).
-
-But it is a **global** lock, held with interrupts disabled, and this
-has two real costs:
+The shared print lock (item 4d) is a `cli`/`sti` critical section with a
+nesting counter and RFLAGS save/restore. It is simple, correct, and
+composes properly with interrupt context. But it is a **global** lock,
+held with interrupts disabled, and this has two real costs:
 
 1. **Scheduling fairness.** While any kernel code is printing, the
    timer does not fire. A 40-char line at 115200 baud is ~3.5 ms with
@@ -289,12 +297,12 @@ has two real costs:
 
 The right design is a **ring buffer with a console task**:
 
-- `serial_print` memcpy's its bytes into a fixed-size FIFO under a
-  very short lock (microseconds, not milliseconds).
+- `serial_print` / `vga_print` memcpy their bytes into a fixed-size
+  FIFO under a very short lock (microseconds, not milliseconds).
 - A drain routine — a low-priority kernel task, a serial TX-ready
   IRQ handler, or a periodic tick — pulls bytes out of the FIFO and
-  writes them to the UART.
-- Producers never wait on the UART. Interrupts are off for the
+  writes them to the UART / VGA.
+- Producers never wait on the hardware. Interrupts are off for the
   memcpy only.
 - Ordering is preserved by the FIFO's single consumer.
 
@@ -307,6 +315,46 @@ normal operation after boot, now that the ATA read-path prints are
 gated off. But it is the design the console subsystem should be
 built on, and it should be in place before per-user tty support is
 added.
+
+### 4f. Print functions must remain leaf functions
+
+**Status:** invariant; not yet violated
+**Effort:** n/a (documentation and code review discipline)
+
+The shared print lock is safe because nothing inside the print path
+takes another lock. If a future `vga_print` implementation decides to
+allocate a line buffer with `kmalloc`, and `kmalloc` takes a heap lock,
+and some other path takes the heap lock then calls `print`, you have a
+lock-order inversion.
+
+Keep the invariant:
+
+> **Print functions (`vga_*` and `serial_*`) may not take any other
+> lock.** If a print routine needs to allocate, it must do so before
+> acquiring the print lock, or use a fixed-size stack buffer.
+
+Violating this creates the possibility of a lock-order inversion with
+the heap lock (or any other lock introduced later). Nothing in the
+current code violates it; this entry exists to keep it that way.
+
+### 4g. Diagnostic for print-lock hold duration
+
+**Status:** future diagnostic, not needed yet
+**Effort:** ~30 minutes when it's needed
+
+If the print lock ever starts holding interrupts off long enough to
+matter (see item 4e, cost 1), the way to know is a small counter:
+
+- In `timer_preempt_handler`, on each tick, compute the drift between
+  `g_ticks` and `expected_ticks`, and record the maximum.
+- Expose it via a `printstat` shell command alongside `schstat`.
+
+A boot log or `schstat` output that shows the max drift creeping above
+1 tick is the signal that the print path is starting to matter and the
+ring buffer (item 4e) is due.
+
+This is not something to build now. It's the tool you'll reach for if
+you ever wonder "is printing slow?"
 
 ---
 
@@ -359,8 +407,10 @@ built on the current code.
 | 4a | Dead declarations | 15 min | ✅ Done (20260919F) |
 | 4b | Double-build in `run` | 15 min | ✅ Done (20260919F) |
 | 4c | Stale comments | 30 min | ✅ Done (20260919F) |
-| 4d | Serial output atomicity | 1 hr | ✅ Done (20260919F) |
+| 4d | Serial/VGA output atomicity | 1 hr | ✅ Done (20260919G, 20260919H) |
 | 4e | Print lock → ring buffer | 1–2 hrs | Before tty/per-user console |
+| 4f | Print functions as leaf functions | — | Documented invariant |
+| 4g | Print-lock hold diagnostic | 30 min | Build when needed |
 | 5a | Kernel-shell self-test | 1 hr | Next available slot |
 | 5b | Boot-time self-test | 1 hr | After 5a |
 | 5c | `make test` target | 1 hr | After 5b |
