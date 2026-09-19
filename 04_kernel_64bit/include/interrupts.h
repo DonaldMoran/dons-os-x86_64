@@ -39,7 +39,7 @@ typedef struct default_frame {
     uint64_t rip, cs, rflags, rsp, ss;
 } __attribute__((packed)) default_frame_t;
 
-void isr8_handler(void);
+void isr8_handler(exception_frame_t *frame);
 void isr13_handler(exception_frame_t *frame);
 void isr14_handler(exception_frame_t *frame);
 void isr_default_handler(default_frame_t *frame);

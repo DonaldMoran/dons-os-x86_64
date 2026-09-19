@@ -47,4 +47,9 @@ void tss_set_kernel_stack(uint64_t stack);
 void tss_set_syscall_stack(uint64_t stack);
 void tss_dump(void);
 
+/* Configure IST1 with a dedicated 4 KB stack for the #DF handler.
+ * Called from tss_init after rsp0 and the GDT descriptor are set up.
+ * See idt.c's set_idt_entry for the IST field on the #DF gate. */
+void tss_init_ist(void);
+
 #endif // TSS_H
