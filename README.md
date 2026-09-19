@@ -45,6 +45,7 @@ make runkernel64
 ```
 
 **Build + run the single-drive layout**
+
 ```bash
 make clean && make FAT_CONFIG=single && make runkernel64-kvm-single
 ```
@@ -57,9 +58,9 @@ Edit ./run, uncomment one line in the menu, save, then:
 ./run
 ```
 
-The run script does a full make clean && make and boots the selected target. It is the recommended way to iterate: one edit, one command.
+The script parses its own menu() function and executes the single uncommented line. To switch tasks, move the # from one line to another. Never uncomment two lines at once. It runs a full make clean && make and boots the selected target — one edit, one command.
 
-#### Run individual boot demos
+***Run individual boot demos***
 
 ```bash
 make run16
@@ -328,12 +329,14 @@ It runs as an ordinary Ring 3 process using newlib. Its menu currently offers:
 | 5 | Persistence check: verify USER.TXT written by a previous boot survived a reboot |
 | 6 | Multi-file test: create 3 files, verify contents (deletion is skipped; no SYS_UNLINK yet) |
 | 7 | Large write test: 4 KB round-trip through FatFs, catches multi-cluster bugs |
+| 8 | List known files: probe a fixed set of names and report which exist, with a short preview |
+| 9 | Reboot: call `SYS_REBOOT`, which flushes file handles and fires a hardware reset |
 
-Option 3 exercises malloc → sbrk → sys_brk → page mapping → user write → user read, confirming that user pages are correctly mapped and writable.
-
-Option 4 exercises open → write → close → open → read on the FAT volume from Ring 3. The round-trip is byte-exact.
-
-Option 5 is the strongest single test in the tree. It writes on boot N, and on boot N+1 (same image) it verifies the file is present and byte-exact. This is what proves writes are durable, not just buffered.
+- Option 3 exercises malloc → sbrk → sys_brk → page mapping → user write → user read, confirming that user pages are correctly mapped and writable.
+- Option 4 exercises open → write → close → open → read on the FAT volume from Ring 3. The round-trip is byte-exact.
+- Option 5 is the strongest single test in the tree. It writes on boot N, and on boot N+1 (same image) it verifies the file is present and byte-exact. This is what proves writes are durable, not just buffered. Combined with option 9, the persistence check is a three-step sequence — write, reboot, verify — that can be run entirely from the user shell.
+- Option 8 is a poor-man's `ls`: since there is no directory-iteration syscall yet, it probes a fixed set of filenames and reports which ones open successfully. A real `ls` needs `SYS_OPENDIR` / `SYS_READDIR` / `SYS_CLOSEDIR`.
+- Option 9 calls `sys_reboot()`, which does `fflush(NULL)` from userland, then invokes `SYS_REBOOT`. The kernel closes every open file handle in the current process's file table (`f_close` triggers `f_sync` → `FLUSH CACHE`), then fires the hardware reset. Ring 3 reboot is a convenience for testing; a production OS would restrict it to a privileged process.
 
 ---
 
@@ -706,7 +709,8 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - ~~ATA PIO block device driver~~ ✅ v0.4.10
 - ~~FatFs integration, kernel-side and userland~~ ✅ v0.4.10
 - ~~Single-drive layout~~ ✅ v0.5.0
-- **`SYS_UNLINK` is not implemented.** FatFs has `f_unlink`, but there is no syscall for it. The user shell's multi-file test (option 6) creates and verifies files but skips the delete phase and reports the omission.
+- **`SYS_UNLINK`** — add `f_unlink` behind a syscall; completes the multi-file test (option 6)
+- **Kernel maintenance pass** — see [`MAINTENANCE.md`](MAINTENANCE.md) for the full list. In priority order: kernel size ceiling (done in v0.5.0's staging update), boot stack off the hardcoded address, IST for `#DF`, code hygiene, testing infrastructure.
 
 ### Medium-term
 - **Move the kernel shell off the hardcoded boot stack** — allocate the shell's stack from the kernel stack pool, so `process_exit`'s fallback no longer depends on a specific low-memory address being mapped.
