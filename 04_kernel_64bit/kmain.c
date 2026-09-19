@@ -94,7 +94,11 @@ static int strncmp(const char *s1, const char *s2, size_t n) {
 
 void test_process1(void) {
     for (int i = 0; i < 5; i++) {
-        PRINT_BOTH("Proc 1: iter "); PRINT_BOTH_DEC(i); PRINT_BOTH("\n");
+        serial_lock();
+        PRINT_BOTH("Proc 1: iter ");
+        PRINT_BOTH_DEC(i);
+        PRINT_BOTH("\n");
+        serial_unlock();
         process_yield();
     }
     process_exit();
@@ -102,7 +106,11 @@ void test_process1(void) {
 
 void test_process2(void) {
     for (int i = 0; i < 5; i++) {
-        PRINT_BOTH("Proc 2: iter "); PRINT_BOTH_DEC(i); PRINT_BOTH("\n");
+        serial_lock();
+        PRINT_BOTH("Proc 2: iter ");
+        PRINT_BOTH_DEC(i);
+        PRINT_BOTH("\n");
+        serial_unlock();
         process_yield();
     }
     process_exit();
