@@ -10,49 +10,58 @@ fragile, or will bite later, it belongs here.
 Items are ordered by priority: do the ones at the top first. Effort is a
 rough estimate, not a commitment.
 
+Completed items are struck through (~~like this~~) and marked with ✅.
+They are kept in place for history; do not delete them.
+
 ---
 
-## 1. Kernel size ceiling (176 KB staging limit)
+## 1. Kernel size ceiling ~~(176 KB staging limit)~~ ✅
 
-**Status:** binding today; ~29 KB of headroom at v0.5.0
-**Effort:** 30 minutes (Option 3), 2–3 hours (Option 2), a few days (Option 6)
-**Risk if ignored:** the kernel grows past the ceiling and the Makefile's
+**Status:** ✅ **DONE (v0.5.0 + commit 09a6f79).** The staging ceiling was
+raised from 176 KB to 448 KB by adding PASS 4–7 and extending the
+long-mode copy. The text below is kept for history: it describes the
+176 KB state and the reasoning for raising it.
+
+~~**Effort:** 30 minutes (Option 3), 2–3 hours (Option 2), a few days (Option 6)~~
+~~**Risk if ignored:** the kernel grows past the ceiling and the Makefile's
 tripwire fails the build. That is the *good* outcome. The bad outcome is
 that someone removes the tripwire and the kernel silently truncates at
-boot, producing a machine that boots to garbage.
+boot, producing a machine that boots to garbage.~~
 
-### What the limits are
+### What the limits were
 
-Two ceilings apply to `kernel.bin`:
+~~Two ceilings apply to `kernel.bin`:~~
 
-1. **Staging ceiling: 176 KB.** `stage2.asm` reads the kernel from disk in
+~~1. **Staging ceiling: 176 KB.** `stage2.asm` reads the kernel from disk in
    three passes of 128 sectors each, staging it into low memory at
    `0x80000`, `0x90000`, and `0x20000`, then copies it to `0x100000` in
    long mode. That staging layout cannot exceed 176 KB (128 KB from the
    first two passes, plus 48 KB from the third). The tripwire in
    `04_kernel_64bit/Makefile` (`KERNEL_STAGING_LIMIT := 180224`) fails
-   the build loudly if `kernel.bin` exceeds it.
+   the build loudly if `kernel.bin` exceeds it.~~
 
-2. **Disk-layout ceiling: 983 KB.** The kernel starts at LBA 128. The
+~~2. **Disk-layout ceiling: 983 KB.** The kernel starts at LBA 128. The
    FAT partition starts at LBA 2048. So the kernel region is
    `(2048 - 128) × 512 = 983040` bytes. This ceiling is enforced by
    `KERNEL_DISK_LIMIT := 983040` in the same Makefile. It will not bind
-   until the staging ceiling has been raised well past 176 KB.
+   until the staging ceiling has been raised well past 176 KB.~~
 
-The staging ceiling is the binding one today.
+~~The staging ceiling is the binding one today.~~
 
-### How to raise it
+### How it was raised
 
-**Option 3 — use the unused low memory (30 min, ceiling → 448 KB).**
+~~**Option 3 — use the unused low memory (30 min, ceiling → 448 KB).**
 `0x30000–0x7FFFF` (320 KB) is plain RAM, unused by the boot chain. Add
 PASS 4–7 to `stage2.asm` reading into segments `0x3000` through `0x7000`,
 and add a `rep movsq` in long mode to copy the new bytes to `0x12C000`
 onward. Bump `KERNEL_TOTAL_BYTES` in `stage2.asm` to `448 * 1024` and
-`KERNEL_STAGING_LIMIT` in the Makefile to `458752`.
+`KERNEL_STAGING_LIMIT` in the Makefile to `458752`.~~
 
-Bonus: this also moves PASS 3 off `0x20000`, which is a robustness win
+~~Bonus: this also moves PASS 3 off `0x20000`, which is a robustness win
 on real hardware. `0x20000–0x2FFFF` is conventional-free on QEMU/SeaBIOS
-but not guaranteed by spec on bare metal. `0x30000–0x7FFFF` is safer.
+but not guaranteed by spec on bare metal. `0x30000–0x7FFFF` is safer.~~
+
+### Remaining options if 448 KB is not enough
 
 **Option 2 — stream reads (2–3 hours, ceiling → RAM limit).**
 Read 128 KB into a single staging window, `rep movsq` it to its
@@ -70,59 +79,57 @@ and gets you boot modules (the path to "user programs from disk") and a
 framebuffer for free. Throws away `boot.asm`, `stage2.asm`, and the
 BootInfo parsing in `entry.asm`. See ROADMAP §Long-term.
 
-### When to do this
-
-Do Option 3 when the tripwire fires or when you want to stop thinking
-about the ceiling. Do Option 2 only when 448 KB is not enough. Do
-Option 6 when you decide to modernize the boot chain — the right time
-is before adding USB or a network stack, because those are the features
-that benefit most from Limine.
-
 ---
 
-## 2. Documentation gaps
+## 2. Documentation gaps ✅
 
-**Status:** current README is accurate but incomplete in three places
-**Effort:** ~2 hours total
+**Status:** ✅ **DONE.** Item 2a is now covered by this file and by the
+README's pointer to it. Items 2b and 2c were applied in commit `9b62d46`.
+Text below kept for history.
 
-### 2a. Kernel size limits are not documented in the README
+~~**Effort:** ~2 hours total~~
 
+~~### 2a. Kernel size limits are not documented in the README
 See item 1 above. A reader has no idea the tripwire exists until it
 fires. Add a short "Kernel size limits" section to the README under
-Known Limitations, or fold it into the Build System notes.
+Known Limitations, or fold it into the Build System notes.~~
 
-### 2b. The `run` script is documented in one line
-
+~~### 2b. The `run` script is documented in one line
 The README mentions it in the repository structure and one sentence in
 Building & Running. The menu design ("uncomment one line in `menu()`,
 then run `./run`") deserves a short paragraph. Otherwise a reader sees a
 shell script with a function that's never called and has no idea how
-it's supposed to be used.
+it's supposed to be used.~~
 
-### 2c. The user shell table is out of date
-
+~~### 2c. The user shell table is out of date
 Options 1–7 are listed. Option 8 (list known files) and option 9
-(reboot) are not. If the reboot change is kept, update the table.
+(reboot) are not. If the reboot change is kept, update the table.~~
 
 ---
 
 ## 3. Latent bugs (things that will bite eventually)
 
-### 3a. Hardcoded boot stack in `process_exit`
+### 3a. ~~Hardcoded boot stack in `process_exit`~~ ✅
 
-**Status:** latent; works today, breaks if the identity map changes
-**Effort:** 1–2 hours
+**Status:** ✅ **DONE (commit e246db6).** The kernel shell is now a real
+process with its own PCB and kernel stack from the pool. It is created
+by `kmain` on the `k` branch, resumed by `process_exit`'s fallback via
+`scheduler_switch_to`, and suspended by every command handler that
+yields to a diagnostic. The hardcoded `0xFFFFFFFF8008FF00` is gone, as
+is the `kernel_shell_stack_top()` helper. Text below kept for history.
 
-`process_exit`'s fallback to `kmain_shell_loop` sets
+~~**Effort:** 1–2 hours~~
+
+~~`process_exit`'s fallback to `kmain_shell_loop` sets
 `rsp = 0xFFFFFFFF8008FF00`. That address is in the low 1 MB region,
 currently mapped because the bootloader identity-maps it. Nothing in the
 kernel guarantees it stays mapped. If you ever change the identity map,
-this becomes a crash.
+this becomes a crash.~~
 
-**Fix:** allocate the kernel shell's stack from the kernel stack pool
+~~**Fix:** allocate the kernel shell's stack from the kernel stack pool
 (`kernel_stack_alloc()`), set the shell up on that stack, free it on
 exit. The fallback path in `process_exit` then sets `rsp` to the pool
-stack instead of a hardcoded address.
+stack instead of a hardcoded address.~~
 
 ### 3b. No IST for `#DF`
 
@@ -211,6 +218,28 @@ the log.
   accumulate cruft every time the layout changes. Consider a single
   "history" section rather than inline archaeology.
 
+### 4d. Serial output is not atomic
+
+**Status:** cosmetic; observed during the kernel shell debugging session
+**Effort:** ~1 hour
+
+`PRINT_BOTH(str)` does `vga_print(str); serial_print(str);` as two
+separate calls. If a timer tick fires between them (or between two
+adjacent `PRINT_BOTH` calls in a multi-part message), the timer's own
+serial output interleaves. Observed as `Storage: single-drive, FAT@Å
+Prompt: press 'k' ...` and `ATA: probe driveTIMER[2] ...` in the
+boot log. Cosmetic, but a real exception dump interleaved with another
+process's output is very confusing.
+
+**Fix options:**
+- Wrap `PRINT_BOTH` bodies in `cli`/`sti`. Simple, but blocks the timer
+  for the duration of the print. At 115200 baud a 40-char line takes
+  ~3.5 ms; you'd miss roughly one 10 ms tick in three.
+- Use a single kernel-wide print lock (or, since this is single-core,
+  a `cli`/`sti` critical section) around a whole line, and build the
+  line in a local buffer first. Buffered lines are cheaper than
+  interrupts-off for long strings.
+
 ---
 
 ## 5. Testing infrastructure
@@ -241,33 +270,35 @@ watching the boot.
 
 ### When to do this
 
-After items 1–3. The self-test only matters when there's something worth
-testing, and items 1–3 change the kernel in ways that would break any
-test you wrote beforehand.
+After items 3b–3c. The self-test only matters when there's something
+worth testing, and those items change the kernel in ways that would
+break any test written beforehand.
 
 ---
 
 ## 6. Priorities, one more time
 
-| # | Item | Effort | When |
-|---|------|--------|------|
-| 1 | Kernel size Option 3 | 30 min | Do first |
-| 2 | Documentation gaps | 2 hrs | Do second |
-| 3a | Boot stack off hardcoded address | 1–2 hrs | Do third |
-| 3b | IST for `#DF` | 1 hr | Same session as 3a |
+| # | Item | Effort | Status |
+|---|------|--------|--------|
+| 1 | Kernel size Option 3 | 30 min | ✅ Done (09a6f79) |
+| 2 | Documentation gaps | 2 hrs | ✅ Done (9b62d46) |
+| 3a | Boot stack off hardcoded address | 1–2 hrs | ✅ Done (e246db6) |
+| 3b | IST for `#DF` | 1 hr | Next |
 | 3c | Page table teardown | 2–3 hrs | Defer until multiple processes |
 | 3d | `heap_base` per-process | 15 min | Whenever |
 | 3e | TLB flush in VMM | — | Leave as-is, documented |
 | 4a | Dead declarations | 15 min | Batch with 4b, 4c |
 | 4b | Double-build in `run` | 15 min | Batch with 4a, 4c |
 | 4c | Stale comments | 30 min | Batch with 4a, 4b |
-| 5a | Kernel-shell self-test | 1 hr | After 3a/3b |
+| 4d | Serial output atomicity | 1 hr | Whenever |
+| 5a | Kernel-shell self-test | 1 hr | After 3b |
 | 5b | Boot-time self-test | 1 hr | After 5a |
 | 5c | `make test` target | 1 hr | After 5b |
 
-Items 1 and 2 are the natural next two sessions. Items 3a and 3b are a
-good third session — they're related and both small. Everything after
-that is optional.
+Items 3b is the natural next session — it's small, it's related to the
+work just completed on the kernel shell, and it closes a real diagnostic
+gap. Items 4a/4b/4c/4d are a good batch for a single cleanup session.
+Everything after that is optional.
 
 ---
 
@@ -276,14 +307,16 @@ that is optional.
 This file is not a wish list. Everything in it is either:
 
 - **Known debt:** the design has an acknowledged limitation (the size
-  ceiling, the hardcoded boot stack, the page table leak).
+  ceiling, the page table leak, serial-output atomicity).
 - **Missing documentation:** the code is correct but the reader can't
   find out what it does.
 - **Cosmetic:** it works, it's just ugly.
 
-If you fix something, remove it from this file. If you find a new
-problem, add it here with the same format. The point is to keep the
-list of "things we know are wrong" honest and short.
+If you fix something, strike it through and mark it with a ✅ rather
+than deleting it. The history of what was wrong is useful to a reader.
+
+If you find a new problem, add it here with the same format. The point
+is to keep the list of "things we know are wrong" honest and short.
 
 Feature work goes in `ROADMAP.md`. Capability tracking goes in
 `OSDev_Checklist.md`. Debt and maintenance go here.
