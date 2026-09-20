@@ -1,7 +1,7 @@
 # dons‑os  
 ### Educational x86_64 Boot Chain + 64‑bit Interrupt‑Driven Kernel (MIT Licensed)
 
-**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU's reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher-half kernel** with working interrupts, timer, keyboard input, memory management, a preemptive round-robin scheduler, system calls, blocking I/O, a userland C library (newlib 4.x), a FAT16 filesystem, and a Ring 3 user shell written in ordinary C.
+**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU's reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher‑half kernel** with working interrupts, timer, keyboard input, memory management, a preemptive round-robin scheduler, system calls, blocking I/O, a userland C library (newlib 4.x), a FAT16 filesystem, and a Ring 3 user shell written in ordinary C.
 
 Related documents:
 - [`ROADMAP.md`](ROADMAP.md) — planned features and completed milestones
@@ -243,7 +243,7 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 |---------|-------------|
 | `help` | Show available commands |
 | `clear` | Clear the screen |
-| `version` | Show version information (DonsDOS v0.5.0) |
+| `version` | Show version information (DonsDOS v0.5.1) |
 | `info` | Display system information (PML4, kernel addresses, E820 entries) |
 | `mem` | Display memory information (usable/reserved RAM) |
 | `reboot` | Reboot the system (Ring 0 supervisor sequence) |
@@ -267,6 +267,7 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 | `usershell` | Launch the Ring 3 user shell |
 | `gdtdump` | Decode and print the current GDT descriptors |
 | `tssdump` | Print current TSS fields (rsp0, ist1–7, iopb_base, TR, g_syscall_stack_top) |
+| `selftest` | Run the kernel self-test suite (15 tests) and print a pass/fail summary |
 | `atatest` | Read-only ATA diagnostic: MBR signature, kernel header, model strings |
 | `fatmount` | Mount the FAT volume and report status |
 | `fatls` | List the root directory of the FAT volume |
@@ -275,7 +276,7 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 Example session:
 
 ```text
-DonsDOS v0.5.0 
+DonsDOS v0.5.1 
 Type 'help'
 > help
 
@@ -306,6 +307,7 @@ Available commands:
   usershell  - Launch Ring 3 unprivileged shell interface
   gdtdump    - Decode and print the current GDT
   tssdump    - Print current TSS fields
+  selftest   - Run the kernel self-test suite
   atatest    - ATA read-only diagnostic
   fatmount   - Mount the FAT volume
   fatls      - List the root directory
@@ -514,7 +516,7 @@ This project is designed to be:
   - **`irq1_stub` ABI violation.** The keyboard interrupt stub called `irq1_handler` without preserving caller-saved registers. If an IRQ1 fired between the `sti` and a subsequent `jmp *%rax` in `process_exit`'s fallback, `irq1_handler` clobbered `%rax` and the jump landed mid-instruction inside `kmain_shell_loop`. Reproduced consistently after user shell exit. Fixed on two fronts: `irq1_stub` (and the other stubs that call C handlers) now preserve all 15 GPRs, and the fallback uses a direct `jmp kmain_shell_loop` (`rel32`) with no register involved.
   - **`process_dump_all` cosmetic fix.** Detached PCBs (e.g. placeholders left by the `proccreate` command) now display as `DETACHED` instead of `READY`.
   - **Frame validation in `context_switch.asm`.** `.kernel_task` validates the resume frame's `rip` (must be ≥ `KERNEL_BASE`) and `cs` (must be `0x18`) before popping. A corrupt frame now emits a single serial marker byte (`R` or `C`) and halts, instead of producing an opaque kernel-mode `#GP` at the stub's `iretq`.
-- `v0.5.0` ⭐ NEW — **Storage layer complete: ATA PIO driver, FatFs, single-drive and dual-drive layouts, persistence verified.**
+- `v0.5.0` — **Storage layer complete: ATA PIO driver, FatFs, single-drive and dual-drive layouts, persistence verified.**
   - **ATA PIO block device driver** on the primary channel: `ata_init`, `ata_read_sector`, `ata_read_sectors`, `ata_write_sector`, `ata_write_sectors`, `ata_flush_cache`, per-drive entry points, and `atatest` diagnostics. Three bring-up bugs found and fixed (PIC mask restoration, exception frame offsets, LBA mode bit).
   - **FatFs R0.15 vendored** with a `diskio.c` shim that maps FatFs onto the ATA PIO driver.
   - **Dual-drive storage:** kernel on master `hdd.img`, FAT16 volume on slave `fat.img`. Kernel shell commands `fatmount`, `fatls`, `fatcat`.
@@ -526,8 +528,18 @@ This project is designed to be:
   - **Config diagnostic at boot** (`kmain.c`): VGA and serial report which storage layout the kernel booted with.
   - **Kernel-size tripwire** checks both the stage2 staging ceiling (176 KB) and the disk-layout ceiling (983 KB).
   - `SYS_UNLINK` is not yet implemented; option 6's delete phase is skipped.
-
----
+- `v0.5.1` ⭐ NEW — **Maintenance batch: self-test infrastructure, NX on hardware, kernel-owned GDT.**
+  - **Self-test infrastructure (`selftest` command).**  15 tests covering GDT descriptor contents, TSS fields, PMM allocation and freeing, VMM control registers, page mapping, recursive paging, heap integrity, the NX bit in the final PTE, syscall entry point, ATA reads, FatFs mount and directory listing, and the three exception handlers (#DE, #PF, #GP).  The exception tests use an expected-fault protocol: a small kernel-mode child takes the fault, the handler records the vector, terminates the child, and resumes the kernel shell.  First time the exception handlers have been exercised by anything.
+  - **EFER.NXE enabled.**  Previously the kernel wrote NX bits into PTEs but the CPU ignored them because `EFER.NXE` was clear.  Worked under KVM by accident (KVM's shadow MMU enables NX on the host side regardless of the guest's EFER); would have faulted on bare metal.  `enable_nx()` in `kmain.c` now sets the bit, guarded by a CPUID check.  `test_vmm` asserts on it.
+  - **Kernel-owned GDT.**  The GDT lived in low memory (base `0x101DC`, inside `stage2.asm`'s loaded image).  `gdt_init` now builds `kernel_gdt[16]` in `.bss` at a higher-half address, `lgdt`s it, and reloads the segment registers.  `gdt_set_tss` writes the TSS descriptor directly.  `test_gdt`'s strict assertion is restored.
+  - **Print atomicity.**  Kernel serial and VGA drivers now share a single print lock.  Multi-part boot messages wrap in `serial_lock`/`serial_unlock`; ATA's read-path prints are gated behind `ATA_DEBUG`.  The DonsDOS banner truncation and interleaved boot trace are gone.
+  - **#DF through IST1.**  A dedicated 4 KB stack and an IST entry on the `#DF` gate turn a double fault into a printed diagnostic instead of a silent triple-fault reset.
+  - **Kernel shell is process-backed.**  It runs as a real process with a pool-allocated kernel stack, not a hardcoded address.
+  - **Staging ceiling raised** from 176 KB to 448 KB by adding PASS 4–7 in `stage2.asm`.
+  - **Reboot flushes file handles.**  The user shell's reboot path flushes open file handles before the hardware reset; option 9 added.
+  - **MAINTENANCE.md updated throughout.**  No open findings remain.  Sections 5b (boot-time self-test mode) and 5c (make test) deferred with the conditions that would make them worth revisiting.
+  
+  ---
 
 ## 📌 Project Status (as of September 2026)
 
@@ -536,6 +548,7 @@ This project is designed to be:
 **Boot & Architecture**
 - ✅ Full boot chain: 16‑bit → 32‑bit → 64‑bit long mode
 - ✅ Working GDT and TSS
+- ✅ **Kernel-owned GDT** at a higher-half address (v0.5.1)
 - ✅ Higher-half kernel region (kernel runs at 0xFFFFFFFF80100000)
 - ✅ **Recursive paging** at PML4[510] for page table access from higher-half
 - ✅ 128MB physical memory detected and mapped (expandable via BootInfo)
@@ -551,6 +564,7 @@ This project is designed to be:
 - ✅ #GP (General Protection Fault) handler with ERR, RIP, CS dump
 - ✅ Test command (`test`) for triggering all three exceptions
 - ✅ Frame validation in `context_switch.asm` catches corrupt resume frames before `iretq`
+- ✅ **#DF routed through IST1** — a real double fault produces a printed diagnostic instead of a triple-fault reset (v0.5.1)
 
 **Drivers**
 - ✅ VGA text console (80×25) with scrolling and cursor control
@@ -572,6 +586,7 @@ This project is designed to be:
 - ✅ User shell (Ring 3, newlib) as the default interactive console
 - ✅ Unknown command handling
 - ✅ Serial console output (COM1) for debugging alongside VGA
+- ✅ **`selftest` command** — runs 15 tests and prints a pass/fail summary (v0.5.1)
 
 **Userland C Library (newlib)**
 - ✅ **newlib 4.x** linked into user programs
@@ -596,7 +611,7 @@ This project is designed to be:
 - ✅ **HHDM** (`0xFFFF800000000000`) for physical memory access
 - ✅ Dynamic page table allocation (PDPT → PD → PT)
 - ✅ User page mapping with `PT_USER` flag
-- ✅ **NX (No Execute) bit** support via `PT_NX`
+- ✅ **NX (No Execute) bit** support via `PT_NX`, with `EFER.NXE` enabled so the CPU enforces it (v0.5.1)
 - ✅ Page table entries correctly zeroed on allocation
 - ✅ Proper present-bit checking in `vmm_is_mapped()`
 - ✅ **User address space isolated from kernel identity map**
@@ -684,14 +699,13 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 
 - SYS_UNLINK is not implemented. FatFs has f_unlink, but there is no syscall for it. The user shell's multi-file test (option 6) creates and verifies files but skips the delete phase and reports the omission.
 - **Page tables are not freed on process exit.** `process_exit` reclaims the process's PCB slot and its ELF/user-stack pages, but the process's page tables (cr3) leak. This is a few pages per process. The teardown is deferred; it requires walking the page tables and freeing the user-space portion without touching shared kernel mappings.
-- **The boot stack address is hardcoded.** `process_exit`'s fallback to `kmain_shell_loop` sets `rsp = 0xFFFFFFFF8008FF00`. This address is in the low 1 MB region, currently mapped because the bootloader identity-maps it. Nothing in the kernel guarantees it stays mapped. A follow-up refactor will move the kernel shell onto a proper stack allocated from the kernel stack pool.
-- **No IST stack for `#DF`.** A real double fault triple-faults with no diagnostic. Adding a small IST stack and pointing the `#DF` IDT gate at it would turn future double faults into printed diagnostics.
 - **The keyboard buffer is shared.** Multiple shells reading from fd 0 will compete for bytes. Each keystroke goes to whichever blocked process the scheduler picks first. A per-process tty or a console-focus mechanism would be required to make multiple shells usable side by side.
 - **`sys_brk`'s `heap_base` is a single constant.** Each process's heap starts at the same *virtual* address (`0x8000200000`) and grows in its own address space (different `cr3`), so there is no address conflict. The shared constant is a code-cleanliness issue, not a functional one.
 - **`vmm_map_page_in_cr3` does not flush the TLB.** Callers must `invlpg` after mapping if the address may have a stale translation. `sys_brk` does this; new callers should too.
 - **User programs are still embedded in the kernel ELF.** They are not loaded from the FAT volume. Loading programs from disk is the next storage milestone, and requires a `sys_exec`-style syscall.
 - **Single-drive vs dual-drive is a build-time choice.** One kernel binary cannot serve both layouts. The `FAT_CONFIG` variable selects which layout the kernel expects; running the wrong image under the wrong kernel will fail to mount FatFs.
 - **A subset of newlib is exercised.** `stdio`, `stdlib` (`malloc`), `string`, `unistd`, and `fcntl` are the primary use; `math.h` (`libm.a`) is linked but not exercised. `signal`, `pthread`, `dirent`, and other subsystems are compiled in but untested on this kernel.
+- **`elf_load_into_process` maps every segment executable.**  With `EFER.NXE` now on, non-executable segments (data, BSS, user stack) could be marked `PT_NX`.  Currently every segment is mapped with the same flags.  See `MAINTENANCE.md` §3g for the follow-up.
 
 ---
 
@@ -709,14 +723,20 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - ~~ATA PIO block device driver~~ ✅ v0.4.10
 - ~~FatFs integration, kernel-side and userland~~ ✅ v0.4.10
 - ~~Single-drive layout~~ ✅ v0.5.0
+- ~~Kernel-owned GDT at higher half~~ ✅ v0.5.1
+- ~~EFER.NXE enabled (NX works on hardware)~~ ✅ v0.5.1
+- ~~Self-test infrastructure (15 tests, `selftest` command)~~ ✅ v0.5.1
+- ~~Print atomicity (shared serial/VGA lock)~~ ✅ v0.5.1
+- ~~#DF through IST1~~ ✅ v0.5.1
+- ~~Kernel shell on a pool-allocated stack~~ ✅ v0.5.1
 - **`SYS_UNLINK`** — add `f_unlink` behind a syscall; completes the multi-file test (option 6)
-- **Kernel maintenance pass** — see [`MAINTENANCE.md`](MAINTENANCE.md) for the full list. In priority order: kernel size ceiling (done in v0.5.0's staging update), boot stack off the hardcoded address, IST for `#DF`, code hygiene, testing infrastructure.
+- **`sys_exec`** — the next feature milestone.  Add a syscall that opens an ELF file on the FAT volume, loads it, and spawns a process.  Stops embedding user programs in the kernel image.  See [`ROADMAP.md`](ROADMAP.md) §5a-iii.
+- **Boot-time self-test mode and `make test`** — deferred.  The interactive `selftest` command already runs the same 15 tests; `5b`/`5c` add headless/scripted execution, which is not the current workflow.  See [`MAINTENANCE.md`](MAINTENANCE.md) §5b–5c.
 
 ### Medium-term
-- **Move the kernel shell off the hardcoded boot stack** — allocate the shell's stack from the kernel stack pool, so `process_exit`'s fallback no longer depends on a specific low-memory address being mapped.
-- **IST for `#DF`** — turn future double faults into printed diagnostics.
-- **User programs from disk** — add a `sys_exec`-style syscall, load ELF files from the FAT volume, and stop embedding programs in the kernel image.
-- **Serial console debug access** — kernel shell reachable over COM1, physically separate from the user's keyboard. This is the right shape for runtime kernel-shell access; the magic-key-combo approach was tried and abandoned (it's a security backdoor and the kernel shell isn't a process the scheduler can suspend).
+- **User programs from disk** — add a `sys_exec`-style syscall, load ELF files from the FAT volume, and stop embedding programs in the kernel image.  (This is the same item as "`sys_exec`" in Short-term; listed here as well because it enables a real shell with external commands.)
+- **Serial console debug access** — kernel shell reachable over COM1, physically separate from the user's keyboard.  This is the right shape for runtime kernel-shell access; the magic-key-combo approach was tried and abandoned (it's a security backdoor and the kernel shell isn't a process the scheduler can suspend).
+- **ELF loader `PT_NX` follow-up** — `elf_load_into_process` currently maps every segment executable.  With NXE now on, non-executable segments (data, BSS, user stack) can be marked `PT_NX`.  About an hour of work; closes the follow-up noted in `MAINTENANCE.md` §3g.
 
 ### Long-term
 - **File System (VFS)** — a VFS layer above FatFs, with mount points and path resolution

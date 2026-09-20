@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield**, **usershell**, **gdtdump**, **tssdump**, **atatest**, **fatmount**, **fatls**, **fatcat**
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield**, **usershell**, **gdtdump**, **tssdump**, **atatest**, **fatmount**, **fatls**, **fatcat**, **selftest**
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -282,6 +282,23 @@ Boot chain is complete and stable.
 - Kernel-size tripwire now checks two limits: the stage2 staging ceiling (176 KB) and the disk-layout ceiling (983 KB, the region below LBA 2048)
 - User shell gains options 5 (persistence), 6 (multi-file), 7 (4 KB round-trip). `[FS TEST]` fixed: `msg_len` was hardcoded to 19 but the string is 20 bytes
 
+### ✔ 3.24 — Maintenance Batch: Self-Test, NX on Hardware, Kernel-Owned GDT ⭐ v0.5.1
+- **Self-test infrastructure (`selftest` command).**  15 tests covering GDT descriptor contents, TSS fields, PMM allocation and freeing, VMM control registers, page mapping, recursive paging, heap integrity, the NX bit in the final PTE, syscall entry point, ATA reads, FatFs mount and directory listing, and the three exception handlers (#DE, #PF, #GP).  The exception tests use an expected-fault protocol: a small kernel-mode child takes the fault, the handler records the vector, terminates the child, and resumes the kernel shell.  First time the exception handlers have been exercised by anything.  (`interrupts.c`, `interrupts.h`, `kmain.c`.)
+- **EFER.NXE enabled.**  Previously the kernel wrote NX bits into PTEs but the CPU ignored them because `EFER.NXE` was clear.  Worked under KVM by accident (KVM's shadow MMU enables NX on the host side regardless of the guest's EFER); would have faulted on bare metal.  `enable_nx()` in `kmain.c` now sets the bit, guarded by a CPUID check.  `test_vmm` asserts on it.  (`kmain.c`.)
+- **Kernel-owned GDT.**  The GDT lived in low memory (base `0x101DC`, inside `stage2.asm`'s loaded image), read through the bootloader's identity map.  `gdt_init` now builds `kernel_gdt[16]` in `.bss` at a higher-half address, `lgdt`s it, and reloads the segment registers.  `gdt_set_tss` writes the TSS descriptor directly.  `gdt_fix_user_segments` became a no-op.  `test_gdt`'s strict assertion is restored.  (`gdt.c`, `gdt.h`, `kmain.c`.)
+- **Print atomicity.**  Kernel serial and VGA drivers now share a single print lock (cli/sti critical section with a nesting counter and RFLAGS save/restore).  Multi-part boot messages wrap in `serial_lock`/`serial_unlock`; ATA's read-path prints are gated behind `ATA_DEBUG`.  The DonsDOS banner truncation and interleaved boot trace are gone.  (`serial.c`, `vga.c`, `ata.c`.)
+- **#DF through IST1.**  A dedicated 4 KB stack and an IST entry on the `#DF` gate turn a double fault into a printed diagnostic instead of a silent triple-fault reset.  (`idt.c`, `tss.c`.)
+- **Kernel shell is process-backed.**  It runs as a real process with a pool-allocated kernel stack, not a hardcoded address (`0xFFFFFFFF8008FF00` is gone).  (`kmain.c`, `process.c`.)
+- **Staging ceiling raised** from 176 KB to 448 KB by adding PASS 4–7 in `stage2.asm`.
+- **Reboot flushes file handles.**  The user shell's reboot path flushes open file handles before the hardware reset; option 9 added.  (`user_shell.c`, `user_syscall.c`.)
+- **MAINTENANCE.md.**  No open findings remain.  Sections 5b (boot-time self-test mode) and 5c (make test) deferred with the conditions that would make them worth revisiting.
+
+**Key learnings:**
+- A self-test suite is the right investment: it found two real latent bugs (EFER.NXE off, GDT in low memory) that no one was looking for.
+- "Works under KVM" is not the same as "works on hardware."  KVM's shadow MMU is more forgiving than the architecture requires.  When a feature depends on a CPU feature flag, enable the flag explicitly rather than relying on the hypervisor to enable it for you.
+- Low-memory structures are fragile.  The GDT was the second such structure (after the boot stack in item 3a) to be relocated to the higher half.  Anything the bootloader left in low memory is a candidate for the same treatment.
+- Print atomicity is not just cosmetic.  Interleaved serial output obscures real diagnostics.  A single shared lock is enough until per-user ttys exist.
+
 ---
 
 ## ⭐ v0.4.2 — STAR MSR Fix (August 2026)
@@ -476,7 +493,7 @@ Boot chain is complete and stable.
 
 ---
 
-## ⭐ v0.5.0 — Storage Layer Complete (September 2026) ⭐ NEW
+## ⭐ v0.5.0 — Storage Layer Complete (September 2026)
 
 **What was accomplished:**
 - ATA PIO block device driver (see v0.4.10)
@@ -499,6 +516,31 @@ Boot chain is complete and stable.
 
 ---
 
+## ⭐ v0.5.1 — Maintenance Batch: Self-Test, NX, Kernel-Owned GDT (September 2026) ⭐ NEW
+
+**What was accomplished:**
+- Self-test infrastructure (`selftest` command, 15 tests) — see §3.24
+- `EFER.NXE` enabled so NX bits in PTEs are enforced on hardware — see §3.24
+- Kernel-owned GDT at a higher-half address — see §3.24
+- Print atomicity (shared serial/VGA lock) — see §3.24
+- `#DF` routed through IST1 — see §3.24
+- Kernel shell runs on a pool-allocated stack; the hardcoded `0xFFFFFFFF8008FF00` is gone — see §3.24
+- Staging ceiling raised from 176 KB to 448 KB
+- Reboot flushes file handles before the reset
+
+**Key learnings:**
+- A self-test suite is the right investment: it found two real latent bugs (EFER.NXE off, GDT in low memory) that no one was looking for.
+- "Works under KVM" is not the same as "works on hardware."
+- Low-memory structures are fragile. Anything the bootloader left in low memory is a candidate for the same relocation treatment the boot stack (item 3a) and GDT (item 3h) received.
+- Print atomicity is not just cosmetic. Interleaved serial output obscures real diagnostics.
+
+**Not yet implemented:**
+- `SYS_UNLINK`
+- Loading user programs from disk (`sys_exec`)
+- Boot-time self-test mode and `make test` (deferred; see `MAINTENANCE.md` §5b–5c)
+
+---
+
 ## 4. User‑Facing Features
 
 ### ✔ 4.1 — Permanent Storage Layer ⭐ v0.5.0
@@ -509,7 +551,7 @@ Boot chain is complete and stable.
 - ~~Userland file I/O via `SYS_OPEN` (4), `SYS_CLOSE` (6), fd branch in `SYS_READ` (3)~~ ✅
 - ~~Single-drive layout with FAT16 partition at LBA 2048~~ ✅
 - ~~Persistence across reboot verified~~ ✅
-- ☐ Load user programs from disk rather than embedding them (next)
+- ☐ Load user programs from disk rather than embedding them — see §4.9 (`sys_exec`)
 
 ### ☐ 4.2 — Framebuffer Graphics
 - Switch from VGA text mode
@@ -536,11 +578,13 @@ Boot chain is complete and stable.
 - AHCI disk driver
 - PS/2 mouse
 
-### ☐ 4.7 — Kernel Shell on a Proper Stack
-- Move `kmain_shell_loop` off the hardcoded `0xFFFFFFFF8008FF00` boot stack
-- Allocate the shell's stack from the kernel stack pool
-- Eliminates the `process_exit` fallback's dependency on a specific low-memory address being mapped
-- Companion: IST stack for `#DF`, so double faults produce printed diagnostics instead of triple faults
+### ✔ 4.7 — Kernel Shell on a Proper Stack ⭐ v0.5.1
+- ~~Move `kmain_shell_loop` off the hardcoded `0xFFFFFFFF8008FF00` boot stack~~ ✅
+- ~~Allocate the shell's stack from the kernel stack pool~~ ✅
+- ~~Eliminates the `process_exit` fallback's dependency on a specific low-memory address being mapped~~ ✅
+- ~~Companion: IST stack for `#DF`, so double faults produce printed diagnostics instead of triple faults~~ ✅
+
+Done in v0.5.1.  The kernel shell is now a real process (`kshell`) created by `kmain` on the `k` branch, with a stack allocated from the kernel stack pool.  `process_exit`'s fallback resumes it via `scheduler_switch_to`.  The `#DF` handler runs on IST1, a dedicated 4 KB stack, so a double fault produces a printed diagnostic rather than a triple-fault reset.
 
 ### ☐ 4.8 — `SYS_UNLINK`
 - Small syscall addition: `f_unlink` behind `SYS_UNLINK`
@@ -552,6 +596,12 @@ Boot chain is complete and stable.
 - Load ELF files from the FAT volume
 - Stop embedding user programs in the kernel image
 - Enables a real shell with external commands (`ls`, `cat`, etc.)
+- This is the next feature milestone.
+
+### ☐ 4.10 — ELF Loader `PT_NX` Follow-up
+- With `EFER.NXE` now enabled (v0.5.1), `elf_load_into_process` can mark non-executable segments (data, BSS, user stack) with `PT_NX`.
+- Currently every segment is mapped with the same flags.  About an hour of work.
+- Closes the follow-up noted in `MAINTENANCE.md` §3g.
 
 ---
 
@@ -623,8 +673,16 @@ Boot chain is complete and stable.
 | **Userland File I/O over FatFs** | **✔ Complete ⭐ v0.4.10** |
 | **Single-Drive Layout** | **✔ Complete ⭐ v0.5.0** |
 | **Persistence Across Reboot** | **✔ Complete ⭐ v0.5.0** |
+| **Self-Test Infrastructure (15 tests)** | **✔ Complete ⭐ v0.5.1** |
+| **EFER.NXE enabled (NX on hardware)** | **✔ Complete ⭐ v0.5.1** |
+| **Kernel-Owned GDT (higher-half)** | **✔ Complete ⭐ v0.5.1** |
+| **Print Atomicity (shared serial/VGA lock)** | **✔ Complete ⭐ v0.5.1** |
+| **#DF through IST1** | **✔ Complete ⭐ v0.5.1** |
+| **Kernel Shell on a Pool-Allocated Stack** | **✔ Complete ⭐ v0.5.1** |
+| **Staging Ceiling Raised to 448 KB** | **✔ Complete ⭐ v0.5.1** |
 | `SYS_UNLINK` | ☐ Planned |
-| User Programs from Disk (`sys_exec`) | ☐ Planned |
+| User Programs from Disk (`sys_exec`) | ☐ Planned (next feature) |
+| ELF Loader `PT_NX` Follow-up | ☐ Planned |
 | Serial Console Debug Access | ☐ Planned |
 | Framebuffer Graphics | ☐ Planned |
 | File System (VFS) | ☐ Planned |
