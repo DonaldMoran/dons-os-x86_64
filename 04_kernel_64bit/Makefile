@@ -71,7 +71,7 @@ OBJS = entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o \
 	elf.o test_program_data.o \
 	user_syscall.o user_syscall_entry.o process.o string.o scheduler.o \
 	context_switch.o user_shell_data.o ata.o \
-	fatfs/ff.o fatfs/diskio.o
+		fatfs/ff.o fatfs/ffunicode.o fatfs/diskio.o
 
 kernel.elf: $(OBJS)
 	$(LD) $(LDFLAGS) -T linker.ld -o kernel.elf $(OBJS)

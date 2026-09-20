@@ -316,7 +316,7 @@ static void test_list_files(void) {
     printf("\n[LIST] Known files on 0:/\n");
 
     const char* known[] = {
-        "0:/HELLO.TXT",
+        "0:/HELLO-WORLD.TXT",
         "0:/USER.TXT",
         "0:/USER2.TXT",
         "0:/A.TXT",

@@ -1102,7 +1102,7 @@ static void handle_command(const char *cmd) {
             return;
         }
 
-        char path[64];
+        char path[300];
         path[0] = '0'; path[1] = ':'; path[2] = '/'; path[3] = '\0';
 
         int p_idx = 3;

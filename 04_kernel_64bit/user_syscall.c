@@ -95,7 +95,7 @@ long sys_open(const char* path, int flags) {
     pcb_t* self = process_get_current();
     if (!self || !path) return -1;
 
-    char local_path[128];
+    char local_path[300];
     if (safe_copy_from_user(local_path, path, 127) != 0) return -1;
     local_path[127] = '\0';
 
