@@ -160,8 +160,11 @@ user_syscall_entry.o: user_syscall_entry.asm
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Catch-all rule specifically compilation within the fatfs subdirectory
-fatfs/%.o: fatfs/%.c
-	$(CC) $(CFLAGS) -c $< -o $@
+#~ fatfs/%.o: fatfs/%.c
+#~ 	$(CC) $(CFLAGS) -c $< -o $@
+	
+fatfs/ff.o: fatfs/ff.c
+	$(CC) $(CFLAGS) -O1 -c fatfs/ff.c -o fatfs/ff.o
 
 vga.o: vga.c
 	$(CC) $(CFLAGS) -I. -c vga.c -o vga.o

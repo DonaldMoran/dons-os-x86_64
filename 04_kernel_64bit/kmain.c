@@ -213,6 +213,8 @@ static int test_vmm(void);
 static int test_map(void);
 static int test_recursive(void);
 static int test_heap(void);
+static int test_heap_validate(void);
+static int test_heap_stress(void);
 static int test_nx(void);
 static int test_syscall(void);
 static int test_ata(void);
@@ -539,6 +541,65 @@ static int test_heap(void) {
 }
 
 /* =====================================================================
+ * Heap validator.  Walks the block list and checks every invariant.
+ * Returns PASS if heap_validate returns 0.
+ * ===================================================================== */
+static int test_heap_validate(void) {
+    PRINT_BOTH("\n=== Heap Validator ===\n");
+    uint64_t bad = heap_validate();
+    if (bad == 0) {
+        PRINT_BOTH("  Status   : INTACT\n");
+        return SELFTEST_PASS;
+    }
+    PRINT_BOTH("  Status   : CORRUPT at 0x");
+    PRINT_BOTH_HEX(bad);
+    PRINT_BOTH("\n");
+    return SELFTEST_FAIL;
+}
+
+/* =====================================================================
+ * Heap stress.  Deterministic alloc/free pattern that forces at least
+ * one extension.  Returns PASS if no leak and no corruption.
+ *
+ * The heap grows from 1 MB to roughly 2-3 MB over the course of one
+ * run.  It stays grown, so repeated runs do not leak PMM pages.
+ * ===================================================================== */
+static int test_heap_stress(void) {
+    PRINT_BOTH("\n=== Heap Stress (4096 ops, 512 slots) ===\n");
+    size_t before = heap_used();
+    size_t mapped_before = heap_total();
+    size_t leak   = heap_stress();
+    size_t after  = heap_used();
+    size_t mapped_after = heap_total();
+
+    PRINT_BOTH("  Mapped before: ");
+    PRINT_BOTH_DEC((uint64_t)mapped_before);
+    PRINT_BOTH(" bytes\n");
+    PRINT_BOTH("  Mapped after:  ");
+    PRINT_BOTH_DEC((uint64_t)mapped_after);
+    PRINT_BOTH(" bytes\n");
+    PRINT_BOTH("  Used before:   ");
+    PRINT_BOTH_DEC((uint64_t)before);
+    PRINT_BOTH(" bytes\n");
+    PRINT_BOTH("  Used after:    ");
+    PRINT_BOTH_DEC((uint64_t)after);
+    PRINT_BOTH(" bytes\n");
+
+    if (mapped_after == mapped_before) {
+        PRINT_BOTH("  NOTE     : heap did not extend; stress may be too small\n");
+    }
+
+    if (leak != 0) {
+        PRINT_BOTH("  Status   : FAILED (sentinel=");
+        PRINT_BOTH_DEC((uint64_t)leak);
+        PRINT_BOTH(")\n");
+        return SELFTEST_FAIL;
+    }
+    PRINT_BOTH("  Status   : SUCCESS (no leak, heap intact)\n");
+    return SELFTEST_PASS;
+}
+
+/* =====================================================================
  * NX: allocate a page, map it with the NX bit set, then walk the page
  * tables via HHDM to confirm the NX bit landed in the final PTE.
  *
@@ -853,7 +914,7 @@ static void handle_command(const char *cmd) {
     }
 
     if (strcmp(cmd, "help") == 0) {
-        vga_print("\nCmds:\n  help, clear, version, reboot, pmmtest, info, mem, test,\n  vmmtest, serialtest, heapstat, maptest, testrec, heaptest,\n  nxtest, syscall, elfload, proclist, proccreate, vmmclone,\n  runproc, schstat, testyield, usershell, gdtdump, tssdump,\n  atatest, fatmount, fatls, fatcat <file>, selftest\n> ");
+        vga_print("\nCmds:\n  help, clear, version, reboot, pmmtest, info, mem, test,\n  vmmtest, serialtest, heapstat, maptest, testrec, heaptest,\n  heapcheck, heapstress, nxtest, syscall, elfload, proclist,\n  proccreate, vmmclone, runproc, schstat, testyield, usershell,\n  gdtdump, tssdump, atatest, fatmount, fatls, fatcat <file>,\n  selftest\n> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear(); vga_print("DonsDOS v0.5.1\nType 'help'\n> ");
     } else if (strcmp(cmd, "version") == 0) {
@@ -912,7 +973,7 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "heapstat") == 0) {
         PRINT_BOTH("\n=== Heap Dashboard ===\n");
         heap_stats();
-        vga_print("Node trace complete.\n> ");
+        vga_print("> ");
     } else if (strcmp(cmd, "maptest") == 0) {
         test_map();
         vga_print("> ");
@@ -921,6 +982,12 @@ static void handle_command(const char *cmd) {
         vga_print("> ");
     } else if (strcmp(cmd, "heaptest") == 0) {
         test_heap();
+        vga_print("> ");
+    } else if (strcmp(cmd, "heapcheck") == 0) {
+        test_heap_validate();
+        vga_print("> ");
+    } else if (strcmp(cmd, "heapstress") == 0) {
+        test_heap_stress();
         vga_print("> ");
     } else if (strcmp(cmd, "nxtest") == 0) {
         test_nx();
@@ -1085,6 +1152,8 @@ static void handle_command(const char *cmd) {
         RUN(map);
         RUN(recursive);
         RUN(heap);
+        RUN(heap_validate);
+        RUN(heap_stress);
         RUN(nx);
         RUN(syscall);
         RUN(ata);
@@ -1157,6 +1226,7 @@ void kmain(BootInfo *info) {
     PRINT_BOTH("CPU: SSE extensions enabled.\n");
 
     static FATFS boot_fs;
+
     if (f_mount(&boot_fs, "0:", 1) == FR_OK) {
 #if FAT_CONFIG_SINGLE_DRIVE
         PRINT_BOTH("Storage: single-drive, FAT@LBA 2048\n");
