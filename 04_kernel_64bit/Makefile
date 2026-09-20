@@ -4,6 +4,24 @@ AS      := nasm
 OBJCOPY := objcopy
 XXD     := xxd
 
+# Cross-compiler for FatFs.
+#
+# Clang 22.1.8 (Fedora 22.1.8-4.fc44) miscompiles ff.c at every
+# optimization level we have tried:
+#
+#   -O0  read paths break: f_readdir fills FILINFO incorrectly,
+#        filenames decode as garbage, f_opendir returns FR_INT_ERR
+#   -O1  f_unlink hangs in remove_chain
+#   -O2  LLD 22.1.8 truncates instructions in the linked binary
+#        (check_fs, move_window)
+#
+# The cross-GCC produces correct code at -O2. It uses the same
+# x86-64 System V ABI as Clang, so a GCC-built ff.o links cleanly
+# with the Clang-built kernel objects.
+#
+# See LLD_BUG_REPORT.md for the full history of both issues.
+FATFS_CC := /opt/cross/bin/x86_64-elf-gcc
+
 # Userland directory - only newlib now
 USERLAND_DIR := userland/newlib
 
@@ -23,9 +41,25 @@ FAT_CFLAGS := -DFAT_CONFIG_SINGLE_DRIVE=0
 endif
 
 # Kernel CFLAGS - Added -Ifatfs here so all files can parse ff.h natively
+#
+# -MMD -MP writes a .d file next to each .o listing the headers that
+# .o depends on, and adds phony targets for those headers.  The .d
+# files are pulled in by the -include at the bottom of this Makefile.
+# Without this, changing a header requires `make clean`; a partial
+# rebuild produces a kernel that is a mix of objects compiled against
+# two different header versions.
 CFLAGS  := -target x86_64-unknown-elf -ffreestanding -O2 -Wall -Wextra \
 	-mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 \
-	-mno-avx -mno-mmx -Iinclude -Ifatfs $(FAT_CFLAGS)
+	-mno-avx -mno-mmx -Iinclude -Ifatfs $(FAT_CFLAGS) \
+	-MMD -MP
+
+# FatFs CFLAGS - for the cross-GCC.  No -target flag; the cross-GCC
+# is already configured for x86_64-unknown-elf.  Same ABI as the
+# Clang kernel build, so the objects link together.
+FATFS_CFLAGS := -ffreestanding -O2 -Wall -Wextra \
+	-mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 \
+	-mno-avx -mno-mmx -Iinclude -Ifatfs $(FAT_CFLAGS) \
+	-MMD -MP
 
 # User-space CFLAGS (for kernel-side objects that need to embed user data)
 USER_CFLAGS := -target x86_64-unknown-elf -ffreestanding -O0 -Wall -Wextra \
@@ -71,7 +105,7 @@ OBJS = entry.o ring3_entry.o kmain.o pmm.o vmm.o heap.o idt.o interrupts.o \
 	elf.o test_program_data.o \
 	user_syscall.o user_syscall_entry.o process.o string.o scheduler.o \
 	context_switch.o user_shell_data.o ata.o \
-	fatfs/ff.o fatfs/diskio.o
+	fatfs/ff.o fatfs/ffunicode.o fatfs/diskio.o
 
 kernel.elf: $(OBJS)
 	$(LD) $(LDFLAGS) -T linker.ld -o kernel.elf $(OBJS)
@@ -159,10 +193,30 @@ user_syscall_entry.o: user_syscall_entry.asm
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Catch-all rule specifically compilation within the fatfs subdirectory
-fatfs/%.o: fatfs/%.c
-	$(CC) $(CFLAGS) -c $< -o $@
+# ============================================================
+# FATFS — compiled with the cross-GCC
+# ============================================================
+#
+# These two files are compiled with /opt/cross/bin/x86_64-elf-gcc
+# instead of Clang.  See the FATFS_CC comment near the top of this
+# Makefile for the full rationale.
+#
+# The objects use the same x86-64 System V ABI as the Clang-built
+# kernel objects, so they link cleanly.  This is a per-file override
+# of the default %.o: %.c rule; the specific rule takes precedence.
+#
+fatfs/ff.o: fatfs/ff.c
+	$(FATFS_CC) $(FATFS_CFLAGS) -c fatfs/ff.c -o fatfs/ff.o
 
+fatfs/ffunicode.o: fatfs/ffunicode.c
+	$(FATFS_CC) $(FATFS_CFLAGS) -c fatfs/ffunicode.c -o fatfs/ffunicode.o
+
+# diskio.c stays with the default rule above (Clang).
+# It is small, hand-written, and does not exhibit the ff.c bug.
+
+# ============================================================
+# FILE-SPECIFIC CFLAGS
+# ============================================================
 vga.o: vga.c
 	$(CC) $(CFLAGS) -I. -c vga.c -o vga.o
 
@@ -179,8 +233,18 @@ user_syscall.o: user_syscall.c
 # CLEAN
 # ============================================================
 clean:
-	rm -f *.o *.bin *.elf test_program test_program.bin test_program_data.c
+	rm -f *.o *.bin *.elf *.d test_program test_program.bin test_program_data.c
 	rm -f user_shell.elf user_shell_data.c
 	rm -f user_shell.bin
-	rm -f fatfs/*.o
+	rm -f fatfs/*.o fatfs/*.d
 	$(MAKE) -C $(USERLAND_DIR) clean
+
+# ============================================================
+# HEADER DEPENDENCY TRACKING
+# ============================================================
+# Pull in the .d files emitted by -MMD.  If a header changes, make
+# sees the dependency and rebuilds the affected .o files.  Without
+# this, `make clean` was required after every header change, and a
+# partial rebuild produced a kernel that mixed objects compiled
+# against two different header versions.
+-include $(OBJS:.o=.d)

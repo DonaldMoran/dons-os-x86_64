@@ -19,6 +19,10 @@ extern void handle_reboot_sequence(void);
 #define WRITE_CHUNK 256
 static char g_write_bounce[WRITE_CHUNK];
 
+/* Maximum path length accepted from user space.  Matches the LFN
+ * buffer budget: "0:/" + FF_MAX_LFN (255) + NUL, rounded up. */
+#define USER_PATH_MAX 300
+
 // ============================================================
 // SAFE COPY OPERATIONS
 // ============================================================
@@ -70,6 +74,22 @@ static int safe_copy_to_user(void* user_dest, const void* kernel_src, size_t cou
     return 0;
 }
 
+/* Copy a NUL-terminated string from user space into a kernel buffer.
+ * Returns 0 on success, -1 on fault or if the string is longer than
+ * dst_cap - 1 bytes.  The destination is always NUL-terminated. */
+static int copy_user_string(char* dst, size_t dst_cap, const char* user_src) {
+    if (dst_cap == 0) return -1;
+    size_t i = 0;
+    while (i < dst_cap - 1) {
+        char c;
+        if (safe_copy_from_user(&c, user_src + i, 1) != 0) return -1;
+        dst[i++] = c;
+        if (c == '\0') return 0;
+    }
+    dst[dst_cap - 1] = '\0';
+    return 0;
+}
+
 // ============================================================
 // FILE TABLE HELPERS
 // ============================================================
@@ -95,9 +115,8 @@ long sys_open(const char* path, int flags) {
     pcb_t* self = process_get_current();
     if (!self || !path) return -1;
 
-    char local_path[128];
-    if (safe_copy_from_user(local_path, path, 127) != 0) return -1;
-    local_path[127] = '\0';
+    char local_path[USER_PATH_MAX];
+    if (copy_user_string(local_path, sizeof(local_path), path) != 0) return -1;
 
     int fd = -1;
     for (int i = 3; i < MAX_PROCESS_FILES; i++) {
@@ -163,6 +182,36 @@ long sys_close(int fd) {
     f_close(file_obj);
     kfree(file_obj);
     self->file_table[fd] = NULL;
+    return 0;
+}
+
+/*
+ * SYS_UNLINK (7) — delete a file from the FAT volume.
+ *
+ * Wraps FatFs's f_unlink.  Returns 0 on success, -1 on any failure
+ * (bad path, no such file, open file, read-only, or a user-memory
+ * fault while copying the path in).
+ *
+ * Note: f_unlink refuses to delete a file that is currently open by
+ * anyone, including the calling process.  The caller must close its
+ * own handles first.  There is no per-process enforcement of this
+ * beyond what FatFs does.
+ */
+long sys_unlink(const char* path) {
+    pcb_t* self = process_get_current();
+    if (!self || !path) return -1;
+
+    char local_path[USER_PATH_MAX];
+    if (copy_user_string(local_path, sizeof(local_path), path) != 0) return -1;
+
+    FRESULT r = f_unlink(local_path);
+    if (r != FR_OK) {
+        serial_print("sys_unlink: f_unlink FAIL path=");
+        serial_print(local_path);
+        serial_print(" r="); serial_print_dec(r);
+        serial_print("\n");
+        return -1;
+    }
     return 0;
 }
 
@@ -344,6 +393,7 @@ uint64_t syscall_dispatch(uint64_t num,
         case 3:  return (uint64_t)sys_read((int)arg0, (void*)arg1, (size_t)arg2);
         case 4:  return (uint64_t)sys_open((const char*)arg0, (int)arg1);
         case 6:  return (uint64_t)sys_close((int)arg0);
+        case 7:  return (uint64_t)sys_unlink((const char*)arg0);
         case 10: return (uint64_t)sys_brk((long)arg0);
         case 20: return (uint64_t)sys_getpid();
         case 25: kernel_do_reboot(); return 0; /* noreturn; return is a safety net */

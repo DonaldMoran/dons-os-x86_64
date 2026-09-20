@@ -3,6 +3,7 @@
 *.img
 *.iso
 *.o
+*.d
 *.elf
 *.map
 
@@ -40,3 +41,6 @@ capture.txt
 04_kernel_64bit/test_program
 04_kernel_64bit/test_program_data.c
 04_kernel_64bit/user_shell_data.c
+
+# FatFs workaround backup (from the f_unlink debugging)
+04_kernel_64bit/fatfs/ff.cold

@@ -10,6 +10,7 @@
 #define SYS_READ    3
 #define SYS_OPEN    4
 #define SYS_CLOSE   6
+#define SYS_UNLINK  7
 #define SYS_BRK     10
 #define SYS_REBOOT  25
 
@@ -87,6 +88,12 @@ int open(const char *path, int flags, int mode) {
 int close(int fd) {
     return (int)syscall3(SYS_CLOSE,
                          (uint64_t)fd,
+                         0, 0);
+}
+
+int unlink(const char *path) {
+    return (int)syscall3(SYS_UNLINK,
+                         (uint64_t)path,
                          0, 0);
 }
 
