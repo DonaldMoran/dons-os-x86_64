@@ -212,7 +212,7 @@ New apps can be added by dropping a `.c` file in `apps/`, adding it to the Makef
 ### What's not there (yet)
 
 - **No dynamic linking.** Programs are statically linked against `libc.a`. A shared library / dynamic loader would be a separate project.
-- **No filesystem for program loading.** The kernel has FatFs, but user programs are still embedded in the kernel image at build time. Loading them from disk is the next storage milestone.
+- ~~**No filesystem for program loading.** The kernel has FatFs, but user programs are still embedded in the kernel image at build time.~~ ✅ **Done in v0.5.3.** User programs are loaded from the FAT volume at runtime by `SYS_EXEC` (syscall #8). The user shell's option `A` loads `HELLO.ELF` from disk, runs it as an independent Ring 3 process, and blocks in `SYS_WAITPID` (syscall #9) until the child exits.
 - **A subset of newlib is exercised.** `stdio`, `stdlib` (`malloc`), `string`, `unistd`, and `fcntl` are the primary use; `math.h` (`libm.a`) is linked but not exercised by anything in the tree. `signal`, `pthread`, `dirent`, and other subsystems are compiled in but untested on this kernel.
 
 ---
@@ -279,7 +279,7 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 Example session:
 
 ```text
-DonsDOS v0.5.2 
+DonsDOS v0.5.3 
 Type 'help'
 > help
 
@@ -338,6 +338,7 @@ It runs as an ordinary Ring 3 process using newlib. Its menu currently offers:
 | 7 | Large write test: 4 KB round-trip through FatFs, catches multi-cluster bugs |
 | 8 | List known files: probe a fixed set of names and report which exist, with a short preview |
 | 9 | Reboot: call `SYS_REBOOT`, which flushes file handles and fires a hardware reset |
+| A | Spawn `0:/HELLO.ELF` from disk: call `spawn()`, block in `waitpid()`, then verify the child's exit status is 0 |
 
 - Option 3 exercises malloc → sbrk → sys_brk → page mapping → user write → user read, confirming that user pages are correctly mapped and writable.
 - Option 4 exercises open → write → close → open → read on the FAT volume from Ring 3. The round-trip is byte-exact.
@@ -554,6 +555,18 @@ This project is designed to be:
   - **`sys_open` path truncation fix.** Was copying only 127 bytes of the path into a 300-byte buffer. Replaced with a `copy_user_string` helper that respects the buffer size. Paths up to `FF_MAX_LFN` (255) now fit. New `USER_PATH_MAX` constant (300).
   - **Cross-GCC for FatFs.** `fatfs/ff.o` and `fatfs/ffunicode.o` are compiled with `/opt/cross/bin/x86_64-elf-gcc` at `-O2`. Clang 22.1.8 miscompiles `ff.c` at every optimization level: `-O0` breaks the FILINFO read path (filenames decode as `@80(`, `f_opendir` returns `FR_INT_ERR`), `-O1` hangs in `f_unlink`, and `-O2` produces LLD-truncated instructions in the linked binary. GCC produces correct code and links cleanly with the Clang-built kernel objects. See `LLD_BUG_REPORT.md`.
   - **Makefile header dependency tracking.** `-MMD -MP` added to `CFLAGS`; `-include $(OBJS:.o=.d)` at the bottom. Header changes now trigger the right rebuilds automatically. This was the root cause of several stale-object debugging sessions earlier in the project.
+- `v0.5.3` ⭐ NEW — **`SYS_EXEC` complete: disk-loaded ELF user programs, plus three memory-safety fixes.**
+  - **`SYS_EXEC` (syscall #8).** Opens an ELF file on the FAT volume, loads it into a new process, and returns its pid to the caller. `spawn("0:/HELLO.ELF")` from the user shell loads `HELLO.ELF` from disk at runtime; the child runs as an independent Ring 3 process and prints its banner. This is the feature that stops user programs from being embedded in the kernel image.
+  - **`SYS_WAITPID` (syscall #9).** Blocks the calling process until a matching child exits, then reaps it and returns its exit status. `spawn` + `waitpid` together give the shell a working "run a program and wait for it" primitive.
+  - **`spawn()` and `waitpid()` shims** in `arc2/syscalls.c`, and `apps/include/donsdos.h`. Declared for user programs. `WNOHANG` supported.
+  - **Process parent/child tracking.** New `pcb_t` fields `parent_pid`, `exit_status`, `wait_pid`, and a `PROC_STATE_ZOMBIE` state. A process with a parent becomes a zombie on exit and is reaped by `sys_waitpid`; a process with no parent reclaims itself immediately, preserving the pre-v0.5.3 behavior for idle and the shells.
+  - **Three latent memory-safety bugs found and fixed during bring-up.** Each was independently sufficient to make `SYS_EXEC` flaky, and each is documented in `MAINTENANCE.md` §3 with the specific symptom it caused:
+    1. **PMM allocator reentrancy.** `pmm_alloc_page` did a non-atomic read-modify-write on the bitmap. A timer IRQ between `bitmap_test` and `bitmap_set` could hand the same page out twice. Fixed with `cli`/`sti` critical sections in `pmm_alloc_page`, `pmm_free_page`, `pmm_reserve_page`, and `pmm_unreserve_page`, using a `pushfq`-based save/restore that preserves the caller's IF.
+    2. **Page-table aliasing in `vmm_clone_page_table`.** The clone was a shallow copy of the PML4: parent and child shared every PDPT, PD, and PT. Any `vmm_map_page_in_cr3` on the child therefore overwrote the *parent's* PTEs. Fixed with a deep copy of the low-half page-table hierarchy (PML4[0..255]); the high half (HHDM and kernel) remains shared by design.
+    3. **`context_switch` resumed processes by `entry_point`.** The resume side chose user vs kernel by comparing `next->entry_point` against `KERNEL_BASE`. That is correct for the first dispatch of a fresh process but wrong for resuming a process that had been preempted or blocked in kernel mode — such a process has `entry_point = 0x8000000000` but a saved kernel frame with `CS = 0x18`. The old code took the user branch and rebuilt the frame from `entry_point` and `user_stack_top`, restarting the process from `_start`. This is what produced "shell restarts after `waitpid` returns." Fixed by making the resume side trust the saved frame verbatim and choose the validation rule from the frame's own CS.
+  - **`sys_exec` and `sys_waitpid` are now first-class user-visible features.** Documented in the user shell's option `A`.
+  - **`HELLO.ELF` built and copied into the FAT partition** at image-build time by `05_boot_kernel64/Makefile`. The `hello.c` user program is 20 KB, and the single-drive build's `mcopy` step places it as `HELLO.ELF`.
+  - All prior features remain functional. `selftest` still passes 17/17; user shell options 1–9 still work.
   
   ---
 
@@ -752,18 +765,21 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - ~~`SYS_UNLINK` (syscall #7)~~ ✅ v0.5.2
 - ~~Cross-GCC for FatFs~~ ✅ v0.5.2
 - ~~Makefile header dependency tracking (`-MMD -MP`)~~ ✅ v0.5.2
-- **`sys_exec`** — the next feature milestone.  Add a syscall that opens an ELF file on the FAT volume, loads it, and spawns a process.  Stops embedding user programs in the kernel image.  See [`ROADMAP.md`](ROADMAP.md) §4.9.
+- ~~**`SYS_EXEC` (syscall #8) and `SYS_WAITPID` (syscall #9)** — disk-loaded ELF user programs. `spawn()` and `waitpid()` shims, parent/child tracking in the PCB, `PROC_STATE_ZOMBIE`.~~ ✅ v0.5.3
+- ~~**Three memory-safety fixes** — PMM allocator reentrancy, `vmm_clone_page_table` deep copy, `context_switch` resume-by-entry-point.~~ ✅ v0.5.3
 - **Boot-time self-test mode and `make test`** — deferred.  The interactive `selftest` command already runs the same 17 tests; `5b`/`5c` add headless/scripted execution, which is not the current workflow.  See [`MAINTENANCE.md`](MAINTENANCE.md) §5b–5c.
+- **Spawn regression test** — a kernel-mode self-test child that opens `0:/HELLO.ELF`, spawns it, waits for it, and asserts exit status 0. This makes the three v0.5.3 fixes regression-detectable. See [`MAINTENANCE.md`](MAINTENANCE.md) §5d.
 
 ### Medium-term
-- **User programs from disk** — add a `sys_exec`-style syscall, load ELF files from the FAT volume, and stop embedding programs in the kernel image.  (This is the same item as "`sys_exec`" in Short-term; listed here as well because it enables a real shell with external commands.)
+- **A real shell with external commands** — the user shell's menu is a fixed list; `SYS_EXEC` and `SYS_WAITPID` give it the primitives to run arbitrary programs by name. This is the natural next feature now that the loader works end to end.
 - **Serial console debug access** — kernel shell reachable over COM1, physically separate from the user's keyboard.  This is the right shape for runtime kernel-shell access; the magic-key-combo approach was tried and abandoned (it's a security backdoor and the kernel shell isn't a process the scheduler can suspend).
 - **ELF loader `PT_NX` follow-up** — `elf_load_into_process` currently maps every segment executable.  With NXE now on, non-executable segments (data, BSS, user stack) can be marked `PT_NX`.  About an hour of work; closes the follow-up noted in `MAINTENANCE.md` §3g.
+- **Page-table teardown on process exit** — walk the process's page tables and free the user-space portion. The v0.5.3 deep clone makes each process own more page-table pages than before, so the leak is slightly larger and this is now more valuable. See [`MAINTENANCE.md`](MAINTENANCE.md) §3c.
 
 ### Long-term
 - **File System (VFS)** — a VFS layer above FatFs, with mount points and path resolution
 - **Framebuffer graphics** — move off VGA text mode
-- **Page-table teardown on process exit** — walk the process's page tables and free the user-space portion, completing the cleanup story from the short-term item
+- **Ring-buffer console** — replace the global print lock with a FIFO drained by a low-priority kernel task, so printing from a scheduled context does not stall the timer and so per-user ttys can have independent output paths. See [`MAINTENANCE.md`](MAINTENANCE.md) §4e.
 - **Bootloader migration to Limine** — replaces the hand-written stage2, removes the 448 KB kernel ceiling, and turns the kernel into a file loaded by the bootloader rather than a fixed-LBA blob
 
 ---

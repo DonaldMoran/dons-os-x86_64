@@ -15,8 +15,18 @@ typedef enum {
     PROC_STATE_READY,
     PROC_STATE_RUNNING,
     PROC_STATE_BLOCKED,
-    PROC_STATE_TERMINATED
+    PROC_STATE_ZOMBIE,       // exited; waiting for parent to reap
+    PROC_STATE_TERMINATED    // exited; parent never existed; reclaimed immediately
 } proc_state_t;
+
+/*
+ * Block kinds.  A blocked process can be waiting on a keyboard byte
+ * (BLOCK_KIND_NONE, the default) or on a specific child to exit
+ * (BLOCK_KIND_WAITPID).  When the event arrives, the waker checks
+ * block_kind before waking.
+ */
+#define BLOCK_KIND_NONE    0
+#define BLOCK_KIND_WAITPID 1
 
 // Process Control Block
 typedef struct pcb {
@@ -68,6 +78,24 @@ typedef struct pcb {
     
     uint64_t block_kind;
 
+    /*
+     * Parent / child tracking (v0.5.3).
+     *
+     * These fields are placed AFTER block_kind so that every offset
+     * context_switch.asm reads (which stops at block_kind, 0x158)
+     * remains unchanged.  Do not move them before block_kind.
+     *
+     * parent_pid == 0 means "no parent" — used by idle, the kernel
+     * shell, and the user shell.  A process with parent_pid == 0
+     * reclaims its own PCB on exit and does not become a zombie.
+     *
+     * A process with parent_pid != 0 becomes PROC_STATE_ZOMBIE on
+     * exit; the parent reaps it via sys_waitpid.
+     */
+    uint64_t parent_pid;
+    int      exit_status;    // set by sys_exit; read by sys_waitpid
+    uint64_t wait_pid;       // pid the process is blocked waiting for; 0 if none, (uint64_t)-1 = "any"
+
     // Per-Process File Descriptor Tracking Array (Pointer maps to index)
     void* file_table[MAX_PROCESS_FILES];
 } pcb_t;
@@ -89,6 +117,14 @@ void process_reclaim(pcb_t* pcb);
 void process_exit(void) __attribute__((noreturn));
 void kernel_idle_loop(void);
 void process_wake_all_blocked(void);
+
+/*
+ * Wake the parent of `child` if it is blocked in waitpid on this
+ * child (or on any child, which is wait_pid == (uint64_t)-1).
+ * Called from process_exit before the exiting process becomes a
+ * zombie.  Returns the parent's PCB if it was woken, or NULL.
+ */
+pcb_t* process_wake_parent_if_waiting(pcb_t* child);
 
 /*
  * Kernel shell accessors.

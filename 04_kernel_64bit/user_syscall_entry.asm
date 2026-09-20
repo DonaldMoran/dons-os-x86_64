@@ -3,69 +3,11 @@ default rel
 
 section .text
 global user_syscall_entry
-; global syscall_init_asm << Now handled in kmain.c
-
 extern syscall_dispatch
 extern process_exit
 extern serial_print
 extern serial_print_hex
 extern g_syscall_stack_top
-
-; ---------------------------------------------------------------------------
-; *** This is now handled in kamin.c ***
-; Syscall init: set up EFER, STAR, LSTAR, FMASK
-;
-; STAR (IA32_STAR, MSR 0xC0000081) layout:
-;   bits 63:48 = SYSRET CS/SS base
-;   bits 47:32 = SYSCALL CS/SS base
-;   bits 31:0  = reserved, must be zero
-;
-; We use SYSRET base = 0x23, NOT 0x20. Rationale:
-;
-;   Intel's SYSRET forces RPL 3 on the loaded CS/SS, so a base of
-;   0x20 yields CS=0x33, SS=0x2B as intended.
-;
-;   AMD's SYSRET does NOT force RPL 3 (APM Vol 3). With base 0x20
-;   it loads SS = 0x20 + 8 = 0x28, i.e. RPL 0, DPL 3 — an invalid
-;   user-mode SS. The CPU tolerates it until the next interrupt,
-;   then iretq validates SS against CPL and raises #GP(0x28).
-;
-;   Setting the base to 0x23 pre-bakes the RPL 3 bits:
-;     SYSRET CS = 0x23 + 16 = 0x33  (RPL 3)  ✓
-;     SYSRET SS = 0x23 +  8 = 0x2B  (RPL 3)  ✓
-;   Intel's forced OR with 3 is a no-op on these values, so the
-;   same STAR works on both AMD and Intel without a vendor check.
-;
-; SYSCALL base remains 0x18: kernel CS = 0x18, SS = 0x20. SYSCALL
-; does not apply the RPL trick, so this is vendor-independent.
-;
-; Encoded as: EDX = (0x23 << 16) | 0x18 = 0x00230018, EAX = 0.
-; ---------------------------------------------------------------------------
-;syscall_init_asm:
-;    mov ecx, 0xC0000080
-;    rdmsr
-;    or eax, 0x1
-;    wrmsr
-;
-;    mov ecx, 0xC0000081
-;    xor edx, edx
-;    xor eax, eax
-;    mov edx, 0x00230018             ; STAR[63:48]=0x23 (SYSRET base, RPL-3 pre-baked)
-;                                    ; STAR[47:32]=0x18 (SYSCALL CS)
-;    wrmsr                           ; EAX stays 0: reserved bits 31:0 = 0
-;
-;    mov ecx, 0xC0000082
-;    mov rax, user_syscall_entry
-;    mov rdx, rax
-;    shr rdx, 32
-;    wrmsr
-;
-;    mov ecx, 0xC0000084
-;    mov eax, 0x00000200
-;    xor edx, edx
-;    wrmsr
-;
-;    ret
 
 ; ---------------------------------------------------------------------------
 ; Syscall entry from usermode
@@ -75,30 +17,23 @@ extern g_syscall_stack_top
 ;   R11 = user RFLAGS
 ;   RSP = user stack pointer (UNCHANGED by the syscall instruction)
 ;   CS  = 0x18, SS = 0x20 (from STAR)
-;
-; Plan:
-;   1. cli. The next few instructions touch a global scratch slot and
-;      the syscall stack pointer. An interrupt in this window would
-;      find the CPU on the user stack with the kernel stack not yet
-;      installed, which is exactly the bug class this change removes.
-;   2. Save user RSP to a global scratch slot.
-;   3. Load RSP from g_syscall_stack_top.
-;   4. sti. From here on we are on the kernel stack, and the timer
-;      path (TSS.RSP0 == same kernel stack) is safe to nest.
-;   5. Push the 6 callee-saved GPRs, RCX, R11, the user RSP slot, and
-;      R8/R9. The layout matches the old code so the arg shuffle below
-;      is unchanged.
-;   6. Shuffle args, call syscall_dispatch.
-;   7. On return: pop everything, restore user RSP from the pushed
-;      slot (staged through R10, which sysret does not read), sysret.
-;
-; The global scratch g_user_rsp_save is safe on UP because the window
-; between the store and the load of RSP is covered by cli.
 ; ---------------------------------------------------------------------------
 
 section .bss
 align 8
 g_user_rsp_save: resq 1
+
+section .data
+align 8
+; Last values passed to sysret. Diagnostic only: the exception handler
+; reads these if a fault lands at RIP < 0x1000 in user mode, which is
+; the signature of a corrupted sysret target.
+global g_last_sysret_rcx
+global g_last_sysret_r11
+global g_last_sysret_rsp
+g_last_sysret_rcx: dq 0
+g_last_sysret_r11: dq 0
+g_last_sysret_rsp: dq 0
 
 section .text
 
@@ -163,6 +98,13 @@ user_syscall_entry:
     pop r12
     pop rbp
     pop rbx
+
+    ; Diagnostic: record what we are about to load into the CPU's
+    ; user-mode RIP/RFLAGS/RSP, so the exception handler can dump it
+    ; if the sysret goes wrong.
+    mov [rel g_last_sysret_rcx], rcx
+    mov [rel g_last_sysret_r11], r11
+    mov [rel g_last_sysret_rsp], r10
 
     mov rsp, r10
     o64 sysret

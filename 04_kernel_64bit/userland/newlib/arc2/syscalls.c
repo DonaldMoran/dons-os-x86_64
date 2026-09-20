@@ -11,6 +11,8 @@
 #define SYS_OPEN    4
 #define SYS_CLOSE   6
 #define SYS_UNLINK  7
+#define SYS_EXEC    8
+#define SYS_WAITPID 9
 #define SYS_BRK     10
 #define SYS_REBOOT  25
 
@@ -43,13 +45,9 @@ void exit(int status) {
     }
 }
 
-/* Dynamic memory allocator tracker. On first call, queries the kernel's
- * native heap base (0x8000200000) via sys_brk(0) so the userland heap
- * starts where the kernel expects it. */
 void *sbrk(ptrdiff_t incr) {
     static int64_t heap_end_cached = 0;
 
-    // Dynamically retrieve the current base address directly from your kernel's sys_brk(0)
     if (heap_end_cached == 0) {
         int64_t current_break = syscall3(SYS_BRK, 0, 0, 0);
         if (current_break == -1) {
@@ -74,63 +72,56 @@ void *sbrk(ptrdiff_t incr) {
     return previous_heap_boundary;
 }
 
-/* ---------------------------------------------------------------------------
- * FILE DESCRIPTOR WRAPPERS (syscall 4 = open, syscall 6 = close)
- * --------------------------------------------------------------------------- */
-
 int open(const char *path, int flags, int mode) {
-    return (int)syscall3(SYS_OPEN,
-                         (uint64_t)path,
-                         (uint64_t)flags,
-                         (uint64_t)mode);
+    return (int)syscall3(SYS_OPEN, (uint64_t)path, (uint64_t)flags, (uint64_t)mode);
 }
 
 int close(int fd) {
-    return (int)syscall3(SYS_CLOSE,
-                         (uint64_t)fd,
-                         0, 0);
+    return (int)syscall3(SYS_CLOSE, (uint64_t)fd, 0, 0);
 }
 
 int unlink(const char *path) {
-    return (int)syscall3(SYS_UNLINK,
-                         (uint64_t)path,
-                         0, 0);
+    return (int)syscall3(SYS_UNLINK, (uint64_t)path, 0, 0);
 }
 
 /* ---------------------------------------------------------------------------
- * ARCHITECTURAL WRAPPERS WITH UNDERSCORES (FOR STRUCTURAL REDUNDANCY)
+ * spawn() — dons-os-specific, NOT POSIX.
+ *
+ * Creates a new process from the named ELF on the FAT volume and
+ * returns its pid.  The caller keeps running; the child runs whenever
+ * the scheduler picks it.  Use waitpid() to wait for it.
+ *
+ * See apps/include/donsdos.h for the declaration.
  * --------------------------------------------------------------------------- */
+int spawn(const char *path) {
+    return (int)syscall3(SYS_EXEC, (uint64_t)path, 0, 0);
+}
+
+/* ---------------------------------------------------------------------------
+ * waitpid() — POSIX-compatible three-argument form.
+ *
+ * Blocks until a matching child exits, then returns its pid and writes
+ * its exit status to *status (if status is non-NULL).  With
+ * options & WNOHANG, returns 0 immediately if no matching child has
+ * exited yet.
+ * --------------------------------------------------------------------------- */
+int waitpid(int pid, int *status, int options) {
+    return (int)syscall3(SYS_WAITPID,
+                         (uint64_t)(int64_t)pid,
+                         (uint64_t)status,
+                         (uint64_t)options);
+}
 
 ssize_t _write(int fd, const void *buf, size_t count) { return write(fd, buf, count); }
 ssize_t _read(int fd, void *buf, size_t count) { return read(fd, buf, count); }
 void _exit(int status) { exit(status); }
 void *_sbrk(ptrdiff_t incr) { return sbrk(incr); }
 
-/* ---------------------------------------------------------------------------
- * DONSDOS CUSTOM EXTENSION SYSTEM VECTORS
- * --------------------------------------------------------------------------- */
-
-/* Reboot the machine.
- *
- * Order matters:
- *   1. fflush(NULL) drains every buffered stdio stream in userland.
- *      Without this, data sitting in a FILE*'s buffer is lost when
- *      the kernel resets — the kernel can close the fd, but it
- *      cannot reach into userland memory to drain newlib's buffer.
- *   2. SYS_REBOOT asks the kernel to close remaining file handles
- *      (triggering f_sync -> FLUSH CACHE) and then fire the hardware
- *      reset. The kernel does not return from this syscall. */
 void sys_reboot(void) {
     fflush(NULL);
     syscall3(SYS_REBOOT, 0, 0, 0);
 }
 
-/* ---------------------------------------------------------------------------
- * REQUIRED STRUCTURAL LINKS TO SATISFY LINKER SCHEMATICS
- * --------------------------------------------------------------------------- */
-
-/* Report stdout/stderr as character devices (S_IFCHR) so newlib's stdio
- * treats them as interactive streams rather than regular files. */
 int fstat(int fd, struct stat *st) { 
     if (fd == 1 || fd == 2) {
         st->st_mode = S_IFCHR; 

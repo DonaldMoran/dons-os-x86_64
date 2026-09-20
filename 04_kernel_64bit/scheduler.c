@@ -97,28 +97,8 @@ void __attribute__((noreturn)) process_exit(void) {
         while(1) asm volatile("hlt");
     }
 
-    /* Disable interrupts for the entire exit sequence. The timer
-       must not fire between the first state mutation and the
-       context_switch:
-
-         - Between scheduler_ready_queue_remove and setting state to
-           TERMINATED, the timer's early check
-           (current->state == PROC_STATE_TERMINATED) would not fire,
-           and the timer could re-add the exiting process to the
-           ready queue.
-
-         - After current_process = next but before context_switch
-           switches stacks, the timer would see current = next and
-           save the *current* stack frame (which is still on the
-           exiting process's stack) into next->rsp. That corrupts
-           next's resume frame with a pointer into a stack that may
-           soon be reused.
-
-       Interrupts are re-enabled by the iretq in context_switch,
-       which restores RFLAGS (IF=1) from the resumed process's
-       frame. In the no-runnable-process fallback, we explicitly
-       sti before switching to the shell, since the shell expects
-       to run with interrupts on. */
+    /* Disable interrupts for the entire exit sequence. See the
+       previous version's comment for the full rationale. */
     __asm__ volatile("cli");
 
     pcb_t* exiting = current_process;
@@ -130,12 +110,29 @@ void __attribute__((noreturn)) process_exit(void) {
         process_set_current(NULL);
     }
 
-    /* Reclaim the exiting process's resources so its PCB slot can be
-       reused by a future process_create. This must happen before we
-       switch away, while the exiting process's context is still
-       current. Page tables (cr3) are not freed here; that teardown
-       is deferred. */
-    process_reclaim(exiting);
+    /*
+     * Decide between "no parent, reclaim now" and "has parent, become
+     * a zombie and let the parent reap us".
+     *
+     * A process with parent_pid == 0 is either idle, the kernel
+     * shell, or the user shell.  These are the terminal processes of
+     * the system; there is no one to reap them, so they reclaim
+     * their own PCB as before.
+     *
+     * A process with parent_pid != 0 was created by a SYS_EXEC or a
+     * SYS_FORK-style call.  It becomes a zombie and is reaped by the
+     * parent's SYS_WAITPID.  This is what makes spawn/wait
+     * meaningful.
+     */
+    if (exiting->parent_pid != 0) {
+        /* Zombie path.  Do NOT process_reclaim; the parent will.
+         * Wake the parent if it is blocked in waitpid. */
+        exiting->state = PROC_STATE_ZOMBIE;
+        process_wake_parent_if_waiting(exiting);
+    } else {
+        /* No-parent path.  Reclaim now, as before. */
+        process_reclaim(exiting);
+    }
 
     pcb_t* next = scheduler_ready_queue_next();
     if (!next) {
@@ -148,10 +145,6 @@ void __attribute__((noreturn)) process_exit(void) {
              no kernel shell to fall back to by design. */
         scheduler_reset();
 
-        /* Restore TSS.RSP0 and g_syscall_stack_top to idle's kernel
-           stack. Idle's stack is always mapped and always valid, and
-           is the safe target for any subsequent Ring 3 -> Ring 0
-           transition that occurs before the next scheduler switch. */
         extern void tss_set_kernel_stack(uint64_t stack);
         extern void tss_set_syscall_stack(uint64_t stack);
         pcb_t* idle = process_find_by_pid(1);
@@ -164,25 +157,12 @@ void __attribute__((noreturn)) process_exit(void) {
         }
 
         if (exiting->entry_point >= KERNEL_BASE) {
-            /* Kernel diagnostic exited. Resume the kernel shell.
-             *
-             * The shell is a real process (created at boot on the 'k'
-             * branch and recorded via process_set_kernel_shell). Its
-             * saved frame is in its own PCB, on its own kernel stack.
-             * The shell marked itself BLOCKED before yielding to the
-             * diagnostic, so it is not on the ready queue and not
-             * scheduled normally. Wake it and switch to it.
-             *
-             * If the shell is NULL (never created) or the switch
-             * somehow returns, we fall through to a halt. */
             pcb_t* shell = process_get_kernel_shell();
             if (shell && shell->state == PROC_STATE_BLOCKED) {
                 shell->state = PROC_STATE_RUNNING;
                 extern void scheduler_switch_to(pcb_t* next);
                 scheduler_switch_to(shell);
-                /* Not reached: scheduler_switch_to switches stacks
-                 * via context_switch and does not return to this
-                 * stack. */
+                /* Not reached. */
             }
             serial_print("process_exit: no kernel shell to resume, halting\n");
             __asm__ volatile("cli");
@@ -199,13 +179,6 @@ void __attribute__((noreturn)) process_exit(void) {
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
 
-    /* TSS.RSP0 and the syscall entry stack top must track `current`
-       unconditionally. Gating this on entry_point < KERNEL_BASE was
-       wrong: kernel-mode threads still need RSP0 correct so that a
-       later switch to a user process does not inherit a stale kernel
-       stack pointer, and the "both move in lockstep with current"
-       invariant documented in tss.c must hold at every context
-       switch. See scheduler_switch_to for the matching update. */
     extern void tss_set_kernel_stack(uint64_t stack);
     extern void tss_set_syscall_stack(uint64_t stack);
     tss_set_kernel_stack(next->kernel_stack_top);
@@ -225,18 +198,6 @@ void scheduler_switch_to(pcb_t* next) {
         return;
     }
 
-    /* Disable interrupts around the state mutation and the actual
-       stack switch. Without this, a PIT tick that arrives between
-       `current_process = next` and `context_switch(prev, next)` will
-       see `current == next` (a process that hasn't actually been
-       switched to yet) and save the *current* CPU state — which is
-       still running on the previous process's stack — into `next`'s
-       PCB fields. That overwrites `next->rsp` with a frame base that
-       lives on the wrong stack, and the next time `next` is resumed
-       the iretq fires on a corrupted frame.
-
-       Interrupts are re-enabled by the iretq in context_switch,
-       which restores RFLAGS (IF=1) from the target's saved frame. */
     __asm__ volatile("cli");
 
     pcb_t* prev = current_process;
@@ -247,10 +208,6 @@ void scheduler_switch_to(pcb_t* next) {
         scheduler_ready_queue_remove(next);
     }
 
-    /* Only put the outgoing process back on the ready queue if it is
-       still RUNNING. A process that marked itself BLOCKED (e.g. the
-       kernel shell about to yield to the user shell) or that is
-       TERMINATED must not be re-added. */
     if (prev && prev->state == PROC_STATE_RUNNING) {
         prev->state = PROC_STATE_READY;
         if (prev->pid != 1) {
@@ -261,11 +218,6 @@ void scheduler_switch_to(pcb_t* next) {
     next->state = PROC_STATE_RUNNING;
     next->total_ticks++;
 
-    /* TSS.RSP0 and the syscall entry stack top must track `current`
-       unconditionally. The previous gate (entry_point < KERNEL_BASE)
-       caused g_syscall_stack_top to stay at 0 when switching to a
-       kernel-mode process, breaking the lockstep invariant
-       documented in tss.c. Update both, always. */
     extern void tss_set_kernel_stack(uint64_t stack);
     extern void tss_set_syscall_stack(uint64_t stack);
     tss_set_kernel_stack(next->kernel_stack_top);
@@ -297,12 +249,6 @@ void process_yield(void) {
     yield_count++;
 
     if (current_process->state == PROC_STATE_RUNNING) {
-        /* The current process is RUNNING, so it is NOT on the ready
-           queue (scheduler_switch_to removed it when it switched to
-           it). Do not call scheduler_ready_queue_remove: on an
-           off-queue process, its prev/next links are NULL, so remove
-           would set ready_queue_head = NULL and corrupt the queue.
-           Just add it to the tail. */
         current_process->state = PROC_STATE_READY;
         scheduler_ready_queue_add(current_process);
     }

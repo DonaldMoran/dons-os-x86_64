@@ -11,6 +11,7 @@
 #include "include/user_msr.h"
 #include "include/elf.h"
 #include "include/heap.h"
+#include "include/user_space.h"
 #include "ff.h"
 
 /* Defined in kmain.c — reboots the machine via keyboard controller + ACPI reset port. */
@@ -22,6 +23,9 @@ static char g_write_bounce[WRITE_CHUNK];
 /* Maximum path length accepted from user space.  Matches the LFN
  * buffer budget: "0:/" + FF_MAX_LFN (255) + NUL, rounded up. */
 #define USER_PATH_MAX 300
+
+/* Maximum number of program headers we accept in an ELF. */
+#define EXEC_MAX_PHDRS 16
 
 // ============================================================
 // SAFE COPY OPERATIONS
@@ -74,9 +78,6 @@ static int safe_copy_to_user(void* user_dest, const void* kernel_src, size_t cou
     return 0;
 }
 
-/* Copy a NUL-terminated string from user space into a kernel buffer.
- * Returns 0 on success, -1 on fault or if the string is longer than
- * dst_cap - 1 bytes.  The destination is always NUL-terminated. */
 static int copy_user_string(char* dst, size_t dst_cap, const char* user_src) {
     if (dst_cap == 0) return -1;
     size_t i = 0;
@@ -93,10 +94,6 @@ static int copy_user_string(char* dst, size_t dst_cap, const char* user_src) {
 // ============================================================
 // FILE TABLE HELPERS
 // ============================================================
-/* Close every open file handle in a process's file table.
- * f_close triggers f_sync -> FLUSH CACHE, so pending writes
- * reach disk before we return. Used by sys_exit and the reboot
- * handler. */
 static void close_all_files(pcb_t* proc) {
     if (!proc) return;
     for (int i = 3; i < MAX_PROCESS_FILES; i++) {
@@ -127,15 +124,8 @@ long sys_open(const char* path, int flags) {
     }
     if (fd == -1) return -1;
 
-    /* -----------------------------------------------------------------
-     * newlib BSD-style fcntl flags (see sys/_default_fcntl.h):
-     *   O_RDONLY = 0x0000   O_WRONLY = 0x0001   O_RDWR   = 0x0002
-     *   O_APPEND = 0x0008   O_CREAT  = 0x0200   O_TRUNC  = 0x0400
-     *   O_EXCL   = 0x0800
-     * ----------------------------------------------------------------- */
     BYTE mode = 0;
 
-    /* Access mode: low 2 bits. */
     switch (flags & 0x3) {
         case 0:  mode |= FA_READ;             break;  /* O_RDONLY */
         case 1:  mode |= FA_WRITE;            break;  /* O_WRONLY */
@@ -143,7 +133,6 @@ long sys_open(const char* path, int flags) {
         default: return -1;
     }
 
-    /* Creation / truncation / exclusivity. */
     if (flags & 0x0400) {                              /* O_TRUNC */
         mode |= FA_CREATE_ALWAYS;
     } else if (flags & 0x0200) {                       /* O_CREAT */
@@ -185,18 +174,6 @@ long sys_close(int fd) {
     return 0;
 }
 
-/*
- * SYS_UNLINK (7) — delete a file from the FAT volume.
- *
- * Wraps FatFs's f_unlink.  Returns 0 on success, -1 on any failure
- * (bad path, no such file, open file, read-only, or a user-memory
- * fault while copying the path in).
- *
- * Note: f_unlink refuses to delete a file that is currently open by
- * anyone, including the calling process.  The caller must close its
- * own handles first.  There is no per-process enforcement of this
- * beyond what FatFs does.
- */
 long sys_unlink(const char* path) {
     pcb_t* self = process_get_current();
     if (!self || !path) return -1;
@@ -213,6 +190,225 @@ long sys_unlink(const char* path) {
         return -1;
     }
     return 0;
+}
+
+// ============================================================
+// SYS_EXEC — spawn a process from an ELF on the FAT volume
+// ============================================================
+long sys_exec(const char* user_path) {
+    pcb_t* self = process_get_current();
+    if (!self || !user_path) return -1;
+
+    char path[USER_PATH_MAX];
+    if (copy_user_string(path, sizeof(path), user_path) != 0) {
+        serial_print("sys_exec: bad path pointer\n");
+        return -1;
+    }
+
+    FIL file;
+    FRESULT fr = f_open(&file, path, FA_READ | FA_OPEN_EXISTING);
+    if (fr != FR_OK) {
+        serial_print("sys_exec: f_open(");
+        serial_print(path);
+        serial_print(") -> ");
+        serial_print_dec(fr);
+        serial_print("\n");
+        return -1;
+    }
+
+    Elf64_Ehdr ehdr;
+    UINT got = 0;
+    fr = f_read(&file, &ehdr, sizeof(ehdr), &got);
+    if (fr != FR_OK || got != sizeof(ehdr)) {
+        serial_print("sys_exec: short read of ELF header\n");
+        f_close(&file);
+        return -1;
+    }
+
+    if (ehdr.e_ident[0] != ELF_MAGIC0 || ehdr.e_ident[1] != ELF_MAGIC1 ||
+        ehdr.e_ident[2] != ELF_MAGIC2 || ehdr.e_ident[3] != ELF_MAGIC3) {
+        serial_print("sys_exec: not an ELF file\n");
+        f_close(&file);
+        return -1;
+    }
+    if (ehdr.e_ident[4] != 2) { serial_print("sys_exec: not ELFCLASS64\n"); f_close(&file); return -1; }
+    if (ehdr.e_ident[5] != 1) { serial_print("sys_exec: not little-endian\n"); f_close(&file); return -1; }
+    if (ehdr.e_type != 2)     { serial_print("sys_exec: not ET_EXEC\n"); f_close(&file); return -1; }
+    if (ehdr.e_machine != 62) { serial_print("sys_exec: not x86-64\n"); f_close(&file); return -1; }
+    if (ehdr.e_phentsize != sizeof(Elf64_Phdr) ||
+        ehdr.e_phnum == 0 || ehdr.e_phnum > EXEC_MAX_PHDRS) {
+        serial_print("sys_exec: bad program header table\n");
+        f_close(&file);
+        return -1;
+    }
+
+    Elf64_Phdr phdrs[EXEC_MAX_PHDRS];
+    if (ehdr.e_phoff > 0xFFFFFFFFULL) {
+        serial_print("sys_exec: e_phoff out of range\n");
+        f_close(&file);
+        return -1;
+    }
+    fr = f_lseek(&file, (FSIZE_t)ehdr.e_phoff);
+    if (fr != FR_OK) { serial_print("sys_exec: lseek to phdrs failed\n"); f_close(&file); return -1; }
+    UINT phbytes = (UINT)(ehdr.e_phnum * sizeof(Elf64_Phdr));
+    fr = f_read(&file, phdrs, phbytes, &got);
+    if (fr != FR_OK || got != phbytes) {
+        serial_print("sys_exec: short read of phdrs\n");
+        f_close(&file);
+        return -1;
+    }
+
+    FSIZE_t file_size = f_size(&file);
+    if (file_size == 0 || file_size > 4ULL * 1024 * 1024) {
+        serial_print("sys_exec: file size out of range\n");
+        f_close(&file);
+        return -1;
+    }
+    uint8_t* elf_buf = (uint8_t*)kmalloc((size_t)file_size);
+    if (!elf_buf) {
+        serial_print("sys_exec: kmalloc failed for ");
+        serial_print_dec((uint64_t)file_size);
+        serial_print(" bytes\n");
+        f_close(&file);
+        return -1;
+    }
+    fr = f_lseek(&file, 0);
+    if (fr != FR_OK) { serial_print("sys_exec: rewind failed\n"); kfree(elf_buf); f_close(&file); return -1; }
+    UINT total = 0;
+    while (total < file_size) {
+        UINT br = 0;
+        UINT want = (UINT)(file_size - total);
+        if (want > 4096) want = 4096;
+        fr = f_read(&file, elf_buf + total, want, &br);
+        if (fr != FR_OK) {
+            serial_print("sys_exec: read failed at offset ");
+            serial_print_dec(total);
+            serial_print("\n");
+            kfree(elf_buf); f_close(&file);
+            return -1;
+        }
+        if (br == 0) break;
+        total += br;
+    }
+    f_close(&file);
+    if (total != file_size) {
+        serial_print("sys_exec: short read of file body\n");
+        kfree(elf_buf);
+        return -1;
+    }
+
+    char proc_name[PROC_NAME_LEN];
+    {
+        const char* base = path;
+        for (const char* p = path; *p; p++) {
+            if (*p == '/' || *p == ':') base = p + 1;
+        }
+        int i = 0;
+        while (base[i] && i < PROC_NAME_LEN - 1) {
+            proc_name[i] = base[i];
+            i++;
+        }
+        proc_name[i] = '\0';
+        if (i == 0) {
+            const char* fallback = "exec";
+            for (i = 0; fallback[i] && i < PROC_NAME_LEN - 1; i++)
+                proc_name[i] = fallback[i];
+            proc_name[i] = '\0';
+        }
+    }
+
+    pcb_t* child = process_create(proc_name, USER_CODE_BASE, 0);
+    if (!child) {
+        serial_print("sys_exec: process_create failed\n");
+        kfree(elf_buf);
+        return -1;
+    }
+    scheduler_ready_queue_remove(child);
+
+    uint64_t entry = elf_load_into_process(child, elf_buf);
+    kfree(elf_buf);
+
+    if (entry == 0) {
+        serial_print("sys_exec: elf_load_into_process failed\n");
+        process_destroy(child);
+        return -1;
+    }
+
+    child->entry_point = entry;
+    child->rip = entry;
+
+    uint64_t* frame = (uint64_t*)child->rsp;
+    frame[15] = entry;
+
+    child->parent_pid = self->pid;
+
+    keyboard_buffer_flush();
+    scheduler_ready_queue_add(child);
+
+    serial_print("sys_exec: spawned pid=");
+    serial_print_dec(child->pid);
+    serial_print(" entry=0x");
+    serial_print_hex(entry);
+    serial_print(" (");
+    serial_print(proc_name);
+    serial_print(")\n");
+
+    return (long)child->pid;
+}
+
+// ============================================================
+// SYS_WAITPID
+// ============================================================
+long sys_waitpid(long pid, int* user_status, int options) {
+    pcb_t* self = process_get_current();
+    if (!self) return -1;
+
+    uint64_t target = (pid <= 0) ? (uint64_t)-1 : (uint64_t)pid;
+
+    for (;;) {
+        pcb_t* zombie = NULL;
+        pcb_t* live   = NULL;
+
+        for (uint64_t child_pid = 1; child_pid < 1000; child_pid++) {
+            pcb_t* c = process_find_by_pid(child_pid);
+            if (!c) continue;
+            if (c->parent_pid != self->pid) continue;
+            if (target != (uint64_t)-1 && c->pid != target) continue;
+
+            if (c->state == PROC_STATE_ZOMBIE) {
+                zombie = c;
+                break;
+            }
+            if (c->state != PROC_STATE_UNUSED) {
+                live = c;
+            }
+        }
+
+        if (zombie) {
+            long reaped = (long)zombie->pid;
+            int status = zombie->exit_status;
+            process_reclaim(zombie);
+            if (user_status) {
+                if (safe_copy_to_user(user_status, &status, sizeof(status)) != 0) {
+                    return -1;
+                }
+            }
+            return reaped;
+        }
+
+        if (!live) {
+            return -1;
+        }
+
+        if (options & WNOHANG) {
+            return 0;
+        }
+
+        self->state = PROC_STATE_BLOCKED;
+        self->block_kind = BLOCK_KIND_WAITPID;
+        self->wait_pid = target;
+        process_yield();
+    }
 }
 
 // ============================================================
@@ -262,7 +458,6 @@ long sys_write(int fd, const void* buf, size_t count) {
         return (long)total_written;
     }
 
-    /* Unknown / invalid fd. */
     return -1;
 }
 
@@ -283,6 +478,7 @@ long sys_read(int fd, void* buf, size_t count) {
             }
             if (self->pid == 1) { __asm__ volatile("sti"); __asm__ volatile("hlt"); continue; }
             self->state = PROC_STATE_BLOCKED;
+            self->block_kind = BLOCK_KIND_NONE;
             __asm__ volatile("sti"); __asm__ volatile("hlt");
         }
         return (long)bytes_read;
@@ -357,8 +553,11 @@ long sys_getpid(void) {
 }
 
 void sys_exit(int status) {
-    (void)status;
-    close_all_files(process_get_current());
+    pcb_t* self = process_get_current();
+    if (self) {
+        self->exit_status = status;
+    }
+    close_all_files(self);
     process_exit();
 }
 
@@ -367,20 +566,10 @@ void sys_arch_set_fs(void* base) {
     wrmsr(0xC0000100, addr);
 }
 
-/* Kernel-side reboot handler.
- *
- * Named kernel_do_reboot to avoid colliding with the pre-existing
- * `void sys_reboot(void);` declaration in include/syscall.h.
- *
- * Closes every open file handle in the current process's file table.
- * f_close triggers f_sync -> FLUSH CACHE, so any pending writes reach
- * disk before the reset. Then fires the hardware reset sequence
- * (keyboard controller 0xFE, ACPI reset port 0xCF9, triple-fault
- * backstop). Does not return. */
 static void kernel_do_reboot(void) {
     serial_print("[REBOOT] closing file handles before reset\n");
     close_all_files(process_get_current());
-    handle_reboot_sequence();  /* noreturn */
+    handle_reboot_sequence();
 }
 
 uint64_t syscall_dispatch(uint64_t num,
@@ -394,9 +583,11 @@ uint64_t syscall_dispatch(uint64_t num,
         case 4:  return (uint64_t)sys_open((const char*)arg0, (int)arg1);
         case 6:  return (uint64_t)sys_close((int)arg0);
         case 7:  return (uint64_t)sys_unlink((const char*)arg0);
+        case 8:  return (uint64_t)sys_exec((const char*)arg0);
+        case 9:  return (uint64_t)sys_waitpid((long)arg0, (int*)arg1, (int)arg2);
         case 10: return (uint64_t)sys_brk((long)arg0);
         case 20: return (uint64_t)sys_getpid();
-        case 25: kernel_do_reboot(); return 0; /* noreturn; return is a safety net */
+        case 25: kernel_do_reboot(); return 0;
         case 5:  sys_arch_set_fs((void*)arg0); return 0;
         default:
             serial_print("Unknown syscall: ");
