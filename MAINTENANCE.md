@@ -494,11 +494,11 @@ you ever wonder "is printing slow?"
 
 **Status:** partial; fault-path and non-fault coverage exist, context-switch
 coverage does not
-**Effort:** ~2 hours remaining (5a-iii, 5b, 5c)
+**Effort:** ~2 hours remaining (5b, 5c)
 
 ### 5a. Kernel-shell self-test
 
-**Split into three commits.  5a-i and 5a-ii are done.**
+**5a-i and 5a-ii are done.  5a-iii is declined.**
 
 - **5a-i ✅ DONE (tag `20260919K`).**  Expected-fault protocol
   (`g_expect_fault` / `g_fault_observed` / `fault_kill_current`) and
@@ -563,16 +563,37 @@ coverage does not
   Files touched: `kmain.c` only.  `interrupts.c` and `interrupts.h`
   unchanged from 5a-i.
 
-- **5a-iii.**  Fix `test_program.asm` to call `SYS_EXIT` so
-  `elfload` returns; add `elfload` to `selftest`.  The current
-  `test_program.asm` ends with `cli; hlt; jmp` in Ring 3 — the
-  child never exits, and the kernel shell never gets control back.
-  The commented-out lower half of the file is the version that
-  exits cleanly.  Optional: add `testyield` to the batch.  Note
-  that a user-mode child that faults will halt rather than resume
-  the shell (by design in `process_exit`; see item 3f), so
-  `elfload` can only be included once its test program exits
-  cleanly.
+- **5a-iii — DECLINED.**  "Add `elfload` to `selftest`" was the
+  original plan.  It is not being done, and the reason is a design
+  decision, not a bug.
+
+  `elfload` launches a *user-mode* process.  When a user process
+  exits — by `SYS_EXIT` or by fault — `process_exit` halts the CPU.
+  That is the intended behavior: the user shell is the terminal
+  interactive console, and there is nothing behind it to return to.
+  The kernel shell is a boot-time choice, not a persistent fallback.
+
+  `selftest` is a two-way operation: it runs a test and reads back a
+  result.  `elfload` is a one-way operation by design.  Putting it in
+  `selftest` would mean the test never completes — not because the
+  loader is broken, but because "launch a user process" and "return to
+  the caller" are mutually exclusive in this kernel.
+
+  `elfload` is already exercised indirectly: `usershell` uses the same
+  `process_create` + `elf_load_into_process` + `scheduler_switch_to`
+  path on every boot that drops into the user shell.  If the loader
+  regressed, the user shell would fail to start — a much louder signal
+  than a self-test line.
+
+  The expected-fault tests in 5a-i work because their children are
+  *kernel-mode* processes (`entry_point >= KERNEL_BASE`), which
+  `process_exit` resumes the shell for.  That is a property of the
+  test harness, not a general rule about user processes.  See item 3f.
+
+  Nothing here needs fixing.  If direct loader coverage is ever
+  wanted, the route is a kernel-mode ELF whose entry point is in
+  kernel text — which tests a different scenario than `usershell`
+  exercises, and is not worth building just for `selftest`.
 
 Original estimate of "1 hr" for 5a was optimistic: the exception
 handlers were halting, so a recoverable fault path had to be designed
@@ -583,7 +604,10 @@ alone was ~2 hrs.  5a-ii was ~1.5 hrs including the two findings.
 
 A build flag (`-DSELFTEST`) that makes the kernel run a fixed test
 sequence at boot and print results to serial, then halt. Useful for
-regression checks after a change.
+regression checks after a change.  Unlike the interactive `selftest`
+command, 5b's whole purpose is "run and stop," so it *can* include a
+final user-mode step (launch `usershell`, let it run, halt) — that is
+a design question for 5b, not part of the interactive command.
 
 ### 5c. `make test` target
 
@@ -594,11 +618,10 @@ watching the boot.
 
 ### When to do the rest
 
-5a-iii depends on a fix to `test_program.asm`.  5b and 5c build on
-5a-iii.  None of them are blocked by the remaining items on this list.
-5b and 5c can be done in either order; 5c is more valuable because it
-enables `make test` in a loop, but 5b is a prerequisite for the
-headless part of 5c.
+5b and 5c build on 5a-i and 5a-ii.  Neither is blocked by the remaining
+items on this list.  They can be done in either order; 5c is more
+valuable because it enables `make test` in a loop, but 5b is a
+prerequisite for the headless part of 5c.
 
 ---
 
@@ -625,17 +648,18 @@ headless part of 5c.
 | 4g | Print-lock hold diagnostic | 30 min | Build when needed |
 | 5a-i | Self-test: exception path | 2 hrs | ✅ Done (20260919K) |
 | 5a-ii | Self-test: non-fault tests | 1.5 hrs | ✅ Done (20260919L) |
-| 5a-iii | `elfload` in selftest (needs `test_program` fix) | 30 min | Next |
-| 5b | Boot-time self-test mode | 1 hr | After 5a-iii |
+| 5a-iii | `elfload` in selftest | — | Declined (see §5a) |
+| 5b | Boot-time self-test mode | 1 hr | Next |
 | 5c | `make test` target | 1 hr | After 5b |
 
-Everything on this list is either done, deferred, or architectural.
-Nothing urgent remains. The natural next steps, in order of value:
+Everything on this list is either done, deferred, declined, or
+architectural.  Nothing urgent remains.  The natural next steps, in
+order of value:
 
-1. **Testing infrastructure (5a-iii, 5b, 5c)** — the last three pieces
-   of the self-test work.  5a-iii is a one-file fix to
-   `test_program.asm` plus a wiring change in `selftest`; 5b and 5c
-   build on it.  Do these before starting new features.
+1. **Testing infrastructure (5b, 5c)** — the last two pieces of the
+   self-test work.  5b runs the same 15 tests at boot and halts; 5c
+   wraps 5b in a headless QEMU invocation and greps the serial log
+   for the summary line.  Do these before starting new features.
 2. **Item 3g (`EFER.NXE`)** — a real correctness gap that the test
    suite just surfaced.  Two-line fix, but deserves its own commit
    and its own testing pass (rebuild, `selftest`, launch the user
