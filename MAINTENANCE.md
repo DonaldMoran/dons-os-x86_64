@@ -319,63 +319,75 @@ nothing that ran; it made the bit honest.~~
 
 **Follow-up once NXE is on.**  `elf_load_into_process` should map
 non-executable segments (data, BSS, user stack) with `PT_NX`.  With
-NXE currently off, that would have been a `#PF`; with it on, it
-becomes correct.  This is a natural companion to the fix, not a
-prerequisite — the fix is done and verified, the ELF-loader change
-is a separate, optional enhancement.
+NXE now on, that change becomes possible; it was not before.  This is a
+natural companion to the fix, not a prerequisite — the fix is done and
+verified, the ELF-loader change is a separate, optional enhancement.
 
 **Claims in the other docs.**  `README.md`, `ROADMAP.md`, and
-`OSDev_Checklist.md` describe NX as supported.  With `enable_nx()`
-in place, that is now accurate at the hardware level, not just at
-the software level.
+`OSDev_Checklist.md` describe NX as supported.  With `enable_nx()` in
+place, that is now accurate at the hardware level, not just at the
+software level.
 
-### 3h. The GDT lives in low memory
+### 3h. ~~The GDT lives in low memory~~ ✅
 
-**Status:** latent; works because the identity map covers it
-**Effort:** 2–3 hours to rebuild the GDT at a higher-half address
-**Found by:** 5a-ii (`test_gdt`'s base assertion, tag `20260919L`)
+**Status:** ✅ **DONE (tag `20260919O`).** `gdt_init` in `gdt.c` now
+builds a kernel-owned GDT (`kernel_gdt[16]` in `.bss`) and `lgdt`s it
+before `idt_init` runs.  `gdt_set_tss` writes the TSS descriptor
+directly into `kernel_gdt[7..8]` instead of through `sgdt`.
+`gdt_fix_user_segments` is now a no-op (the user descriptors are
+written correctly by `gdt_init` on the first pass).  The call from
+`kmain` is removed.
 
-`sgdt` reports the GDT base as `0x101DC`, inside the first 64 KB of
-physical memory:
+Verified end-to-end on single-drive:
+- `gdtdump` reports `GDT base=0xFFFFFFFF80271540`, not `0x101DC`.
+- `selftest` reports `15 passed, 0 failed`.
+- `test_gdt`'s strict assertion (`base >= 0xFFFFFFFF80000000ULL`) is
+  back in place and passes.
+- The user shell's SYSRET path (CS=0x33, SS=0x2B) still works.
+
+Text below kept for history: it describes the state before the fix.
+
+~~**Effort:** 2–3 hours to rebuild the GDT at a higher-half address~~
+~~**Found by:** 5a-ii (`test_gdt`'s base assertion, tag `20260919L`)~~
+
+~~`sgdt` reported the GDT base as `0x101DC`, inside the first 64 KB of
+physical memory:~~
 
 ```
 GDT base=0x00000000000101DC limit=0x0000000000000047 entries=9
 ```
 
-This is the bootloader's GDT. `gdt_init` in `gdt.c` is a no-op ("Using
-the bootloader's GDT — nothing to build here"), and `entry.asm` never
-relocates it into the higher half. The kernel reads the GDT through
-the bootloader's identity map.
+~~This was the bootloader's GDT.  `gdt_init` in `gdt.c` was a no-op
+("Using the bootloader's GDT — nothing to build here"), and
+`entry.asm` never relocated it into the higher half.  The kernel read
+the GDT through the bootloader's identity map.~~
 
-**Why this is fragile:** the same reason item 3a was fragile before it
-was fixed. The identity map is currently stable, but nothing guarantees
-it. If it were ever narrowed — e.g. to reclaim low memory for the PMM —
-`sgdt` would still return `0x101DC`, and the first `ltr`, `lldt`,
-`lgdt`, or segment load that consulted the GDT would fault with a
-non-obvious cause. The failure would appear at an unrelated site
-(wherever the next descriptor load happens), not at the boot.
+~~**Why this was fragile:** the same reason item 3a was fragile before
+it was fixed.  The identity map was currently stable, but nothing
+guaranteed it.  If it were ever narrowed — e.g. to reclaim low memory
+for the PMM — `sgdt` would still have returned `0x101DC`, and the
+first `ltr`, `lldt`, `lgdt`, or segment load that consulted the GDT
+would have faulted with a non-obvious cause.  The failure would have
+appeared at an unrelated site (wherever the next descriptor load
+happened), not at the boot.~~
 
-**Fix:** rebuild the GDT at a known higher-half virtual address during
-boot. In `entry.asm` or `gdt.c`, copy the bootloader's GDT (or build a
-fresh one matching the current layout — null, code32, data32, code64,
-data64, user_data, user_code, TSS) to a static `.bss` array in the
-kernel image, then `lgdt` with the higher-half base. `gdt_fix_user_segments`
-and `gdt_set_tss` already write to `sgdt`'s result, so they'd pick up the
-new location automatically once `lgdt` runs.
+~~**The fix (now applied).**  `gdt_init` builds the kernel's own GDT in
+a static `kernel_gdt[16]` array in `.bss`, at a higher-half address
+the kernel controls, and `lgdt`s it.  Every consumer — `tss_init`'s
+`ltr`, `gdt_dump`, `isr13_handler`'s descriptor walk, the user
+segments used by SYSRET — reads from that table.~~
 
-**The self-test's relaxed check.** `test_gdt` currently asserts only that
-the base is non-zero, because asserting "base must be in the higher
-half" would make `selftest` fail until this item is fixed. Once this is
-fixed, change the assertion back to `if (gdt_ptr.base <
-0xFFFFFFFF80000000ULL) return SELFTEST_FAIL;` and add a comment
-pointing at this item.
+~~**The self-test's strict assertion is back.**  `test_gdt` now
+requires `base >= 0xFFFFFFFF80000000ULL`.  Before the fix it was
+relaxed to "base must be non-zero" so the self-test could pass while
+the GDT lived in low memory.~~
 
 ---
 
 ## 4. Code hygiene
 
-**Status:** ✅ **DONE for 4a–4d.** Items 4e, 4f, 4g are architectural
-or documentation-only and deferred.
+**Status:** ✅ **DONE for 4a–4d.** Items 4e, 4f, 4g, 4h are architectural,
+documentation-only, or code-review discipline and deferred.
 
 ### 4a. ~~Dead declarations~~ ✅
 
@@ -544,6 +556,42 @@ ring buffer (item 4e) is due.
 This is not something to build now. It's the tool you'll reach for if
 you ever wonder "is printing slow?"
 
+### 4h. Comments that name functions by role
+
+**Status:** ongoing discipline; two instances found this session
+**Effort:** n/a (code review discipline)
+
+When a function changes role — `gdt_fix_user_segments` going from
+load-bearing to a no-op, `gdt_init` going from a no-op to load-bearing,
+`test_program.asm`'s tail comment describing an exit path that was
+never taken — comments elsewhere that *name* those functions as "the
+thing that does X" become silently wrong.  There is no mechanical way
+to catch this: the compiler cannot see it, the linker cannot see it,
+and no test in the tree covers documentation.
+
+Two instances surfaced this session:
+
+1. **`test_gdt`'s header comment in `kmain.c`** still named
+   `gdt_fix_user_segments` as the function that builds the user
+   descriptors.  After 3h, `gdt_init` is the authoritative builder;
+   `gdt_fix_user_segments` is a no-op.  Caught during code review of
+   the 3h patch.
+2. **`test_program.asm`'s header comment** (during the 5a-iii
+   discussion) described a "must terminate via `SYS_EXIT`" contract
+   that was never true for a user-mode process in this kernel —
+   user processes halt on exit by design.  The comment was removed
+   rather than corrected.
+
+**Discipline:** before committing a change that alters a function's
+role, `grep` the tree for the function name and update every comment
+that names it as the doer.  This is cheap (a `grep -rn` takes seconds)
+and catches the class of drift that no automated check can.
+
+Not urgent, and there is nothing to build here.  This entry exists so
+that a future reader knows the class of bug is known and that reading
+comments near touched code is part of the review discipline, not an
+afterthought.
+
 ---
 
 ## 5. Testing infrastructure
@@ -568,8 +616,7 @@ coverage does not
   the diagnostic-and-halt path.  Verified end-to-end on
   single-drive: `3 passed, 0 failed`.
 
-  This is the first time the exception handlers have been exercised
-  by anything.  Prior to this commit, a broken `isr14_stub` frame
+  This is the first time the exception handlers have been exercised  by anything.  Prior to this commit, a broken `isr14_stub` frame
   offset or a mis-wired IDT gate would only have been visible by
   typing `test` and reading the dump by hand.
 
@@ -694,7 +741,7 @@ prerequisite for the headless part of 5c.
 | 3e | TLB flush in VMM | — | Leave as-is, documented |
 | 3f | Self-test fault-trigger constraint | — | Documented (20260919K) |
 | 3g | `EFER.NXE` not enabled | 15 min + 1 hr verify | ✅ Done (20260919N) |
-| 3h | GDT lives in low memory | 2–3 hrs | Next feature-sized fix |
+| 3h | GDT lives in low memory | 2–3 hrs | ✅ Done (20260919O) |
 | 4a | Dead declarations | 15 min | ✅ Done (20260919F) |
 | 4b | Double-build in `run` | 15 min | ✅ Done (20260919F) |
 | 4c | Stale comments | 30 min | ✅ Done (20260919F) |
@@ -702,6 +749,7 @@ prerequisite for the headless part of 5c.
 | 4e | Print lock → ring buffer | 1–2 hrs | Before tty/per-user console |
 | 4f | Print functions as leaf functions | — | Documented invariant |
 | 4g | Print-lock hold diagnostic | 30 min | Build when needed |
+| 4h | Comments that name functions by role | — | Ongoing discipline |
 | 5a-i | Self-test: exception path | 2 hrs | ✅ Done (20260919K) |
 | 5a-ii | Self-test: non-fault tests | 1.5 hrs | ✅ Done (20260919L) |
 | 5a-iii | `elfload` in selftest | — | Declined (see §5a) |
@@ -709,22 +757,19 @@ prerequisite for the headless part of 5c.
 | 5c | `make test` target | 1 hr | After 5b |
 
 Everything on this list is either done, deferred, declined, or
-architectural.  Nothing urgent remains.  The natural next steps, in
-order of value:
+architectural.  **There are no open findings.**  Both findings from the
+5a-ii session (3g, 3h) are closed and verified.  The natural next steps,
+in order of value:
 
 1. **Testing infrastructure (5b, 5c)** — the last two pieces of the
    self-test work.  5b runs the same 15 tests at boot and halts; 5c
    wraps 5b in a headless QEMU invocation and greps the serial log
    for the summary line.  Do these before starting new features.
-2. **Item 3h (GDT in low memory)** — same class as the boot-stack
-   issue that was fixed in `e246db6`.  Now the highest-priority
-   open item.  Not urgent, but every boot log that shows
-   `GDT base=0x101DC` is a reminder.
-3. **The ring buffer (4e)** — the correct long-term design for the
+2. **The ring buffer (4e)** — the correct long-term design for the
    print path.  Do this before the tty subsystem lands.  The
    duplicated user-shell banner in the `20260919N` capture is a
    preview of the interleaving this fixes.
-4. **`sys_exec`** — the next feature milestone (user programs from
+3. **`sys_exec`** — the next feature milestone (user programs from
    disk).  Not on this list because it's a feature, not maintenance.
 
 ---

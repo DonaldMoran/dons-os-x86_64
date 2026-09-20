@@ -223,7 +223,7 @@ static int test_fat_ls(void);
  * GDT validation.
  *
  * Walks the GDT and checks the descriptors the kernel actually depends
- * on.  The layout is fixed (see gdt.h and gdt_fix_user_segments):
+ * on.  The layout is built by gdt_init in gdt.c:
  *
  *   0x00  null
  *   0x08  (legacy 32-bit code, unused in long mode)
@@ -234,11 +234,17 @@ static int test_fat_ls(void);
  *   0x30  user code,     DPL=3, L=1  (CS = 0x33 when RPL=3)
  *   0x38  TSS
  *
- * The assertions catch a stomped GDT or a broken gdt_fix_user_segments
- * call.  They do not verify every bit of every descriptor; the load-
- * bearing ones are the kernel code (used in every kernel frame), the
- * user code (used in every Ring 3 return), and the TSS (used on every
- * Ring 3 -> Ring 0 transition).
+ * The assertions catch a stomped GDT or a broken gdt_init.  They do
+ * not verify every bit of every descriptor; the load-bearing ones are
+ * the kernel code (used in every kernel frame), the user code (used
+ * in every Ring 3 return), and the TSS (used on every Ring 3 -> Ring 0
+ * transition).
+ *
+ * The base-address assertion (see the first check inside test_gdt)
+ * requires the GDT to be in the higher half, which it is once
+ * gdt_init has run.  Before 3h the GDT was the bootloader's, at
+ * physical 0x101DC; that assertion was relaxed to "base != 0" so the
+ * self-test could pass.  It is now strict again.
  * ===================================================================== */
 
 static int test_gdt(void) {
@@ -250,12 +256,12 @@ static int test_gdt(void) {
     } gdt_ptr;
     __asm__ volatile("sgdt %0" : "=m"(gdt_ptr));
 
-    /* Base must be non-zero.  It is NOT required to be in the higher
-       half: the GDT currently lives in low memory (base 0x101DC,
-       inside the bootloader's identity map), and the kernel reads it
-       through that map.  See MAINTENANCE.md item 3h.  Do not assert on
-       the address; assert on the contents. */
-    if (gdt_ptr.base == 0) return SELFTEST_FAIL;
+    /* The GDT must be in the kernel's higher half.  gdt_init builds
+       kernel_gdt in .bss at 0xFFFFFFFF801xxxxx and lgdt's it; if this
+       check fails, the CPU is still using the bootloader's low-memory
+       GDT, which means gdt_init did not run or did not take effect.
+       See MAINTENANCE.md item 3h. */
+    if (gdt_ptr.base < 0xFFFFFFFF80000000ULL) return SELFTEST_FAIL;
 
     /* At least 8 entries (indices 0..7). */
     if (gdt_ptr.limit < 7 * 8 - 1) return SELFTEST_FAIL;
@@ -1121,6 +1127,7 @@ void kmain(BootInfo *info) {
     
     validate_bootinfo(info);
     vga_set_cursor_shape(0x00, 0x0F);
+    gdt_init();
     idt_init();
     pit_init(100);
 
@@ -1137,7 +1144,6 @@ void kmain(BootInfo *info) {
     heap_init(HEAP_START, HEAP_INITIAL_SIZE);
     ata_init();    
     scheduler_init();
-    gdt_fix_user_segments();
     tss_init();
     process_init();
     keyboard_init();
