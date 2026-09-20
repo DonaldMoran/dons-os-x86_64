@@ -1,12 +1,13 @@
 # dons‑os  
 ### Educational x86_64 Boot Chain + 64‑bit Interrupt‑Driven Kernel (MIT Licensed)
 
-**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU's reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher‑half kernel** with working interrupts, timer, keyboard input, memory management, a preemptive round-robin scheduler, system calls, blocking I/O, a userland C library (newlib 4.x), a FAT16 filesystem, and a Ring 3 user shell written in ordinary C.
+**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU's reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher‑half kernel** with working interrupts, timer, keyboard input, memory management, a preemptive round-robin scheduler, system calls, blocking I/O, a userland C library (newlib 4.x), a FAT16 filesystem with long filename support, and a Ring 3 user shell written in ordinary C.
 
 Related documents:
 - [`ROADMAP.md`](ROADMAP.md) — planned features and completed milestones
 - [`OSDev_Checklist.md`](OSDev_Checklist.md) — capability tracking
 - [`MAINTENANCE.md`](MAINTENANCE.md) — known debt, latent bugs, and cleanup work
+- [`LLD_BUG_REPORT.md`](LLD_BUG_REPORT.md) — toolchain bug reports and workarounds
 
 ---
 
@@ -20,7 +21,7 @@ Related documents:
 ### Kernel Development
 - **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, kernel shell, heap allocator with validator and stress test, system calls, ELF loader, process system, preemptive scheduler, blocking I/O, ATA PIO driver, FatFs integration, GDT/TSS diagnostics
 - **04_kernel_64bit/userland/newlib** — Userland C library (newlib 4.x), syscall shims, `crt0`, reentrancy support, and the user shell application
-- **04_kernel_64bit/fatfs** — Vendored FatFs R0.15 plus the `diskio.c` shim that maps FatFs onto the ATA PIO driver
+- **04_kernel_64bit/fatfs** — Vendored FatFs R0.16 plus the `diskio.c` shim that maps FatFs onto the ATA PIO driver. `ff.c` and `ffunicode.c` are compiled with the cross‑GCC (see Known Limitations).
 - **04_kernel_64bit/include/fat_config.h** — The single compile-time switch that selects dual-drive vs single-drive storage
 - **05_boot_kernel64** — Full boot chain: stage2 loads kernel via multi-pass segment incrementing, enters long mode, jumps to `_start`
 - **test-files** — Files copied into the single-drive FAT partition at image-build time
@@ -182,7 +183,7 @@ This is a substantial capability: it means user programs can use the standard C 
 ### What is wired up
 
 - **`crt0.S` (arc2)** — userland startup. Sets up the stack, initializes newlib's reentrancy structure, calls `main`, and invokes `exit` on return.
-- **`syscalls.c` (arc2)** — the syscall shims that newlib's internals call (write, read, sbrk, _exit, fstat, isatty, open, close, lseek, getpid, kill). Each is a thin wrapper around the syscall instruction with the appropriate syscall number.
+- **`syscalls.c` (arc2)** — the syscall shims that newlib's internals call (write, read, sbrk, _exit, fstat, isatty, open, close, unlink, lseek, getpid, kill). Each is a thin wrapper around the syscall instruction with the appropriate syscall number.
 - **`reent.c` (arc2)** — newlib reentrancy support. Sets `_impure_ptr = &_impure_data` so that newlib's global state is valid at startup. (Without this, the first `printf` faults.)
 - **`include/`** — newlib's headers, vendored. `stdio.h`, `stdlib.h`, `string.h`, `unistd.h`, etc.
 - **`lib/libc.a`** and **`lib/libm.a`** — the compiled newlib libraries, statically linked into each user program.
@@ -196,7 +197,7 @@ This is a substantial capability: it means user programs can use the standard C 
 - ✅ setvbuf — user shell sets stdout unbuffered so every printf immediately hits sys_write
 - ✅ errno — newlib's error reporting is functional
 - ✅ Reentrancy — newlib's per-thread state is initialized and used
-- ✅ open / close / read / write on FAT files from Ring 3, via syscalls 3, 4, 6, and 1
+- ✅ open / close / read / write / unlink on FAT files from Ring 3, via syscalls 1, 3, 4, 6, 7
 
 ### How to build a user program
 
@@ -243,7 +244,7 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 |---------|-------------|
 | `help` | Show available commands |
 | `clear` | Clear the screen |
-| `version` | Show version information (DonsDOS v0.5.1) |
+| `version` | Show version information (DonsDOS v0.5.2) |
 | `info` | Display system information (PML4, kernel addresses, E820 entries) |
 | `mem` | Display memory information (usable/reserved RAM) |
 | `reboot` | Reboot the system (Ring 0 supervisor sequence) |
@@ -255,6 +256,8 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 | `maptest` | Test page mapping |
 | `testrec` | Test recursive mapping address |
 | `heaptest` | Test heap allocator with memory reuse |
+| `heapcheck` | Walk the heap block list and check every invariant |
+| `heapstress` | Deterministic alloc/free pattern that forces multiple extensions |
 | `nxtest` | Verify NX (No Execute) bit support |
 | `syscall` | Test system call interface (SYS_WRITE, SYS_EXIT) |
 | `elfload` | Load and run embedded ELF program from user mode Ring 3 |
@@ -267,7 +270,7 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 | `usershell` | Launch the Ring 3 user shell |
 | `gdtdump` | Decode and print the current GDT descriptors |
 | `tssdump` | Print current TSS fields (rsp0, ist1–7, iopb_base, TR, g_syscall_stack_top) |
-| `selftest` | Run the kernel self-test suite (15 tests) and print a pass/fail summary |
+| `selftest` | Run the kernel self-test suite (17 tests) and print a pass/fail summary |
 | `atatest` | Read-only ATA diagnostic: MBR signature, kernel header, model strings |
 | `fatmount` | Mount the FAT volume and report status |
 | `fatls` | List the root directory of the FAT volume |
@@ -276,7 +279,7 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 Example session:
 
 ```text
-DonsDOS v0.5.1 
+DonsDOS v0.5.2 
 Type 'help'
 > help
 
@@ -295,6 +298,8 @@ Available commands:
   maptest    - Test page mapping (allocate and write to a physical page)
   testrec    - Test recursive mapping address (read PML4 entry)
   heaptest   - Test heap allocator with memory reuse
+  heapcheck  - Validate every heap block invariant
+  heapstress - Alloc/free pattern that forces multiple extensions
   nxtest     - Test NX (No Execute) bit support
   syscall    - Test system calls (SYS_WRITE, SYS_EXIT)
   elfload    - Load and run embedded ELF program in user mode
@@ -329,7 +334,7 @@ It runs as an ordinary Ring 3 process using newlib. Its menu currently offers:
 | 3 | Test malloc/free via newlib (`malloc`, write pattern, read back, `free`, second allocation) |
 | 4 | Test FatFs: create, write, close, reopen, read back (round-trip byte-exact) |
 | 5 | Persistence check: verify USER.TXT written by a previous boot survived a reboot |
-| 6 | Multi-file test: create 3 files, verify contents (deletion is skipped; no SYS_UNLINK yet) |
+| 6 | Multi-file test: create 3 files, verify contents, delete them, confirm they are gone |
 | 7 | Large write test: 4 KB round-trip through FatFs, catches multi-cluster bugs |
 | 8 | List known files: probe a fixed set of names and report which exist, with a short preview |
 | 9 | Reboot: call `SYS_REBOOT`, which flushes file handles and fires a hardware reset |
@@ -337,6 +342,7 @@ It runs as an ordinary Ring 3 process using newlib. Its menu currently offers:
 - Option 3 exercises malloc → sbrk → sys_brk → page mapping → user write → user read, confirming that user pages are correctly mapped and writable.
 - Option 4 exercises open → write → close → open → read on the FAT volume from Ring 3. The round-trip is byte-exact.
 - Option 5 is the strongest single test in the tree. It writes on boot N, and on boot N+1 (same image) it verifies the file is present and byte-exact. This is what proves writes are durable, not just buffered. Combined with option 9, the persistence check is a three-step sequence — write, reboot, verify — that can be run entirely from the user shell.
+- Option 6 exercises create → write → close → open → read → close → `unlink` on three files, then confirms each file is gone by attempting to reopen it. This is the full file lifecycle from Ring 3, including `SYS_UNLINK` (syscall #7).
 - Option 8 is a poor-man's `ls`: since there is no directory-iteration syscall yet, it probes a fixed set of filenames and reports which ones open successfully. A real `ls` needs `SYS_OPENDIR` / `SYS_READDIR` / `SYS_CLOSEDIR`.
 - Option 9 calls `sys_reboot()`, which does `fflush(NULL)` from userland, then invokes `SYS_REBOOT`. The kernel closes every open file handle in the current process's file table (`f_close` triggers `f_sync` → `FLUSH CACHE`), then fires the hardware reset. Ring 3 reboot is a convenience for testing; a production OS would restrict it to a privileged process.
 
@@ -518,7 +524,7 @@ This project is designed to be:
   - **Frame validation in `context_switch.asm`.** `.kernel_task` validates the resume frame's `rip` (must be ≥ `KERNEL_BASE`) and `cs` (must be `0x18`) before popping. A corrupt frame now emits a single serial marker byte (`R` or `C`) and halts, instead of producing an opaque kernel-mode `#GP` at the stub's `iretq`.
 - `v0.5.0` — **Storage layer complete: ATA PIO driver, FatFs, single-drive and dual-drive layouts, persistence verified.**
   - **ATA PIO block device driver** on the primary channel: `ata_init`, `ata_read_sector`, `ata_read_sectors`, `ata_write_sector`, `ata_write_sectors`, `ata_flush_cache`, per-drive entry points, and `atatest` diagnostics. Three bring-up bugs found and fixed (PIC mask restoration, exception frame offsets, LBA mode bit).
-  - **FatFs R0.15 vendored** with a `diskio.c` shim that maps FatFs onto the ATA PIO driver.
+  - **FatFs R0.16 vendored** with a `diskio.c` shim that maps FatFs onto the ATA PIO driver.
   - **Dual-drive storage:** kernel on master `hdd.img`, FAT16 volume on slave `fat.img`. Kernel shell commands `fatmount`, `fatls`, `fatcat`.
   - **Userland file I/O:** `SYS_OPEN` (4), `SYS_CLOSE` (6), and the `SYS_READ` fd branch, so newlib's `open`/`read`/`write`/`close` work from Ring 3. Verified with a create/write/close/reopen/read round-trip.
   - **Single-drive layout:** `FAT_CONFIG=dual|single` at build time selects the storage layout. FAT16 partition at LBA 2048. `diskio.c` translates volume-relative sector numbers to device LBAs via `FAT_PARTITION_OFFSET` (2048 in single, 0 in dual).
@@ -526,9 +532,9 @@ This project is designed to be:
   - **Persistence across reboot verified** end-to-end by the user shell option 5.
   - **Expanded user-shell regression harness:** options 4 (FS round-trip), 5 (persistence), 6 (multi-file), 7 (4 KB round-trip). `[FS TEST]` fixed: `msg_len` was hardcoded to 19 but the string is 20 bytes.
   - **Config diagnostic at boot** (`kmain.c`): VGA and serial report which storage layout the kernel booted with.
-  - **Kernel-size tripwire** checks both the stage2 staging ceiling (176 KB) and the disk-layout ceiling (983 KB).
+  - **Kernel-size tripwire** checks both the stage2 staging ceiling (448 KB) and the disk-layout ceiling (983 KB).
   - `SYS_UNLINK` is not yet implemented; option 6's delete phase is skipped.
-- `v0.5.1` ⭐ NEW — **Maintenance batch: self-test infrastructure, NX on hardware, kernel-owned GDT.**
+- `v0.5.1` — **Maintenance batch: self-test infrastructure, NX on hardware, kernel-owned GDT.**
   - **Self-test infrastructure (`selftest` command).**  15 tests covering GDT descriptor contents, TSS fields, PMM allocation and freeing, VMM control registers, page mapping, recursive paging, heap integrity, the NX bit in the final PTE, syscall entry point, ATA reads, FatFs mount and directory listing, and the three exception handlers (#DE, #PF, #GP).  The exception tests use an expected-fault protocol: a small kernel-mode child takes the fault, the handler records the vector, terminates the child, and resumes the kernel shell.  First time the exception handlers have been exercised by anything.
   - **EFER.NXE enabled.**  Previously the kernel wrote NX bits into PTEs but the CPU ignored them because `EFER.NXE` was clear.  Worked under KVM by accident (KVM's shadow MMU enables NX on the host side regardless of the guest's EFER); would have faulted on bare metal.  `enable_nx()` in `kmain.c` now sets the bit, guarded by a CPUID check.  `test_vmm` asserts on it.
   - **Kernel-owned GDT.**  The GDT lived in low memory (base `0x101DC`, inside `stage2.asm`'s loaded image).  `gdt_init` now builds `kernel_gdt[16]` in `.bss` at a higher-half address, `lgdt`s it, and reloads the segment registers.  `gdt_set_tss` writes the TSS descriptor directly.  `test_gdt`'s strict assertion is restored.
@@ -538,12 +544,16 @@ This project is designed to be:
   - **Staging ceiling raised** from 176 KB to 448 KB by adding PASS 4–7 in `stage2.asm`.
   - **Reboot flushes file handles.**  The user shell's reboot path flushes open file handles before the hardware reset; option 9 added.
   - **MAINTENANCE.md updated throughout.**  No open findings remain.  Sections 5b (boot-time self-test mode) and 5c (make test) deferred with the conditions that would make them worth revisiting.
-  - `v0.5.2` ⭐ NEW — **Heap rewrite and validator; LLD 22.1.8 workaround.**
+- `v0.5.2` ⭐ NEW — **Heap rewrite, long filename support, `SYS_UNLINK`, cross-GCC for FatFs, Makefile dependency tracking.**
   - **heap.c rewritten.** `heap_extend` now returns the start of the newly mapped region and the caller places a single free block covering the entire region. The previous version placed the new block at `heap_brk - requested_size`, which lost up to `PAGE_SIZE - 1` bytes per extension and put blocks at the wrong end of the mapped range. Blocks are maintained in address order and coalesced on free.
   - **`heap_header_t` padded to 48 bytes.** Payloads are now 16-aligned when the allocation size is a multiple of `HEAP_ALIGNMENT`. newlib's `malloc` is documented to return 16-aligned pointers on x86-64; a 40-byte header made payload addresses alternate between 8- and 16-aligned.
   - **`heap_validate()` and `heap_stress()`.** `heap_validate` walks the block list and checks every invariant, including that the last block's end equals `heap_brk`. `heap_stress` runs 4096 operations across 512 slots with per-block patterns; the run grows the heap from 1 MB to ~4.15 MB (multiple extensions) and validates intact with zero leak.
-  - **`heapcheck` and `heapstress` shell commands.** Both also added to `selftest`. Test count 17/17.
-  - **LLD 22.1.8 workaround.** At `-O2`, linking `kernel.elf` produces truncated instructions in `check_fs` and `move_window`; the standalone object is correct. `fatfs/ff.o` is compiled at `-O1`. Bug filed upstream; see `LLD_BUG_REPORT.md`.
+  - **`heapcheck` and `heapstress` shell commands.** Both added to `selftest`. Test count 17/17.
+  - **Long filename support.** `FF_USE_LFN = 2`, `FF_LFN_UNICODE = 2`, `FF_CODE_PAGE = 437`. `fatfs/ffunicode.o` linked into the kernel. Kernel grows from 158 KB to 163 KB, well under the 448 KB staging limit. `fatls` shows `HELLO-WORLD.TXT` (long name), `fatcat HELLO-WORLD.TXT` reads it.
+  - **`SYS_UNLINK` (syscall #7).** Wraps FatFs `f_unlink`. Kernel handler `sys_unlink` in `user_syscall.c`; userland `unlink()` shim in `arc2/syscalls.c`. `test_multi_file` in the user shell now deletes the files it creates and verifies they are gone.
+  - **`sys_open` path truncation fix.** Was copying only 127 bytes of the path into a 300-byte buffer. Replaced with a `copy_user_string` helper that respects the buffer size. Paths up to `FF_MAX_LFN` (255) now fit. New `USER_PATH_MAX` constant (300).
+  - **Cross-GCC for FatFs.** `fatfs/ff.o` and `fatfs/ffunicode.o` are compiled with `/opt/cross/bin/x86_64-elf-gcc` at `-O2`. Clang 22.1.8 miscompiles `ff.c` at every optimization level: `-O0` breaks the FILINFO read path (filenames decode as `@80(`, `f_opendir` returns `FR_INT_ERR`), `-O1` hangs in `f_unlink`, and `-O2` produces LLD-truncated instructions in the linked binary. GCC produces correct code and links cleanly with the Clang-built kernel objects. See `LLD_BUG_REPORT.md`.
+  - **Makefile header dependency tracking.** `-MMD -MP` added to `CFLAGS`; `-include $(OBJS:.o=.d)` at the bottom. Header changes now trigger the right rebuilds automatically. This was the root cause of several stale-object debugging sessions earlier in the project.
   
   ---
 
@@ -579,20 +589,20 @@ This project is designed to be:
 - ✅ Serial (COM1) output for kernel debugging
 
 **Storage**
-- ✅ FatFs R0.15 integrated, read and write
+- ✅ FatFs R0.16 integrated, read and write, with long filename support
 - ✅ Dual-drive layout: boot + kernel on master, FAT16 volume on slave
 - ✅ Single-drive layout: boot + kernel + FAT16 partition at LBA 2048 on master
 - ✅ Kernel-shell access: fatmount, fatls, fatcat
-- ✅ Userland access: open, close, read, write on FAT files, via syscalls 1, 3, 4, 6
+- ✅ Userland access: open, close, read, write, unlink on FAT files, via syscalls 1, 3, 4, 6, 7
 - ✅ Persistence across reboot verified end-to-end
 - ✅ Config diagnostic at boot (VGA + serial)
 
 **Shells / Console**
-- ✅ Kernel shell (diagnostic, reached via k at boot) with commands including gdtdump, tssdump, atatest, fatmount, fatls, fatcat
+- ✅ Kernel shell (diagnostic, reached via k at boot) with commands including gdtdump, tssdump, atatest, fatmount, fatls, fatcat, heapcheck, heapstress, selftest
 - ✅ User shell (Ring 3, newlib) as the default interactive console
 - ✅ Unknown command handling
 - ✅ Serial console output (COM1) for debugging alongside VGA
-- ✅ **`selftest` command** — runs 15 tests and prints a pass/fail summary (v0.5.1)
+- ✅ **`selftest` command** — runs 17 tests and prints a pass/fail summary (v0.5.2)
 
 **Userland C Library (newlib)**
 - ✅ **newlib 4.x** linked into user programs
@@ -600,7 +610,7 @@ This project is designed to be:
 - ✅ `malloc` / `free` backed by `sbrk` → `sys_brk`
 - ✅ `memcpy`, `memset`, `str*`, and the rest of the standard C string functions
 - ✅ newlib reentrancy initialized at startup (`_impure_ptr = &_impure_data`)
-- ✅ open / close / read / write on FAT files from Ring 3
+- ✅ open / close / read / write / unlink on FAT files from Ring 3
 - ✅ Statically linked (`libc.a`, `libm.a`); no dynamic linking yet
 - ✅ User programs written in ordinary C, compiled with `x86_64-elf-gcc`, loaded from the kernel ELF image
 
@@ -626,7 +636,7 @@ This project is designed to be:
 - ✅ `kmalloc()` and `kfree()` with free list
 - ✅ Block headers for memory tracking
 - ✅ Automatic heap expansion
-- ✅ `heapstat` and `heaptest` debugging commands
+- ✅ `heapstat`, `heaptest`, `heapcheck`, `heapstress` debugging commands
 - ✅ **Userland heap via newlib `malloc`/`free` over `sys_brk`**, exercised by user shell menu option 3
 
 **System Calls**
@@ -636,6 +646,7 @@ This project is designed to be:
 - ✅ SYS_READ (syscall #3) — Blocking read from fd 0; file-descriptor read on fd ≥ 3
 - ✅ SYS_OPEN (syscall #4) — Opens a FAT file
 - ✅ SYS_CLOSE (syscall #6) — Closes a file descriptor
+- ✅ SYS_UNLINK (syscall #7) — Deletes a FAT file
 - ✅ SYS_BRK (syscall #10) — Grow or shrink the process heap
 - ✅ SYS_REBOOT (syscall #25) — Ring 3 → Ring 0 hardware reset
 - ✅ **Syscall dispatcher** with argument handling (x86_64 syscall ABI)
@@ -693,21 +704,21 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 **Build System**
 - Organized source tree with Makefile
 - QEMU bootable disk image
-- Clean Clang + NASM build
+- Two compilers in use: Clang for most translation units, cross-GCC for FatFs
 - FAT_CONFIG=dual|single selects the storage layout
 - ./run convenience script with a menu of preconfigured targets
 - Multiple QEMU run modes (serial, debug, headless, KVM, single-drive)
 - Debug logging support with serial console
+- Header dependency tracking (`-MMD -MP`)
 
 ---
 
 ## ⚠️ Known Limitations
 
-- SYS_UNLINK is not implemented. FatFs has f_unlink, but there is no syscall for it. The user shell's multi-file test (option 6) creates and verifies files but skips the delete phase and reports the omission.
 - **Page tables are not freed on process exit.** `process_exit` reclaims the process's PCB slot and its ELF/user-stack pages, but the process's page tables (cr3) leak. This is a few pages per process. The teardown is deferred; it requires walking the page tables and freeing the user-space portion without touching shared kernel mappings.
 - **The keyboard buffer is shared.** Multiple shells reading from fd 0 will compete for bytes. Each keystroke goes to whichever blocked process the scheduler picks first. A per-process tty or a console-focus mechanism would be required to make multiple shells usable side by side.
 - **`sys_brk`'s `heap_base` is a single constant.** Each process's heap starts at the same *virtual* address (`0x8000200000`) and grows in its own address space (different `cr3`), so there is no address conflict. The shared constant is a code-cleanliness issue, not a functional one.
-- **`fatfs/ff.o` is compiled at `-O1`.** At `-O2`, linking `kernel.elf` with `ld.lld` 22.1.8 produces truncated instructions in `check_fs` and `move_window`; the standalone object file is correct, so this is a link-time issue, not a code-generation one. The `-O1` override in `04_kernel_64bit/Makefile` avoids it. Filed upstream; see `LLD_BUG_REPORT.md`. Remove the override when LLD is fixed.
+- **`fatfs/ff.o` and `fatfs/ffunicode.o` are compiled with `/opt/cross/bin/x86_64-elf-gcc`, not Clang.** Clang 22.1.8 (Fedora 22.1.8-4.fc44) miscompiles `ff.c` at every optimization level we tried: `-O0` breaks the FILINFO read path (`f_readdir` fills the struct incorrectly, filenames decode as garbage, `f_opendir` returns `FR_INT_ERR`); `-O1` hangs inside `f_unlink`; `-O2` produces truncated instructions in the linked binary (`check_fs`, `move_window`) via LLD 22.1.8. The cross-GCC produces correct code at `-O2` and uses the same x86-64 System V ABI as the Clang-built kernel objects, so the two toolchains link together cleanly. See `LLD_BUG_REPORT.md` for the full history. Remove the per-file GCC rule only when Clang and LLD both handle `ff.c` correctly.
 - **`vmm_map_page_in_cr3` does not flush the TLB.** Callers must `invlpg` after mapping if the address may have a stale translation. `sys_brk` does this; new callers should too.
 - **User programs are still embedded in the kernel ELF.** They are not loaded from the FAT volume. Loading programs from disk is the next storage milestone, and requires a `sys_exec`-style syscall.
 - **Single-drive vs dual-drive is a build-time choice.** One kernel binary cannot serve both layouts. The `FAT_CONFIG` variable selects which layout the kernel expects; running the wrong image under the wrong kernel will fail to mount FatFs.
@@ -736,9 +747,13 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - ~~Print atomicity (shared serial/VGA lock)~~ ✅ v0.5.1
 - ~~#DF through IST1~~ ✅ v0.5.1
 - ~~Kernel shell on a pool-allocated stack~~ ✅ v0.5.1
-- **`SYS_UNLINK`** — add `f_unlink` behind a syscall; completes the multi-file test (option 6)
-- **`sys_exec`** — the next feature milestone.  Add a syscall that opens an ELF file on the FAT volume, loads it, and spawns a process.  Stops embedding user programs in the kernel image.  See [`ROADMAP.md`](ROADMAP.md) §5a-iii.
-- **Boot-time self-test mode and `make test`** — deferred.  The interactive `selftest` command already runs the same 15 tests; `5b`/`5c` add headless/scripted execution, which is not the current workflow.  See [`MAINTENANCE.md`](MAINTENANCE.md) §5b–5c.
+- ~~Heap rewrite with validator and stress test~~ ✅ v0.5.2
+- ~~Long filename support (`FF_USE_LFN = 2`)~~ ✅ v0.5.2
+- ~~`SYS_UNLINK` (syscall #7)~~ ✅ v0.5.2
+- ~~Cross-GCC for FatFs~~ ✅ v0.5.2
+- ~~Makefile header dependency tracking (`-MMD -MP`)~~ ✅ v0.5.2
+- **`sys_exec`** — the next feature milestone.  Add a syscall that opens an ELF file on the FAT volume, loads it, and spawns a process.  Stops embedding user programs in the kernel image.  See [`ROADMAP.md`](ROADMAP.md) §4.9.
+- **Boot-time self-test mode and `make test`** — deferred.  The interactive `selftest` command already runs the same 17 tests; `5b`/`5c` add headless/scripted execution, which is not the current workflow.  See [`MAINTENANCE.md`](MAINTENANCE.md) §5b–5c.
 
 ### Medium-term
 - **User programs from disk** — add a `sys_exec`-style syscall, load ELF files from the FAT volume, and stop embedding programs in the kernel image.  (This is the same item as "`sys_exec`" in Short-term; listed here as well because it enables a real shell with external commands.)
@@ -749,7 +764,7 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - **File System (VFS)** — a VFS layer above FatFs, with mount points and path resolution
 - **Framebuffer graphics** — move off VGA text mode
 - **Page-table teardown on process exit** — walk the process's page tables and free the user-space portion, completing the cleanup story from the short-term item
-- **Bootloader migration to Limine** — replaces the hand-written stage2, removes the 176 KB kernel ceiling, and turns the kernel into a file loaded by the bootloader rather than a fixed-LBA blob
+- **Bootloader migration to Limine** — replaces the hand-written stage2, removes the 448 KB kernel ceiling, and turns the kernel into a file loaded by the bootloader rather than a fixed-LBA blob
 
 ---
 

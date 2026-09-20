@@ -66,7 +66,7 @@ Boot chain is complete and stable.
 
 ### ✔ 2.7 — Command Shell
 - Command parser
-- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield**, **usershell**, **gdtdump**, **tssdump**, **atatest**, **fatmount**, **fatls**, **fatcat**, **selftest**
+- Built‑in commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, heapcheck, heapstress, nxtest, syscall, **elfload**, **proclist**, **proccreate**, **vmmclone**, **runproc**, **schstat**, **testyield**, **usershell**, **gdtdump**, **tssdump**, **atatest**, **fatmount**, **fatls**, **fatcat**, **selftest**
 - Command history with backspace
 - Interactive prompt `>`
 
@@ -102,13 +102,17 @@ Boot chain is complete and stable.
 - **Page table cloning** via `vmm_clone_page_table()`
 - **`vmmclone` command** for testing process isolation
 
-### ✔ 3.4 — Kernel Heap Allocator
-- `kmalloc()` bump allocator
-- `kfree()` free list (memory reuse)
+### ✔ 3.4 — Kernel Heap Allocator ⭐ v0.5.2
+- `kmalloc()`/`kfree()` with free list
 - Automatic heap expansion
+- 1 MB initial heap, expanding up to 24 MB
 - `heapstat` debugging command
 - `heaptest` allocation/reuse verification
-- 64MB initial heap size
+- **v0.5.2 rewrite:** `heap_extend` places new blocks at the start of the newly mapped region. The old version placed the new block at `heap_brk - requested_size`, which lost up to `PAGE_SIZE - 1` bytes per extension and put blocks at the wrong end of the mapped range.
+- **`heap_header_t` padded to 48 bytes** so payloads are 16-aligned when the allocation size is a multiple of `HEAP_ALIGNMENT`.
+- **`heap_validate()`** walks the block list and checks every invariant, including that the last block's end equals `heap_brk`.
+- **`heap_stress()`** allocates across 512 slots with per-block patterns, forcing multiple extensions. The run grows the heap from 1 MB to ~4.15 MB with zero leak.
+- **`heapcheck` and `heapstress` shell commands.** Both also run from `selftest`.
 
 ### ✔ 3.5 — User Mode (Ring 3)
 - GDT with user segments (DPL=3)
@@ -124,6 +128,7 @@ Boot chain is complete and stable.
 - `nxtest` command for verifying NX functionality
 - WRITE bit fix for heap pages
 - Keyboard buffer corruption resolved
+- `EFER.NXE` enabled in v0.5.1 so the CPU enforces the bit
 
 ### ✔ 3.7 — System Calls
 - `syscall` instruction setup via MSRs (IA32_STAR, IA32_LSTAR, IA32_FMASK)
@@ -133,6 +138,7 @@ Boot chain is complete and stable.
 - SYS_READ (syscall #3)
 - SYS_OPEN (syscall #4)
 - SYS_CLOSE (syscall #6)
+- SYS_UNLINK (syscall #7)
 - SYS_BRK (syscall #10)
 - SYS_REBOOT (syscall #25)
 - Syscall dispatcher with x86_64 ABI
@@ -249,24 +255,29 @@ Boot chain is complete and stable.
 - Three bring-up bugs found and fixed: PIC mask restoration, exception frame offsets, LBA mode bit
 - Files: `04_kernel_64bit/ata.c`, `04_kernel_64bit/include/ata.h`, `04_kernel_64bit/include/io.h`
 
-### ✔ 3.21 — FatFs Integration (Read/Write)
-- FatFs R0.15 vendored in `04_kernel_64bit/fatfs/`
+### ✔ 3.21 — FatFs Integration (Read/Write) ⭐ v0.5.2
+- FatFs R0.16 vendored in `04_kernel_64bit/fatfs/`
 - `diskio.c` shim maps FatFs `disk_read` / `disk_write` / `disk_ioctl` onto the ATA driver
 - `FF_FS_READONLY = 0`, `FF_FS_MINIMIZE = 0`, `FF_MULTI_PARTITION = 0`
-- `FF_USE_LFN = 0`, `FF_VOLUMES = 1`, `FF_MIN_SS = FF_MAX_SS = 512`
+- `FF_VOLUMES = 1`, `FF_MIN_SS = FF_MAX_SS = 512`
+- **v0.5.2: Long filename support.** `FF_USE_LFN = 2` (dynamic working buffer on the stack), `FF_LFN_UNICODE = 2` (UTF-8 on the API), `FF_CODE_PAGE = 437` (US). `fatfs/ffunicode.o` linked into the kernel. `FF_MAX_LFN = 255`, `FF_LFN_BUF = 255`, `FF_SFN_BUF = 12`.
+- **v0.5.2: `ff.o` and `ffunicode.o` compiled with the cross-GCC**, not Clang. See the cross-GCC note below and `LLD_BUG_REPORT.md`.
 - Kernel shell commands: `fatmount`, `fatls`, `fatcat <file>`
 - Dual-drive storage: kernel on master `hdd.img`, FAT16 volume on slave `fat.img`
 - `ata.c` drive-parameterized API so FatFs can target the slave independently of the boot chain
-- Kernel size grew by ~25–30 KB for FatFs; kernel-size tripwire added to the Makefile
+- Kernel size grew by ~25–30 KB for FatFs, plus ~5 KB for the Unicode tables; kernel-size tripwire added to the Makefile
+- **`fatls` shows `HELLO-WORLD.TXT`; `fatcat HELLO-WORLD.TXT` reads it.**
 
-### ✔ 3.22 — Userland File I/O over FatFs
+### ✔ 3.22 — Userland File I/O over FatFs ⭐ v0.5.2
 - Per-process file table in the PCB: slots 0, 1, 2 reserved for stdin/stdout/stderr; slots 3..7 for `open`/`close`
-- Syscalls wired: `SYS_OPEN` (4), `SYS_CLOSE` (6), `SYS_GETPID` (20), and an fd branch in `SYS_READ` (3)
+- Syscalls wired: `SYS_OPEN` (4), `SYS_CLOSE` (6), `SYS_UNLINK` (7), `SYS_GETPID` (20), and an fd branch in `SYS_READ` (3)
 - `sys_exit` closes any files still open
-- Userland `arc2/syscalls.c` exposes `open`, `close`, `read`, `write` shims over the syscall instruction
+- Userland `arc2/syscalls.c` exposes `open`, `close`, `read`, `write`, `unlink` shims over the syscall instruction
 - `sys_open` flag handling uses newlib BSD-style values (`O_CREAT = 0x200`, `O_TRUNC = 0x400`, etc.) with access mode in the low 2 bits
 - Verified end-to-end: create, write, close, reopen, read, byte-exact round trip from Ring 3
 - A latent bug was fixed along the way: `sys_open` only set `FA_WRITE` when `flags == 1`, so `O_WRONLY | O_CREAT | O_TRUNC` (0x601) never enabled write mode
+- **v0.5.2: `sys_open` path buffer enlarged to 300 bytes**, with a `copy_user_string` helper that respects the buffer size. New `USER_PATH_MAX` constant (300). Paths up to `FF_MAX_LFN` (255) now fit.
+- **v0.5.2: `test_multi_file` in the user shell** now deletes the files it creates and confirms they are gone.
 
 ### ✔ 3.23 — Single-Drive Layout ⭐ v0.5.0
 - Boot chain, kernel, and FAT16 partition on one `hdd.img`
@@ -279,7 +290,7 @@ Boot chain is complete and stable.
 - `kmain.c` prints a config-specific boot-time storage line to VGA and serial
 - `hdd-single.img` built by `mkfs.vfat -F 16 -h 2048 --offset=2048` and populated by `mcopy` from `test-files/`
 - Image-build rule verifies the FAT boot sector and the BPB `hidden_sectors` field after assembly
-- Kernel-size tripwire now checks two limits: the stage2 staging ceiling (176 KB) and the disk-layout ceiling (983 KB, the region below LBA 2048)
+- Kernel-size tripwire now checks two limits: the stage2 staging ceiling (448 KB) and the disk-layout ceiling (983 KB, the region below LBA 2048)
 - User shell gains options 5 (persistence), 6 (multi-file), 7 (4 KB round-trip). `[FS TEST]` fixed: `msg_len` was hardcoded to 19 but the string is 20 bytes
 
 ### ✔ 3.24 — Maintenance Batch: Self-Test, NX on Hardware, Kernel-Owned GDT ⭐ v0.5.1
@@ -298,6 +309,25 @@ Boot chain is complete and stable.
 - "Works under KVM" is not the same as "works on hardware."  KVM's shadow MMU is more forgiving than the architecture requires.  When a feature depends on a CPU feature flag, enable the flag explicitly rather than relying on the hypervisor to enable it for you.
 - Low-memory structures are fragile.  The GDT was the second such structure (after the boot stack in item 3a) to be relocated to the higher half.  Anything the bootloader left in low memory is a candidate for the same treatment.
 - Print atomicity is not just cosmetic.  Interleaved serial output obscures real diagnostics.  A single shared lock is enough until per-user ttys exist.
+
+### ✔ 3.25 — Heap Rewrite, LFN, SYS_UNLINK, Cross-GCC for FatFs, Makefile Dependency Tracking ⭐ v0.5.2
+- **heap.c rewritten.** `heap_extend` now returns the start of the newly mapped region and the caller places a single free block covering the entire region. The old version placed the new block at `heap_brk - requested_size`, which lost up to `PAGE_SIZE - 1` bytes per extension and put blocks at the wrong end of the mapped range. Blocks are maintained in address order and coalesced on free.
+- **`heap_header_t` padded to 48 bytes.** Payloads are 16-aligned when the allocation size is a multiple of `HEAP_ALIGNMENT`.
+- **`heap_validate()` and `heap_stress()`.** `heap_validate` checks every block-list invariant. `heap_stress` runs 4096 ops across 512 slots with per-block patterns, grows the heap to ~4.15 MB, and validates intact with zero leak.
+- **`heapcheck` and `heapstress` shell commands.** Both added to `selftest`. Test count 17/17.
+- **Long filename support.** `FF_USE_LFN = 2`, `FF_LFN_UNICODE = 2`, `FF_CODE_PAGE = 437`. `fatfs/ffunicode.o` linked. Kernel grows 158 KB → 163 KB. `fatls` shows `HELLO-WORLD.TXT`; `fatcat HELLO-WORLD.TXT` reads it.
+- **`SYS_UNLINK` (syscall #7).** Wraps FatFs `f_unlink`. Kernel handler `sys_unlink` in `user_syscall.c`; userland `unlink()` shim in `arc2/syscalls.c`. `test_multi_file` in the user shell now deletes the files it creates and verifies they are gone.
+- **`sys_open` path truncation fix.** New `copy_user_string` helper; `USER_PATH_MAX = 300`.
+- **Cross-GCC for FatFs.** `fatfs/ff.o` and `fatfs/ffunicode.o` compiled with `/opt/cross/bin/x86_64-elf-gcc` at `-O2`. Clang 22.1.8 miscompiles `ff.c` at every optimization level: `-O0` breaks the FILINFO read path (filenames decode as `@80(`, `f_opendir` returns `FR_INT_ERR`), `-O1` hangs in `f_unlink`, and `-O2` produces LLD-truncated instructions in the linked binary. GCC produces correct code and links cleanly with the Clang-built kernel objects. See `LLD_BUG_REPORT.md`.
+- **Makefile header dependency tracking.** `-MMD -MP` added to `CFLAGS`; `-include $(OBJS:.o=.d)` at the bottom. Header changes now trigger the right rebuilds automatically.
+
+**Key learnings:**
+- A heap allocator without a validator is a heap allocator you cannot trust. The `heap_validate` invariant that the last block's end must equal `heap_brk` is what would have caught the old extension bug immediately.
+- The `heap_stress` test must be sized to actually exceed the initial heap. The first version allocated only ~256 KB and never forced an extension; the size constants were wrong.
+- A link-time truncation bug is much harder to diagnose than a compiler bug. The two look identical in a disassembly of the linked binary; they are distinguished by compiling the same source standalone and comparing.
+- A Makefile without header dependency tracking turns every header change into a two-step rebuild. `-MMD -MP` fixes this permanently.
+- Three separate toolchain bugs in Clang 22.1.8 and LLD 22.1.8 affected `ff.c` — one at each optimization level. All three are avoided by compiling that file with GCC instead. The per-file compiler override is the right shape for a toolchain bug that only affects one file.
+- GCC and Clang emit ELF64 relocatable objects using the same x86-64 System V ABI for the `x86_64-unknown-elf` target. There is no linker-level distinction between a GCC `.o` and a Clang `.o`, so a per-file compiler override is transparent to the rest of the build.
 
 ---
 
@@ -456,7 +486,7 @@ Boot chain is complete and stable.
   - **Exception frame offsets.** `isr13_handler` and `isr14_handler` read the CPU-pushed error code / RIP / CS at offsets 0..4 from the frame base, but the frame base points at the top of the 15-GPR save area. Fixed by indexing from `EXC_OFF_ERROR_CODE = 15` upward.
   - **LBA mode bit.** `ata_select_drive` wrote 0xA0/0xB0 to the drive/head register, leaving bit 6 (the "L" bit) clear. IDENTIFY ignores L, but READ/WRITE SECTORS interpret the LBA registers as a CHS tuple when L=0. Fixed by using `ATA_DRIVE_MASTER_LBA = 0xE0` / `ATA_DRIVE_SLAVE_LBA = 0xF0` in the read/write path.
 - **`atatest`** kernel shell diagnostic: read LBA 0 and verify the MBR signature, read LBA 64/128 and dump the kernel header, dump master and slave model strings.
-- **FatFs R0.15 vendored** in `04_kernel_64bit/fatfs/` with a `diskio.c` shim over the ATA driver. `FF_FS_READONLY = 0`, `FF_FS_MINIMIZE = 0`, `FF_MULTI_PARTITION = 0`, `FF_USE_LFN = 0`.
+- **FatFs R0.16 vendored** in `04_kernel_64bit/fatfs/` with a `diskio.c` shim over the ATA driver. `FF_FS_READONLY = 0`, `FF_FS_MINIMIZE = 0`, `FF_MULTI_PARTITION = 0`, `FF_USE_LFN = 0` (initial).
 - **Dual-drive storage.** Kernel on master `hdd.img`, FAT16 volume on slave `fat.img` (whole disk, no partition table).
 - **Kernel shell commands:** `fatmount`, `fatls`, `fatcat <file>`.
 - **Userland file I/O.** Per-process file table, `SYS_OPEN` (4), `SYS_CLOSE` (6), `SYS_GETPID` (20), and an fd branch in `SYS_READ` (3). `arc2/syscalls.c` wires newlib's `open`/`close`/`read`/`write` to the syscall instruction.
@@ -482,7 +512,7 @@ Boot chain is complete and stable.
 - **`atatest` write leg removed.** LBA 1024 is inside the kernel region in single-drive mode. The raw-sector round-trip was a footgun on a disk that now has a filesystem on it; the user shell's `[FS TEST]` exercises the write path through FatFs.
 - **`kmain.c` config diagnostic.** Boot-time mount prints a config-specific line to VGA and serial: `"Storage: single-drive, FAT@LBA 2048"` or `"Storage: dual-drive, FAT@LBA 0 on slave"`. Mount failures now appear on VGA, not just serial.
 - **`hdd-single.img`** built by `mkfs.vfat -F 16 -h 2048 --offset=2048` and populated by `mcopy` from `test-files/`. The image-build rule verifies the FAT boot sector and the BPB `hidden_sectors` field after assembly.
-- **Kernel-size tripwire** now checks two limits: the stage2 staging ceiling (176 KB) and the disk-layout ceiling (983 KB, the region below LBA 2048).
+- **Kernel-size tripwire** now checks two limits: the stage2 staging ceiling (448 KB) and the disk-layout ceiling (983 KB, the region below LBA 2048).
 - **User shell gains options 5, 6, 7.** Option 5 verifies persistence across reboot; option 6 creates 3 files and verifies contents (delete skipped, no `SYS_UNLINK`); option 7 is a 4 KB round-trip that catches multi-cluster bugs.
 - **`[FS TEST]` fixed.** `msg_len` was hardcoded to 19 but `"Hello from ring 3!\r\n"` is 20 bytes; the trailing `\n` was being silently truncated.
 
@@ -497,12 +527,12 @@ Boot chain is complete and stable.
 
 **What was accomplished:**
 - ATA PIO block device driver (see v0.4.10)
-- FatFs R0.15 vendored and integrated, read and write, kernel-side and userland (see v0.4.10)
+- FatFs R0.16 vendored and integrated, read and write, kernel-side and userland (see v0.4.10)
 - Single-drive layout with FAT16 partition at LBA 2048 (see v0.4.11)
 - Persistence across reboot verified end-to-end
 - Expanded user-shell regression harness (options 4, 5, 6, 7)
 - Config-specific boot-time storage diagnostic on VGA and serial
-- Kernel-size tripwire checks both the stage2 staging ceiling (176 KB) and the disk-layout ceiling (983 KB)
+- Kernel-size tripwire checks both the stage2 staging ceiling (448 KB) and the disk-layout ceiling (983 KB)
 - A new `run` script at the repo root: one-line-per-option QEMU launcher
 
 **Key learnings:**
@@ -516,7 +546,7 @@ Boot chain is complete and stable.
 
 ---
 
-## ⭐ v0.5.1 — Maintenance Batch: Self-Test, NX, Kernel-Owned GDT (September 2026) ⭐ NEW
+## ⭐ v0.5.1 — Maintenance Batch: Self-Test, NX, Kernel-Owned GDT (September 2026)
 
 **What was accomplished:**
 - Self-test infrastructure (`selftest` command, 15 tests) — see §3.24
@@ -539,42 +569,47 @@ Boot chain is complete and stable.
 - Loading user programs from disk (`sys_exec`)
 - Boot-time self-test mode and `make test` (deferred; see `MAINTENANCE.md` §5b–5c)
 
-## ⭐ v0.5.2 — Heap Rewrite and Validator (September 2026) ⭐ NEW
+---
+
+## ⭐ v0.5.2 — Heap Rewrite, LFN, SYS_UNLINK, Cross-GCC for FatFs, Makefile Dependency Tracking (September 2026) ⭐ NEW
 
 **What was accomplished:**
-- `heap_extend` rewritten to place new blocks at the start of the newly mapped region. The previous version placed them at `heap_brk - requested_size`, which lost up to `PAGE_SIZE - 1` bytes per extension and put blocks at the wrong end of the mapped range. See the new `heap.c`.
-- `heap_header_t` padded from 40 to 48 bytes so payloads are 16-aligned when the allocation size is a multiple of `HEAP_ALIGNMENT`.
-- `heap_validate()` walks the block list and checks every invariant, including that the last block's end equals `heap_brk`. The old implementation violated that invariant on every extension.
-- `heap_stress()` runs 4096 operations across 512 slots with per-block patterns, then validates. The run grows the heap from 1 MB to ~4.15 MB and reports zero leak with the heap intact.
-- `heapcheck` and `heapstress` kernel shell commands; both also run from `selftest`.
-- **LLD 22.1.8 workaround.** At `-O2`, linking `kernel.elf` with `ld.lld` 22.1.8 produces truncated instructions in `check_fs` and `move_window`. The standalone object file is correct, so the truncation happens at link time. `fatfs/ff.o` is compiled at `-O1` to avoid it. Bug filed upstream; see `LLD_BUG_REPORT.md` in the repo root.
+- **heap.c rewritten.** `heap_extend` now returns the start of the newly mapped region and the caller places a single free block covering the entire region. The old version placed the new block at `heap_brk - requested_size`, which lost up to `PAGE_SIZE - 1` bytes per extension and put blocks at the wrong end of the mapped range. Blocks are maintained in address order and coalesced on free.
+- **`heap_header_t` padded to 48 bytes.** Payloads are 16-aligned when the allocation size is a multiple of `HEAP_ALIGNMENT`. newlib's `malloc` is documented to return 16-aligned pointers on x86-64; the 40-byte header made payload addresses alternate between 8- and 16-aligned.
+- **`heap_validate()` and `heap_stress()`.** `heap_validate` walks the block list and checks every invariant, including that the last block's end equals `heap_brk`. `heap_stress` runs 4096 ops across 512 slots with per-block patterns, grows the heap from 1 MB to ~4.15 MB (multiple extensions), and validates intact with zero leak.
+- **`heapcheck` and `heapstress` shell commands.** Both added to `selftest`. Test count 17/17.
+- **Long filename support.** `FF_USE_LFN = 2`, `FF_LFN_UNICODE = 2`, `FF_CODE_PAGE = 437`. `fatfs/ffunicode.o` linked into the kernel. Kernel grows from 158 KB to 163 KB, well under the 448 KB staging limit. `fatls` shows `HELLO-WORLD.TXT`; `fatcat HELLO-WORLD.TXT` reads it.
+- **`SYS_UNLINK` (syscall #7).** Wraps FatFs `f_unlink`. Kernel handler `sys_unlink` in `user_syscall.c`; userland `unlink()` shim in `arc2/syscalls.c`. `test_multi_file` in the user shell now deletes the files it creates and verifies they are gone.
+- **`sys_open` path truncation fix.** Was copying only 127 bytes of the path into a 300-byte buffer. Replaced with a `copy_user_string` helper that respects the buffer size. Paths up to `FF_MAX_LFN` (255) now fit. New `USER_PATH_MAX` constant (300).
+- **Cross-GCC for FatFs.** `fatfs/ff.o` and `fatfs/ffunicode.o` compiled with `/opt/cross/bin/x86_64-elf-gcc` at `-O2`. Clang 22.1.8 miscompiles `ff.c` at every optimization level: `-O0` breaks the FILINFO read path (filenames decode as `@80(`, `f_opendir` returns `FR_INT_ERR`), `-O1` hangs in `f_unlink`, and `-O2` produces LLD-truncated instructions in the linked binary. GCC produces correct code and links cleanly with the Clang-built kernel objects. See `LLD_BUG_REPORT.md`.
+- **Makefile header dependency tracking.** `-MMD -MP` added to `CFLAGS`; `-include $(OBJS:.o=.d)` at the bottom. Header changes now trigger the right rebuilds automatically. This was the root cause of several stale-object debugging sessions.
 
 **Key learnings:**
-- A heap allocator without a validator is a heap allocator you cannot trust. The `heap_validate` invariant that the last block's end must equal `heap_brk` is what would have caught the old extension bug immediately, and it is what proves the new code is correct.
-- The `heap_stress` test must be sized to actually exceed the initial heap. The first version allocated only ~256 KB and never forced an extension; the size constants were wrong. The version in the tree allocates several megabytes and forces multiple extensions.
-- A link-time truncation bug is much harder to diagnose than a compiler bug. The two look identical in a disassembly of the linked binary; they are distinguished by compiling the same source standalone and comparing. `LLD_BUG_REPORT.md` documents the reproducer.
-- A Makefile without header dependency tracking turns every header change into a two-step rebuild. `make clean` is required after `heap.h` changes. Adding `-MMD -MP` would fix it; not done yet.
+- A heap allocator without a validator is a heap allocator you cannot trust. The `heap_validate` invariant that the last block's end must equal `heap_brk` is what would have caught the old extension bug immediately.
+- The `heap_stress` test must be sized to actually exceed the initial heap. The first version allocated only ~256 KB and never forced an extension; the size constants were wrong.
+- A link-time truncation bug is much harder to diagnose than a compiler bug. The two look identical in a disassembly of the linked binary; they are distinguished by compiling the same source standalone and comparing.
+- A Makefile without header dependency tracking turns every header change into a two-step rebuild. `-MMD -MP` fixes this permanently.
+- Three separate toolchain bugs in Clang 22.1.8 and LLD 22.1.8 affected `ff.c` — one at each optimization level. All three are avoided by compiling that file with GCC instead. The per-file compiler override is the right shape for a toolchain bug that only affects one file.
+- GCC and Clang emit ELF64 relocatable objects using the same x86-64 System V ABI for the `x86_64-unknown-elf` target. There is no linker-level distinction between a GCC `.o` and a Clang `.o`, so a per-file compiler override is transparent to the rest of the build.
 
 **Not yet implemented:**
-- Header dependency tracking in `04_kernel_64bit/Makefile` (`-MMD -MP`).
-- Long filename support (`FF_USE_LFN`).
-- `SYS_UNLINK`.
 - Loading user programs from disk (`sys_exec`).
-
----
+- ELF loader `PT_NX` follow-up.
 
 ---
 
 ## 4. User‑Facing Features
 
-### ✔ 4.1 — Permanent Storage Layer ⭐ v0.5.0
+### ✔ 4.1 — Permanent Storage Layer ⭐ v0.5.2
 - ~~ATA PIO block device driver (read/write sectors from long mode)~~ ✅
 - ~~FatFs integration (FAT12/FAT16/FAT32)~~ ✅
 - ~~Mount a filesystem, `f_open` / `f_read` / `f_write` / `f_close`~~ ✅
 - ~~Kernel shell commands: `fatmount`, `fatls`, `fatcat`~~ ✅
-- ~~Userland file I/O via `SYS_OPEN` (4), `SYS_CLOSE` (6), fd branch in `SYS_READ` (3)~~ ✅
+- ~~Userland file I/O via `SYS_OPEN` (4), `SYS_CLOSE` (6), `SYS_UNLINK` (7), fd branch in `SYS_READ` (3)~~ ✅
 - ~~Single-drive layout with FAT16 partition at LBA 2048~~ ✅
 - ~~Persistence across reboot verified~~ ✅
+- ~~Long filename support (`FF_USE_LFN = 2`)~~ ✅
+- ~~Cross-GCC for FatFs (`ff.o`, `ffunicode.o`)~~ ✅
 - ☐ Load user programs from disk rather than embedding them — see §4.9 (`sys_exec`)
 
 ### ☐ 4.2 — Framebuffer Graphics
@@ -610,10 +645,11 @@ Boot chain is complete and stable.
 
 Done in v0.5.1.  The kernel shell is now a real process (`kshell`) created by `kmain` on the `k` branch, with a stack allocated from the kernel stack pool.  `process_exit`'s fallback resumes it via `scheduler_switch_to`.  The `#DF` handler runs on IST1, a dedicated 4 KB stack, so a double fault produces a printed diagnostic rather than a triple-fault reset.
 
-### ☐ 4.8 — `SYS_UNLINK`
-- Small syscall addition: `f_unlink` behind `SYS_UNLINK`
-- Wires `unlink()` in `arc2/syscalls.c`
-- Completes the multi-file test in the user shell (option 6's delete phase)
+### ✔ 4.8 — `SYS_UNLINK` ⭐ v0.5.2
+- ~~Small syscall addition: `f_unlink` behind `SYS_UNLINK` (syscall #7)~~ ✅
+- ~~Wires `unlink()` in `arc2/syscalls.c`~~ ✅
+- ~~Completes the multi-file test in the user shell (option 6's delete phase)~~ ✅
+- `sys_open` path buffer enlarged to 300 bytes; new `copy_user_string` helper
 
 ### ☐ 4.9 — User Programs from Disk
 - `sys_exec`-style syscall
@@ -647,6 +683,7 @@ Done in v0.5.1.  The kernel shell is now a real process (`kshell`) created by `k
 - `make logkernel64` for debug runs
 - `FAT_CONFIG=dual|single` selects the storage layout
 - `./run` convenience script with a menu of preconfigured targets
+- Header dependency tracking (`-MMD -MP`)
 
 ---
 
@@ -704,9 +741,11 @@ Done in v0.5.1.  The kernel shell is now a real process (`kshell`) created by `k
 | **#DF through IST1** | **✔ Complete ⭐ v0.5.1** |
 | **Kernel Shell on a Pool-Allocated Stack** | **✔ Complete ⭐ v0.5.1** |
 | **Heap Rewrite and Validator** | **✔ Complete ⭐ v0.5.2** |
-| **LLD 22.1.8 Workaround** | **✔ Complete ⭐ v0.5.2** |
+| **Long Filename Support** | **✔ Complete ⭐ v0.5.2** |
+| **`SYS_UNLINK` (syscall #7)** | **✔ Complete ⭐ v0.5.2** |
+| **Cross-GCC for FatFs** | **✔ Complete ⭐ v0.5.2** |
+| **Makefile Header Dependency Tracking** | **✔ Complete ⭐ v0.5.2** |
 | **Staging Ceiling Raised to 448 KB** | **✔ Complete ⭐ v0.5.1** |
-| `SYS_UNLINK` | ☐ Planned |
 | User Programs from Disk (`sys_exec`) | ☐ Planned (next feature) |
 | ELF Loader `PT_NX` Follow-up | ☐ Planned |
 | Serial Console Debug Access | ☐ Planned |

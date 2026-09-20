@@ -234,10 +234,31 @@ static void test_multi_file(void) {
     }
     printf("  verified %d/3 files\n", verified);
 
-    printf("  (deletion not available: no SYS_UNLINK syscall yet)\n");
+    printf("  deleting %d file(s)...\n", created);
+    int deleted = 0;
+    for (int i = 0; i < 3; i++) {
+        if (unlink(names[i]) == 0) {
+            deleted++;
+        } else {
+            printf("  unlink %s: FAILED (errno=%d)\n", names[i], errno);
+        }
+    }
+    printf("  deleted %d/3 files\n", deleted);
 
-    if (created == 3 && verified == 3) {
-        printf("[MULTI TEST] PASSED (create + write + read, 3 files)\n] ");
+    int still_present = 0;
+    for (int i = 0; i < 3; i++) {
+        int fd = open(names[i], O_RDONLY, 0);
+        if (fd >= 0) {
+            still_present++;
+            close(fd);
+        }
+    }
+    printf("  after deletion, %d of 3 files still present\n", still_present);
+
+    if (created == 3 && verified == 3 && deleted == 3 && still_present == 0) {
+        printf("[MULTI TEST] PASSED (create + write + read + delete, 3 files)\n] ");
+    } else if (created == 3 && verified == 3) {
+        printf("[MULTI TEST] PARTIAL (create/write/read OK, delete failed)\n] ");
     } else {
         printf("[MULTI TEST] FAILED\n] ");
     }

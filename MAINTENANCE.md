@@ -382,48 +382,90 @@ requires `base >= 0xFFFFFFFF80000000ULL`.  Before the fix it was
 relaxed to "base must be non-zero" so the self-test could pass while
 the GDT lived in low memory.~~
 
-### 3i. LLD 22.1.8 mis-links `kernel.elf` at `-O2` for `ff.o`
+### 3i. Clang 22.1.8 miscompiles FatFs (`ff.c`) at every optimization level
 
-**Status:** worked around; underlying bug filed upstream
-**Effort:** none until LLD is fixed
+**Status:** ✅ **WORKED AROUND (v0.5.2).** `fatfs/ff.o` and
+`fatfs/ffunicode.o` are compiled with `/opt/cross/bin/x86_64-elf-gcc`
+at `-O2` instead of Clang. GCC produces correct code and links cleanly
+with the Clang-built kernel objects.
 
+**Effort:** none until both Clang and LLD handle `ff.c` correctly
+
+Three separate toolchain bugs affect this file. They were discovered
+in order, and each was initially treated as a separate issue. They are
+grouped here because they all have the same fix — do not use Clang for
+this file.
+
+**Bug 1 — LLD 22.1.8 truncates instructions at `-O2`.**
 At `-O2`, linking `kernel.elf` with `ld.lld` 22.1.8 produces truncated
 instructions in `check_fs` and `move_window`. The standalone `.o` file
-is correct — the same source, same flags, compiled to an object file
-and disassembled, has complete instructions. The truncation appears
-only in the linked binary.
+is correct; the truncation appears only in the linked binary.
 
-Specifically:
-
-ffffffff8011002a: 83 f8 03 cmp $0x3,%eax
-ffffffff8011002d: 0f .byte 0xf
-ffffffff8011002e: 87 .byte 0x87
-ffffffff8011002f: 80 .byte 0x80
-
+```
+ffffffff8011002a:	83 f8 03             	cmp    $0x3,%eax
+ffffffff8011002d:	0f                   	.byte 0xf
+ffffffff8011002e:	87                   	.byte 0x87
+ffffffff8011002f:	80                   	.byte 0x80
+```
 
 The instruction at `0xFFFFFFFF8011002D` should be a 6-byte `ja rel32`.
-Only the first 3 bytes are present. A second truncated instruction
-appears in `move_window` at `0xFFFFFFFF8010E0FF`.
+Only the first 3 bytes are present. Runtime effect: `#UD` at the
+truncated instruction.
 
-Runtime effect: the CPU raises `#UD` (invalid opcode) when it reaches
-one of the truncated instructions. The kernel was observed to fault
-in `check_fs` after `move_window` returned.
+**Bug 2 — Clang 22.1.8 hangs `f_unlink` at `-O1`.**
+At `-O1`, `SYS_UNLINK` hangs. The CPU enters `f_unlink` or
+`remove_chain` and never returns. Adding `serial_print` calls to
+`f_unlink` and `remove_chain` makes the hang go away, which is
+characteristic of a register-allocation-dependent codegen bug.
 
-**Workaround:** compile `fatfs/ff.o` at `-O1`:
+**Bug 3 — Clang 22.1.8 breaks the FILINFO read path at `-O0`.**
+At `-O0`, `f_readdir` fills `FILINFO` incorrectly: filenames decode as
+garbage (e.g. `@80(`), and `f_opendir` returns `FR_INT_ERR`. The
+`sizeof(FILINFO)` reported by the compiler is correct (280 bytes), so
+this is a struct field offset or stack-frame computation bug, not a
+size computation bug.
+
+**The shared fix.** Compile `fatfs/ff.c` and `fatfs/ffunicode.c` with
+the cross-GCC:
+
+```
+FATFS_CC := /opt/cross/bin/x86_64-elf-gcc
+
+FATFS_CFLAGS := -ffreestanding -O2 -Wall -Wextra \
+	-mcmodel=kernel -fno-pic -mno-red-zone -mno-sse -mno-sse2 \
+	-mno-avx -mno-mmx -Iinclude -Ifatfs $(FAT_CFLAGS) \
+	-MMD -MP
 
 fatfs/ff.o: fatfs/ff.c
-(CC)(CC)(CFLAGS) -O1 -c fatfs/ff.c -o fatfs/ff.o
+	$(FATFS_CC) $(FATFS_CFLAGS) -c fatfs/ff.c -o fatfs/ff.o
 
+fatfs/ffunicode.o: fatfs/ffunicode.c
+	$(FATFS_CC) $(FATFS_CFLAGS) -c fatfs/ffunicode.c -o fatfs/ffunicode.o
+```
 
-This changes instruction selection enough to avoid the bug for this
-file. It is a workaround, not a fix — the underlying LLD bug is still
-present and may affect other files at `-O2`.
+`diskio.c` stays with Clang; it is small, hand-written, and does not
+exhibit any of the bugs above.
 
-**When LLD is fixed:** remove the override, rebuild, confirm the
-`kernel.elf` disassembly of `check_fs` has no `.byte` sequences in
-its instruction stream.
+**Verified.** With GCC-compiled `ff.o` and `ffunicode.o`:
+- `fatmount` and `fatls` show `HELLO-WORLD.TXT` (long name).
+- `SYS_UNLINK` completes and does not hang.
+- The multi-file test in the user shell creates, verifies, deletes,
+  and confirms deletion of three files.
+- `selftest` passes 17/17.
 
-**Report:** see `LLD_BUG_REPORT.md` in the repo root.
+**Why GCC and Clang objects link together.** Both emit ELF64
+relocatable objects using the x86-64 System V ABI for the
+`x86_64-unknown-elf` target. The calling convention, struct layout,
+object file format, and relocation types are identical. There is no
+linker-level distinction between a GCC `.o` and a Clang `.o`.
+
+**Report.** See `LLD_BUG_REPORT.md` for the LLD issue (filed upstream
+as `llvm/llvm-project#224938`) and for the two Clang issues (not yet
+filed; no reduced test case).
+
+**When to revisit.** If Clang and LLD are both updated, retry
+compiling `ff.c` with Clang. If all three bugs are gone, remove the
+GCC override. Until then, `FATFS_CC` stays.
 
 ---
 
@@ -601,7 +643,7 @@ you ever wonder "is printing slow?"
 
 ### 4h. Comments that name functions by role
 
-**Status:** ongoing discipline; two instances found this session
+**Status:** ongoing discipline; two instances found in an earlier session
 **Effort:** n/a (code review discipline)
 
 When a function changes role — `gdt_fix_user_segments` going from
@@ -612,7 +654,7 @@ thing that does X" become silently wrong.  There is no mechanical way
 to catch this: the compiler cannot see it, the linker cannot see it,
 and no test in the tree covers documentation.
 
-Two instances surfaced this session:
+Two instances surfaced in an earlier session:
 
 1. **`test_gdt`'s header comment in `kmain.c`** still named
    `gdt_fix_user_segments` as the function that builds the user
@@ -742,10 +784,20 @@ coverage does not
   kernel text — which tests a different scenario than `usershell`
   exercises, and is not worth building just for `selftest`.
 
-Original estimate of "1 hr" for 5a was optimistic: the exception
-handlers were halting, so a recoverable fault path had to be designed
-and built before any of the fault tests could be sequenced.  5a-i
-alone was ~2 hrs.  5a-ii was ~1.5 hrs including the two findings.
+### 5a-iv. Multi-file delete test (option 6) ✅
+
+**Status:** ✅ **DONE (v0.5.2).** The user shell's multi-file test
+now exercises the full file lifecycle: create 3 files, write to
+each, close, reopen, read back, close, `unlink`, then confirm each
+file is gone by attempting to reopen it.  Option 6 passes end to
+end.
+
+This requires `SYS_UNLINK` (syscall #7) and the userland `unlink()`
+shim.  Both were added in v0.5.2.
+
+**Interaction with 3i.** This test surfaced the Clang 22.1.8
+miscompile at `-O1`.  With `ff.c` at `-O1`, the delete phase hangs;
+with `ff.o` compiled by the cross-GCC, it passes.
 
 ### 5b. Boot-time self-test mode
 
@@ -786,7 +838,7 @@ prerequisite for the headless part of 5c.
 | 3f | Self-test fault-trigger constraint | — | Documented (f132903) |
 | 3g | `EFER.NXE` not enabled | 15 min + 1 hr verify | ✅ Done (028da72) |
 | 3h | GDT lives in low memory | 2–3 hrs | ✅ Done (a3ee0d2) |
-| 3i | LLD 22.1.8 mis-links kernel.elf at -O2 | — | Worked around; filed upstream |
+| 3i | Clang/LLD miscompile ff.c at all -O levels | — | ✅ Worked around (v0.5.2: cross-GCC for ff.o) |
 | 4a | Dead declarations | 15 min | ✅ Done (20260919F) |
 | 4b | Double-build in `run` | 15 min | ✅ Done (20260919F) |
 | 4c | Stale comments | 30 min | ✅ Done (20260919F) |
@@ -798,27 +850,25 @@ prerequisite for the headless part of 5c.
 | 5a-i | Self-test: exception path | 2 hrs | ✅ Done (f132903) |
 | 5a-ii | Self-test: non-fault tests | 1.5 hrs | ✅ Done (182c1ef) |
 | 5a-iii | `elfload` in selftest | — | Declined (see §5a) |
+| 5a-iv | Multi-file delete test (option 6) | — | ✅ Done (v0.5.2) |
 | 5b | Boot-time self-test mode | 1 hr | Next |
 | 5c | `make test` target | 1 hr | After 5b |
 
-The LLD workaround (item 3i) is temporary and depends on the upstream
-fix landing. It is not a finding in this project's code, but it should
-be revisited whenever the toolchain is updated. If a future LLD version
-still mis-links `kernel.elf` at `-O2`, the report has the reproducer.
+The Clang/LLD workaround (item 3i) is temporary and depends on the
+upstream fixes landing. It is not a finding in this project's code, but
+it should be revisited whenever the toolchain is updated. If a future
+Clang or LLD version still miscompiles `ff.c`, the report has the
+reproducers.
 
 Everything on this list is either done, deferred, declined, or
-architectural.  **There are no open findings.**  Both findings from the
-5a-ii session (3g, 3h) are closed and verified.  The natural next steps,
-in order of value:
+architectural.  The natural next steps, in order of value:
 
 1. **Testing infrastructure (5b, 5c)** — the last two pieces of the
-   self-test work.  5b runs the same 15 tests at boot and halts; 5c
+   self-test work.  5b runs the same 17 tests at boot and halts; 5c
    wraps 5b in a headless QEMU invocation and greps the serial log
    for the summary line.  Do these before starting new features.
 2. **The ring buffer (4e)** — the correct long-term design for the
-   print path.  Do this before the tty subsystem lands.  The
-   duplicated user-shell banner in the `20260919N` capture is a
-   preview of the interleaving this fixes.
+   print path.  Do this before the tty subsystem lands.
 3. **`sys_exec`** — the next feature milestone (user programs from
    disk).  Not on this list because it's a feature, not maintenance.
 
