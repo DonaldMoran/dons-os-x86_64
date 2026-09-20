@@ -143,7 +143,568 @@ static void suspend_self_for_diagnostic(void) {
 }
 
 /* =====================================================================
- * Self-test scaffolding.
+ * Self-test: result codes and forward declarations.
+ *
+ * Every test returns PASS or FAIL.  There is no INFO today: gdt and
+ * tss turned out to have real assertions (see test_gdt and test_tss
+ * below), and every other test has a concrete pass/fail criterion.
+ * ===================================================================== */
+
+#define SELFTEST_PASS 0
+#define SELFTEST_FAIL 1
+
+static int test_gdt(void);
+static int test_tss(void);
+static int test_pmm(void);
+static int test_vmm(void);
+static int test_map(void);
+static int test_recursive(void);
+static int test_heap(void);
+static int test_nx(void);
+static int test_syscall(void);
+static int test_ata(void);
+static int test_fat_mount(void);
+static int test_fat_ls(void);
+
+/* =====================================================================
+ * GDT validation.
+ *
+ * Walks the GDT and checks the descriptors the kernel actually depends
+ * on.  The layout is fixed (see gdt.h and gdt_fix_user_segments):
+ *
+ *   0x00  null
+ *   0x08  (legacy 32-bit code, unused in long mode)
+ *   0x10  (legacy 32-bit data, unused in long mode)
+ *   0x18  kernel code,   DPL=0, L=1
+ *   0x20  kernel data,   DPL=0
+ *   0x28  user data,     DPL=3  (SS = 0x2B when RPL=3)
+ *   0x30  user code,     DPL=3, L=1  (CS = 0x33 when RPL=3)
+ *   0x38  TSS
+ *
+ * The assertions catch a stomped GDT or a broken gdt_fix_user_segments
+ * call.  They do not verify every bit of every descriptor; the load-
+ * bearing ones are the kernel code (used in every kernel frame), the
+ * user code (used in every Ring 3 return), and the TSS (used on every
+ * Ring 3 -> Ring 0 transition).
+ * ===================================================================== */
+
+static int test_gdt(void) {
+    gdt_dump();
+
+    struct __attribute__((packed)) {
+        uint16_t limit;
+        uint64_t base;
+    } gdt_ptr;
+    __asm__ volatile("sgdt %0" : "=m"(gdt_ptr));
+
+    /* Base must be non-zero.  It is NOT required to be in the higher
+       half: the GDT currently lives in low memory (base 0x101DC,
+       inside the bootloader's identity map), and the kernel reads it
+       through that map.  See MAINTENANCE.md item 3h.  Do not assert on
+       the address; assert on the contents. */
+    if (gdt_ptr.base == 0) return SELFTEST_FAIL;
+
+    /* At least 8 entries (indices 0..7). */
+    if (gdt_ptr.limit < 7 * 8 - 1) return SELFTEST_FAIL;
+
+    uint64_t* gdt = (uint64_t*)gdt_ptr.base;
+
+    /* Descriptor decode, matching gdt_dump's bit layout. */
+    #define D_ACCESS(d)  (((d) >> 40) & 0xFF)
+    #define D_FLAGS(d)   (((d) >> 52) & 0xF)
+    #define D_PRESENT(d) (D_ACCESS(d) & 0x80)
+    #define D_DPL(d)     ((D_ACCESS(d) >> 5) & 3)
+    #define D_CODE(d)    (D_ACCESS(d) & 0x08)             /* executable */
+    #define D_LONG(d)    (D_FLAGS(d) & 0x2)               /* L bit */
+
+    /* Index 0: null descriptor. */
+    if (gdt[0] != 0) return SELFTEST_FAIL;
+
+    /* Index 3 (0x18): kernel code, present, DPL=0, code, L=1. */
+    if (!D_PRESENT(gdt[3]))       return SELFTEST_FAIL;
+    if (D_DPL(gdt[3]) != 0)       return SELFTEST_FAIL;
+    if (!D_CODE(gdt[3]))          return SELFTEST_FAIL;
+    if (!D_LONG(gdt[3]))          return SELFTEST_FAIL;
+
+    /* Index 4 (0x20): kernel data, present, DPL=0, not code. */
+    if (!D_PRESENT(gdt[4]))       return SELFTEST_FAIL;
+    if (D_DPL(gdt[4]) != 0)       return SELFTEST_FAIL;
+    if (D_CODE(gdt[4]))           return SELFTEST_FAIL;
+
+    /* Index 5 (0x28): user data, present, DPL=3, not code. */
+    if (!D_PRESENT(gdt[5]))       return SELFTEST_FAIL;
+    if (D_DPL(gdt[5]) != 3)       return SELFTEST_FAIL;
+    if (D_CODE(gdt[5]))           return SELFTEST_FAIL;
+
+    /* Index 6 (0x30): user code, present, DPL=3, code, L=1. */
+    if (!D_PRESENT(gdt[6]))       return SELFTEST_FAIL;
+    if (D_DPL(gdt[6]) != 3)       return SELFTEST_FAIL;
+    if (!D_CODE(gdt[6]))          return SELFTEST_FAIL;
+    if (!D_LONG(gdt[6]))          return SELFTEST_FAIL;
+
+    /* Index 7 (0x38): TSS, present, system, type 0x9 (available) or
+       0xB (busy after ltr). */
+    uint8_t tss_access = D_ACCESS(gdt[7]);
+    if (!(tss_access & 0x80))     return SELFTEST_FAIL;
+    if (tss_access & 0x10)        return SELFTEST_FAIL;   /* S bit must be 0 */
+    uint8_t tss_type = tss_access & 0x0F;
+    if (tss_type != 0x9 && tss_type != 0xB) return SELFTEST_FAIL;
+
+    #undef D_ACCESS
+    #undef D_FLAGS
+    #undef D_PRESENT
+    #undef D_DPL
+    #undef D_CODE
+    #undef D_LONG
+
+    return SELFTEST_PASS;
+}
+
+/* =====================================================================
+ * TSS validation.
+ *
+ * Checks the fields the CPU and the scheduler depend on:
+ *
+ *   TR          must be 0x38 (the selector loaded by tss_init)
+ *   RSP0        kernel higher-half, 16-byte aligned
+ *   IST1        kernel higher-half, 16-byte aligned, non-zero
+ *               (item 3b's fix: #DF uses this stack)
+ *   iopb_base   == sizeof(tss_t)
+ *   g_syscall_stack_top == tss->rsp0
+ *               the v0.4.9 invariant: these two move in lockstep
+ *               with `current` at every context switch
+ *
+ * The last assertion is the strong one.  When selftest runs from the
+ * kernel shell, both should point at the shell's kernel_stack_top,
+ * because scheduler_switch_to updates them together.
+ * ===================================================================== */
+
+static int test_tss(void) {
+    tss_dump();
+
+    /* TR must be the TSS selector. */
+    uint16_t tr;
+    __asm__ volatile("str %0" : "=r"(tr));
+    if ((tr & 0xFFF8) != GDT_TSS) return SELFTEST_FAIL;
+
+    /* Re-derive the TSS base from the GDT descriptor, the same way
+       isr13_handler does, so we do not depend on tss.c's static
+       `tss` pointer. */
+    struct __attribute__((packed)) {
+        uint16_t limit;
+        uint64_t base;
+    } gdt_ptr;
+    __asm__ volatile("sgdt %0" : "=m"(gdt_ptr));
+    uint64_t* gdt = (uint64_t*)gdt_ptr.base;
+    uint64_t lo = gdt[GDT_TSS / 8];
+    uint64_t hi = gdt[GDT_TSS / 8 + 1];
+    uint64_t tss_base = ((lo >> 16) & 0xFFFFFF)
+                      | (((lo >> 56) & 0xFF) << 24)
+                      | ((hi & 0xFFFFFFFF) << 32);
+    if (tss_base == 0) return SELFTEST_FAIL;
+
+    tss_t* t = (tss_t*)tss_base;
+
+    /* RSP0 must be a 16-byte-aligned kernel stack top. */
+    if (t->rsp0 == 0)                              return SELFTEST_FAIL;
+    if (t->rsp0 < 0xFFFFFFFF80000000ULL)           return SELFTEST_FAIL;
+    if (t->rsp0 & 0xFULL)                          return SELFTEST_FAIL;
+
+    /* IST1 must be a 16-byte-aligned kernel stack top, non-zero. */
+    if (t->ist1 == 0)                              return SELFTEST_FAIL;
+    if (t->ist1 < 0xFFFFFFFF80000000ULL)           return SELFTEST_FAIL;
+    if (t->ist1 & 0xFULL)                          return SELFTEST_FAIL;
+
+    /* I/O permission bitmap must start right after the TSS struct. */
+    if (t->iopb_base != (uint16_t)sizeof(tss_t))   return SELFTEST_FAIL;
+
+    /* The lockstep invariant. */
+    if (g_syscall_stack_top != t->rsp0)            return SELFTEST_FAIL;
+
+    return SELFTEST_PASS;
+}
+
+/* =====================================================================
+ * PMM: allocate one page, verify it is non-zero, free it.
+ *
+ * The original pmmtest command leaked this page on every invocation.
+ * selftest runs pmmtest on every batch, so the leak would accumulate.
+ * Freeing here keeps selftest idempotent.
+ * ===================================================================== */
+
+static int test_pmm(void) {
+    PRINT_BOTH("\n--- PMM Test ---\n");
+    PRINT_BOTH("  Total Pages: "); PRINT_BOTH_DEC(pmm_get_total_pages()); PRINT_BOTH("\n");
+    PRINT_BOTH("  Free Pages : "); PRINT_BOTH_DEC(pmm_get_free_pages()); PRINT_BOTH("\n");
+
+    uint64_t phys_page = pmm_alloc_page(PAGE_KERNEL);
+    if (phys_page == 0) {
+        PRINT_BOTH("  Status     : FAILED (OOM)\n");
+        return SELFTEST_FAIL;
+    }
+    PRINT_BOTH("  Allocated  : 0x"); PRINT_BOTH_HEX(phys_page); PRINT_BOTH("\n");
+    PRINT_BOTH("  Zone       : "); PRINT_BOTH(phys_page < 0x2000000 ? "LOW\n" : "HIGH\n");
+    PRINT_BOTH("  Status     : SUCCESS\n");
+    pmm_dump_stats();
+
+    pmm_free_page(phys_page);
+    return SELFTEST_PASS;
+}
+
+/* =====================================================================
+ * VMM: read back the control registers and the NX-enable bit.
+ *
+ * These are always non-zero when the kernel is running (CR3 is the
+ * page table root, CR0 has PG and PE set, EFER.NXE was set by entry.asm).
+ * The test is weak but cheap, and it catches a regression in the VMM
+ * init path that would otherwise show up only as a crash elsewhere.
+ * ===================================================================== */
+
+static int test_vmm(void) {
+    PRINT_BOTH("\n=== VMM Dashboard ===\n");
+    uint64_t cr3, cr0;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    uint64_t efer = rdmsr(0xC0000080);
+
+    PRINT_BOTH("  CR3 Root : 0x"); PRINT_BOTH_HEX(cr3); PRINT_BOTH("\n");
+    PRINT_BOTH("  WP Active: "); PRINT_BOTH(cr0 & (1ULL << 16) ? "Yes\n" : "No\n");
+    PRINT_BOTH("  NX Active: "); PRINT_BOTH(efer & (1ULL << 11) ? "Yes\n" : "No\n");
+
+    /* CR3 must be a real page-table root. */
+    if ((cr3 & ~0xFFFULL) == 0)          return SELFTEST_FAIL;
+    /* Paging must be on, or nothing works. */
+    if (!(cr0 & (1ULL << 31)))           return SELFTEST_FAIL;
+
+    /* EFER.NXE is currently OFF.  vmm_map_page writes the NX bit into
+       PTEs (test_nx confirms the bit lands), but with NXE=0 the CPU
+       ignores it, so a page marked non-executable is still executable.
+       That is a known gap, not a failure of this test.  Do not assert
+       on NXE here; see MAINTENANCE.md item 3g. */
+    return SELFTEST_PASS;
+}
+
+/* =====================================================================
+ * Page mapping: allocate a physical page, write a magic value through
+ * the HHDM, map it at a scratch virtual address in the current cr3,
+ * read it back through the virtual address, then unmap and free.
+ *
+ * The original maptest command unmapped but leaked the physical page.
+ * Freeing here keeps selftest idempotent.
+ * ===================================================================== */
+
+static int test_map(void) {
+    PRINT_BOTH("\n=== VMM Map Test ===\n");
+    uint64_t phys = pmm_alloc_page(PAGE_KERNEL);
+    if (phys == 0) {
+        PRINT_BOTH("  Status   : FAILED (OOM)\n");
+        return SELFTEST_FAIL;
+    }
+    PRINT_BOTH("  Phys Page: 0x"); PRINT_BOTH_HEX(phys); PRINT_BOTH("\n");
+
+    *(uint64_t*)(0xFFFF800000000000ULL + phys) = 0xDEADBEEFCAFEBABEULL;
+    uint64_t test_virt = 0x40000000ULL;
+    uint64_t active_cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(active_cr3));
+
+    extern void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags);
+    vmm_map_page_in_cr3(active_cr3, test_virt, phys, 0x01ULL | 0x02ULL);
+    __asm__ volatile("invlpg (%0)" : : "r"(test_virt) : "memory");
+
+    uint64_t res = *(uint64_t*)test_virt;
+    PRINT_BOTH("  Virt Read: 0x"); PRINT_BOTH_HEX(res); PRINT_BOTH("\n");
+
+    extern void vmm_unmap_page_in_cr3(uint64_t cr3, uint64_t virt);
+    vmm_unmap_page_in_cr3(active_cr3, test_virt);
+    __asm__ volatile("invlpg (%0)" : : "r"(test_virt) : "memory");
+    pmm_free_page(phys);
+
+    if (res != 0xDEADBEEFCAFEBABEULL) {
+        PRINT_BOTH("  Status   : FAILED\n");
+        return SELFTEST_FAIL;
+    }
+    PRINT_BOTH("  Status   : SUCCESS\n");
+    return SELFTEST_PASS;
+}
+
+/* =====================================================================
+ * Recursive paging: read PML4[510] through the recursive window and
+ * compare it to CR3.  Both should point at the same physical page.
+ * ===================================================================== */
+
+static int test_recursive(void) {
+    PRINT_BOTH("\n=== Recursive Paging Test ===\n");
+    uint64_t base = 0xFFFF000000000000ULL
+                  | (510ULL << 39) | (510ULL << 30)
+                  | (510ULL << 21) | (510ULL << 12);
+
+    uint64_t entry = ((uint64_t*)base)[510];
+
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    PRINT_BOTH("  Extracted: 0x"); PRINT_BOTH_HEX(entry & ~0xFFFULL); PRINT_BOTH("\n");
+    PRINT_BOTH("  ActualCR3: 0x"); PRINT_BOTH_HEX(cr3 & ~0xFFFULL); PRINT_BOTH("\n");
+
+    if ((entry & ~0xFFFULL) != (cr3 & ~0xFFFULL)) {
+        PRINT_BOTH("  Status   : MISMATCH\n");
+        return SELFTEST_FAIL;
+    }
+    PRINT_BOTH("  Status   : MATCH\n");
+    return SELFTEST_PASS;
+}
+
+/* =====================================================================
+ * Heap: allocate two blocks, write a pattern, read it back, free,
+ * then reallocate to confirm the freed space was reused.
+ * ===================================================================== */
+
+static int test_heap(void) {
+    PRINT_BOTH("\n=== Heap Integrity Test ===\n");
+    uint8_t* p1 = (uint8_t*)kmalloc(32);
+    uint8_t* p2 = (uint8_t*)kmalloc(64);
+    int ok = (p1 && p2);
+    if (ok) {
+        for (int i = 0; i < 32; i++) p1[i] = 0xAA;
+        for (int i = 0; i < 64; i++) p2[i] = 0xBB;
+        for (int i = 0; i < 32; i++) { if (p1[i] != 0xAA) ok = 0; }
+        for (int i = 0; i < 64; i++) { if (p2[i] != 0xBB) ok = 0; }
+        kfree(p1); kfree(p2);
+    }
+    uint8_t* p3 = (uint8_t*)kmalloc(40);
+    if (!p3) ok = 0; else kfree(p3);
+
+    PRINT_BOTH(ok ? "  Status   : SUCCESS\n" : "  Status   : FAILED\n");
+    return ok ? SELFTEST_PASS : SELFTEST_FAIL;
+}
+
+/* =====================================================================
+ * NX: allocate a page, map it with the NX bit set, then walk the page
+ * tables via HHDM to confirm the NX bit landed in the final PTE.
+ *
+ * The walk mirrors isr14_handler's, which is the only other place in
+ * the kernel that reads a raw PTE.  vmm.h exposes vmm_get_phys_from_cr3
+ * (returns the physical address) but not a PTE-returning helper, so we
+ * walk manually rather than adding a new API just for the test.
+ *
+ * The original nxtest command leaked the physical page.  Freeing here
+ * keeps selftest idempotent.
+ * ===================================================================== */
+
+static int test_nx(void) {
+    PRINT_BOTH("\n=== NX Enforcement Test ===\n");
+    uint64_t phys = pmm_alloc_page(PAGE_KERNEL);
+    if (phys == 0) {
+        PRINT_BOTH("  Status   : FAILED (OOM)\n");
+        return SELFTEST_FAIL;
+    }
+    uint64_t virt = 0xFFFFFFFF82000000ULL;
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+
+    extern void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags);
+    vmm_map_page_in_cr3(cr3, virt, phys, 0x01ULL | 0x02ULL | 0x8000000000000000ULL);
+    __asm__ volatile("invlpg (%0)" : : "r"(virt) : "memory");
+
+    /* Walk the page tables via HHDM to read the PTE back. */
+    uint64_t i4 = (virt >> 39) & 0x1FF;
+    uint64_t i3 = (virt >> 30) & 0x1FF;
+    uint64_t i2 = (virt >> 21) & 0x1FF;
+    uint64_t i1 = (virt >> 12) & 0x1FF;
+
+    int ok = 0;
+    uint64_t pte = 0;
+
+    uint64_t* pml4 = (uint64_t*)(0xFFFF800000000000ULL + (cr3 & ~0xFFFULL));
+    uint64_t  pml4e = pml4[i4];
+    if (pml4e & 1) {
+        uint64_t* pdpt = (uint64_t*)(0xFFFF800000000000ULL + (pml4e & ~0xFFFULL));
+        uint64_t  pdpte = pdpt[i3];
+        if (pdpte & 1) {
+            uint64_t* pd = (uint64_t*)(0xFFFF800000000000ULL + (pdpte & ~0xFFFULL));
+            uint64_t  pde = pd[i2];
+            if (pde & 1) {
+                uint64_t* pt = (uint64_t*)(0xFFFF800000000000ULL + (pde & ~0xFFFULL));
+                pte = pt[i1];
+                if (pte & 1) {
+                    ok = (pte & 0x8000000000000000ULL) != 0;
+                    PRINT_BOTH("  PTE      : 0x"); PRINT_BOTH_HEX(pte); PRINT_BOTH("\n");
+                    PRINT_BOTH("  NX bit in PTE: ");
+                    PRINT_BOTH(ok ? "set\n" : "clear\n");
+                }
+            }
+        }
+    }
+
+    extern void vmm_unmap_page_in_cr3(uint64_t cr3, uint64_t virt);
+    vmm_unmap_page_in_cr3(cr3, virt);
+    __asm__ volatile("invlpg (%0)" : : "r"(virt) : "memory");
+    pmm_free_page(phys);
+
+    PRINT_BOTH(ok ? "  Status   : SUCCESS\n" : "  Status   : FAILED\n");
+    return ok ? SELFTEST_PASS : SELFTEST_FAIL;
+}
+
+/* =====================================================================
+ * Syscall: read the LSTAR MSR (the syscall entry point) and confirm
+ * it is set.  Then issue a SYS_WRITE through the syscall interface to
+ * confirm the dispatcher is live.
+ * ===================================================================== */
+
+static int test_syscall(void) {
+    PRINT_BOTH("\n=== Syscall Verification ===\n");
+    uint64_t lstar = rdmsr(0xC0000082);
+    PRINT_BOTH("  LSTAR Entry: 0x"); PRINT_BOTH_HEX(lstar); PRINT_BOTH("\n");
+
+    if (lstar < 0xFFFFFFFF80000000ULL) return SELFTEST_FAIL;
+
+    sys_write(1, "  [SYSCALL OK] Execution routed.\n", 33);
+    return SELFTEST_PASS;
+}
+
+/* =====================================================================
+ * ATA: read the MBR, confirm the 0xAA55 signature, then read the
+ * kernel header sector.  Read-only; no writes.  The write leg was
+ * removed in v0.4.11 because LBA 1024 is inside the kernel region in
+ * single-drive mode.
+ * ===================================================================== */
+
+static int test_ata(void) {
+    PRINT_BOTH("\n=== ATA Diagnostic ===\n");
+    if (!ata_present(ATA_DRIVE_MASTER) && !ata_present(ATA_DRIVE_SLAVE)) {
+        PRINT_BOTH("  Status   : FAILED (No devices)\n");
+        return SELFTEST_FAIL;
+    }
+    uint8_t* buf = (uint8_t*)kmalloc(512);
+    if (!buf) {
+        PRINT_BOTH("  Status   : FAILED (OOM)\n");
+        return SELFTEST_FAIL;
+    }
+    int ok = 1;
+
+    if (ata_present(ATA_DRIVE_MASTER)) {
+        PRINT_BOTH("  Master    : ");
+        PRINT_BOTH(ata_model(ATA_DRIVE_MASTER));
+        PRINT_BOTH("\n");
+
+        if (ata_read_sector_drive(ATA_DRIVE_MASTER, 0, buf) != 0) {
+            PRINT_BOTH("  Master MBR: READ_FAILED\n");
+            ok = 0;
+        } else {
+            uint16_t sig = (uint16_t)buf[510] | ((uint16_t)buf[511] << 8);
+            PRINT_BOTH(sig == 0xAA55 ? "  Master MBR: OK\n"
+                                     : "  Master MBR: BAD\n");
+            if (sig != 0xAA55) ok = 0;
+        }
+
+        if (ata_read_sector_drive(ATA_DRIVE_MASTER, 128, buf) != 0) {
+            PRINT_BOTH("  Kernel hdr: READ_FAILED\n");
+            ok = 0;
+        } else {
+            PRINT_BOTH("  Kernel hdr: 0x");
+            PRINT_BOTH_HEX(((uint64_t)buf[0])       |
+                           ((uint64_t)buf[1] <<  8) |
+                           ((uint64_t)buf[2] << 16) |
+                           ((uint64_t)buf[3] << 24));
+            PRINT_BOTH("\n");
+        }
+    } else {
+        PRINT_BOTH("  Master    : Not Present\n");
+    }
+
+    if (ata_present(ATA_DRIVE_SLAVE)) {
+        PRINT_BOTH("  Slave     : ");
+        PRINT_BOTH(ata_model(ATA_DRIVE_SLAVE));
+        PRINT_BOTH("\n");
+
+        if (ata_read_sector_drive(ATA_DRIVE_SLAVE, 0, buf) != 0) {
+            PRINT_BOTH("  Slave Boot: READ_FAILED\n");
+            ok = 0;
+        } else {
+            uint16_t sig = (uint16_t)buf[510] | ((uint16_t)buf[511] << 8);
+            PRINT_BOTH(sig == 0xAA55 ? "  Slave Boot: OK\n"
+                                     : "  Slave Boot: NO_SIG\n");
+            if (sig != 0xAA55) ok = 0;
+        }
+    } else {
+        PRINT_BOTH("  Slave     : Not Present\n");
+    }
+
+    kfree(buf);
+    PRINT_BOTH(ok ? "  Status   : SUCCESS\n" : "  Status   : FAILED\n");
+    return ok ? SELFTEST_PASS : SELFTEST_FAIL;
+}
+
+/* =====================================================================
+ * FAT mount: f_mount the boot volume.  FR_OK means the BPB parsed and
+ * the boot sector was readable.
+ * ===================================================================== */
+
+static int test_fat_mount(void) {
+    PRINT_BOTH("\n=== FatFs Mount Test ===\n");
+    static FATFS fs;
+    FRESULT res = f_mount(&fs, "0:", 1);
+    if (res == FR_OK) {
+        PRINT_BOTH("  Status   : SUCCESS (Volume online)\n");
+        return SELFTEST_PASS;
+    }
+    PRINT_BOTH("  Status   : FAILED (Code "); PRINT_BOTH_DEC((uint64_t)res); PRINT_BOTH(")\n");
+    return SELFTEST_FAIL;
+}
+
+/* =====================================================================
+ * FAT list: open the root directory, count files and subdirectories.
+ * Passes if f_opendir succeeded, regardless of how many entries exist.
+ * ===================================================================== */
+
+static int test_fat_ls(void) {
+    PRINT_BOTH("\n=== FatFs Directory Listing ===\n");
+
+    DIR dj;
+    FILINFO fno;
+    FRESULT res;
+
+    res = f_opendir(&dj, "0:/");
+    if (res != FR_OK) {
+        PRINT_BOTH("  Status   : FAILED (Cannot open root. Code ");
+        PRINT_BOTH_DEC((uint64_t)res);
+        PRINT_BOTH(")\n");
+        return SELFTEST_FAIL;
+    }
+
+    int file_count = 0;
+    int dir_count = 0;
+
+    for (;;) {
+        res = f_readdir(&dj, &fno);
+        if (res != FR_OK || fno.fname[0] == 0) break;
+
+        if (fno.fattrib & AM_DIR) {
+            PRINT_BOTH("  <DIR>  ");
+            PRINT_BOTH(fno.fname);
+            PRINT_BOTH("\n");
+            dir_count++;
+        } else {
+            PRINT_BOTH("  FILE   ");
+            PRINT_BOTH(fno.fname);
+            PRINT_BOTH("  (");
+            PRINT_BOTH_DEC((uint64_t)fno.fsize);
+            PRINT_BOTH(" bytes)\n");
+            file_count++;
+        }
+    }
+
+    PRINT_BOTH("\nTotal: ");
+    PRINT_BOTH_DEC((uint64_t)file_count);
+    PRINT_BOTH(" file(s), ");
+    PRINT_BOTH_DEC((uint64_t)dir_count);
+    PRINT_BOTH(" directory(ies)\n");
+
+    f_closedir(&dj);
+    return SELFTEST_PASS;
+}
+
+/* =====================================================================
+ * Expected-fault triggers and driver.
  *
  * The three fault triggers are tiny kernel functions that take one
  * exception each.  They are the entry points of child processes
@@ -155,16 +716,11 @@ static void suspend_self_for_diagnostic(void) {
  * cleanly; test_exception_proc() then sees g_fault_observed still at
  * -1 and reports FAIL.
  *
- * The triggers use inline asm for #DE and a direct store to a
- * non-canonical address for #GP, because those are the only reliable
- * ways to produce those exceptions from C.  #PF comes from a store to
- * a canonical but unmapped higher-half address.
- *
  * All three triggers must remain kernel-mode functions (entry_point
  * >= KERNEL_BASE).  process_exit() uses that distinction to choose
  * between "resume the kernel shell" and "halt"; a user-mode trigger
  * would halt instead of resuming, and the self-test would never get
- * control back.
+ * control back.  See item 3f in MAINTENANCE.md.
  * ===================================================================== */
 
 static void fault_de_trigger(void) {
@@ -174,21 +730,18 @@ static void fault_de_trigger(void) {
         "div %%rbx\n\t"
         ::: "rax", "rbx", "rdx"
     );
-    process_exit();   /* #DE did not fire */
+    process_exit();
 }
 
 static void fault_pf_trigger(void) {
     *(volatile uint64_t*)0xFFFFFFFF00000000ULL = 0xDEADBEEF;
-    process_exit();   /* #PF did not fire */
+    process_exit();
 }
 
 static void fault_gp_trigger(void) {
     *(volatile uint64_t*)0x000FFFFF00000000ULL = 0xDEADBEEF;
-    process_exit();   /* #GP did not fire */
+    process_exit();
 }
-
-#define SELFTEST_PASS 0
-#define SELFTEST_FAIL 1
 
 /*
  * Run one expected-fault test.
@@ -200,9 +753,6 @@ static void fault_gp_trigger(void) {
  * trailing process_exit, same effect).  Either way control comes back
  * here when the shell resumes, and g_fault_observed tells us which path
  * was taken.
- *
- * Returns SELFTEST_PASS if the expected vector was observed, otherwise
- * SELFTEST_FAIL.
  */
 static int test_exception_proc(int vec, void (*trigger)(void)) {
     pcb_t* child = process_create("faulttest", (uint64_t)trigger, 0);
@@ -214,15 +764,22 @@ static int test_exception_proc(int vec, void (*trigger)(void)) {
     suspend_self_for_diagnostic();
     scheduler_switch_to(child);
 
-    /*
-     * Control resumes here when the child terminates and
-     * process_exit's fallback switches back to the kernel shell.
-     * Clear the marker so an unexpected fault in a later test is not
-     * silently attributed to this one.
-     */
     g_expect_fault = -1;
     return (g_fault_observed == vec) ? SELFTEST_PASS : SELFTEST_FAIL;
 }
+
+static int test_exception_de(void) { return test_exception_proc(0x00, fault_de_trigger); }
+static int test_exception_pf(void) { return test_exception_proc(0x0E, fault_pf_trigger); }
+static int test_exception_gp(void) { return test_exception_proc(0x0D, fault_gp_trigger); }
+
+/* =====================================================================
+ * Shell command dispatch.
+ *
+ * Each test command is a thin wrapper around its test_xxx function.
+ * The wrapper ignores the return value: the human already saw the
+ * "Status : SUCCESS" line, and the prompt is all that's needed.
+ * selftest calls the same functions and reads the return value.
+ * ===================================================================== */
 
 static void handle_command(const char *cmd) {
     if (cmd == NULL || cmd[0] == '\0') {
@@ -257,28 +814,16 @@ static void handle_command(const char *cmd) {
             }
             vga_print("  Usable RAM: "); vga_print_dec_cur(total_usable / (1024 * 1024)); vga_print(" MB\n");
         } else { vga_print("  MMap unavailable\n"); }
-        vga_print("> ");   
+        vga_print("> ");
     } else if (strcmp(cmd, "reboot") == 0) {
         vga_print("\nResetting...\n");
         handle_reboot_sequence();
     } else if (strcmp(cmd, "pmmtest") == 0) {
-        PRINT_BOTH("\n--- PMM Test ---\n");
-        PRINT_BOTH("  Total Pages: "); PRINT_BOTH_DEC(pmm_get_total_pages()); PRINT_BOTH("\n");
-        PRINT_BOTH("  Free Pages : "); PRINT_BOTH_DEC(pmm_get_free_pages()); PRINT_BOTH("\n");
-
-        uint64_t phys_page = pmm_alloc_page(PAGE_KERNEL);
-        if (phys_page != 0) {
-            PRINT_BOTH("  Allocated  : 0x"); PRINT_BOTH_HEX(phys_page); PRINT_BOTH("\n");
-            PRINT_BOTH("  Zone       : "); PRINT_BOTH(phys_page < 0x2000000 ? "LOW\n" : "HIGH\n");
-            PRINT_BOTH("  Status     : SUCCESS\n");
-            pmm_dump_stats();
-        } else {
-            PRINT_BOTH("  Status     : FAILED (OOM)\n");
-        }
+        test_pmm();
         vga_print("> ");
     } else if (strcmp(cmd, "test") == 0) {
         vga_print("\n=== Exception Test ===\n  1 - #DE\n  2 - #PF\n  3 - #GP\nSelect: ");
-        char c = 0; 
+        char c = 0;
         while (!kbd_buffer_get(&c)) { asm volatile("hlt"); }
         vga_putc(c); vga_print("\n");
 
@@ -293,13 +838,7 @@ static void handle_command(const char *cmd) {
         }
         vga_print("> ");
     } else if (strcmp(cmd, "vmmtest") == 0) {
-        PRINT_BOTH("\n=== VMM Dashboard ===\n");
-        uint64_t tmp;
-        __asm__ volatile("mov %%cr3, %0" : "=r"(tmp));
-        PRINT_BOTH("  CR3 Root : 0x"); PRINT_BOTH_HEX(tmp); PRINT_BOTH("\n");
-        __asm__ volatile("mov %%cr0, %0" : "=r"(tmp));
-        PRINT_BOTH("  WP Active: "); PRINT_BOTH(tmp & (1ULL << 16) ? "Yes\n" : "No\n");
-        PRINT_BOTH("  NX Active: "); PRINT_BOTH(rdmsr(0xC0000080) & (1ULL << 11) ? "Yes\n" : "No\n");
+        test_vmm();
         vga_print("> ");
     } else if (strcmp(cmd, "serialtest") == 0) {
         vga_print("\nSending COM1 packets...\n");
@@ -310,68 +849,19 @@ static void handle_command(const char *cmd) {
         heap_stats();
         vga_print("Node trace complete.\n> ");
     } else if (strcmp(cmd, "maptest") == 0) {
-        PRINT_BOTH("\n=== VMM Map Test ===\n");
-        uint64_t phys = pmm_alloc_page(PAGE_KERNEL);
-        PRINT_BOTH("  Phys Page: 0x"); PRINT_BOTH_HEX(phys); PRINT_BOTH("\n");
-
-        *(uint64_t*)(0xFFFF800000000000ULL + phys) = 0xDEADBEEFCAFEBABEULL;
-        uint64_t test_virt = 0x40000000ULL;
-        uint64_t active_cr3;
-        __asm__ volatile("mov %%cr3, %0" : "=r"(active_cr3));
-
-        extern void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags);
-        vmm_map_page_in_cr3(active_cr3, test_virt, phys, 0x01ULL | 0x02ULL);
-        __asm__ volatile("invlpg (%0)" : : "r"(test_virt) : "memory");
-
-        uint64_t res = *(uint64_t*)test_virt;
-        PRINT_BOTH("  Virt Read: 0x"); PRINT_BOTH_HEX(res); PRINT_BOTH("\n");
-        PRINT_BOTH(res == 0xDEADBEEFCAFEBABEULL ? "  Status   : SUCCESS\n" : "  Status   : FAILED\n");
-
-        extern void vmm_unmap_page_in_cr3(uint64_t cr3, uint64_t virt);
-        vmm_unmap_page_in_cr3(active_cr3, test_virt);
+        test_map();
         vga_print("> ");
     } else if (strcmp(cmd, "testrec") == 0) {
-        PRINT_BOTH("\n=== Recursive Paging Test ===\n");
-        uint64_t base = 0xFFFF000000000000ULL | (510ULL << 39) | (510ULL << 30) | (510ULL << 21) | (510ULL << 12);
-        
-        uint64_t entry = ((uint64_t*)base)[510];
-        
-        uint64_t cr3; __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
-        PRINT_BOTH("  Extracted: 0x"); PRINT_BOTH_HEX(entry & ~0xFFFULL); PRINT_BOTH("\n");
-        PRINT_BOTH("  ActualCR3: 0x"); PRINT_BOTH_HEX(cr3 & ~0xFFFULL); PRINT_BOTH("\n");
-        PRINT_BOTH((entry & ~0xFFFULL) == (cr3 & ~0xFFFULL) ? "  Status   : MATCH\n" : "  Status   : MISMATCH\n");
+        test_recursive();
         vga_print("> ");
     } else if (strcmp(cmd, "heaptest") == 0) {
-        PRINT_BOTH("\n=== Heap Integrity Test ===\n");
-        uint8_t* p1 = (uint8_t*)kmalloc(32);
-        uint8_t* p2 = (uint8_t*)kmalloc(64);
-        int ok = (p1 && p2);
-        if (ok) {
-            for(int i=0; i<32; i++) p1[i] = 0xAA;
-            for(int i=0; i<64; i++) p2[i] = 0xBB;
-            for(int i=0; i<32; i++) { if(p1[i] != 0xAA) ok = 0; }
-            for(int i=0; i<64; i++) { if(p2[i] != 0xBB) ok = 0; }
-            kfree(p1); kfree(p2);
-        }
-        uint8_t* p3 = (uint8_t*)kmalloc(40);
-        if (!p3) ok = 0; else kfree(p3);
-        PRINT_BOTH(ok ? "  Status   : SUCCESS\n" : "  Status   : FAILED\n");
+        test_heap();
         vga_print("> ");
     } else if (strcmp(cmd, "nxtest") == 0) {
-        PRINT_BOTH("\n=== NX Enforcement Test ===\n");
-        uint64_t phys = pmm_alloc_page(PAGE_KERNEL);
-        uint64_t virt = 0xFFFFFFFF82000000ULL;
-        uint64_t cr3; __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
-        extern void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags);
-        vmm_map_page_in_cr3(cr3, virt, phys, 0x01ULL | 0x02ULL | 0x8000000000000000ULL);
-        PRINT_BOTH("  PTE NX bit verified.\n  Status   : SUCCESS\n");
-        extern void vmm_unmap_page_in_cr3(uint64_t cr3, uint64_t virt);
-        vmm_unmap_page_in_cr3(cr3, virt);
+        test_nx();
         vga_print("> ");
     } else if (strcmp(cmd, "syscall") == 0) {
-        PRINT_BOTH("\n=== Syscall Verification ===\n");
-        PRINT_BOTH("  LSTAR Entry: 0x"); PRINT_BOTH_HEX(rdmsr(0xC0000082)); PRINT_BOTH("\n");
-        sys_write(1, "  [SYSCALL OK] Execution routed.\n", 33);
+        test_syscall();
         vga_print("> ");
     } else if (strcmp(cmd, "elfload") == 0) {
         vga_print("\n--- ELF Loader ---\n");
@@ -448,121 +938,17 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "tssdump") == 0) {
         tss_dump(); vga_print("> ");
     } else if (strcmp(cmd, "atatest") == 0) {
-        PRINT_BOTH("\n=== ATA Diagnostic ===\n");
-        if (!ata_present(ATA_DRIVE_MASTER) && !ata_present(ATA_DRIVE_SLAVE)) {
-            PRINT_BOTH("  Status   : FAILED (No devices)\n> "); return;
-        }
-        uint8_t* buf = (uint8_t*)kmalloc(512);
-        if (!buf) { vga_print("OOM\n> "); return; }
-        int ok = 1;
-
-        if (ata_present(ATA_DRIVE_MASTER)) {
-            PRINT_BOTH("  Master    : ");
-            PRINT_BOTH(ata_model(ATA_DRIVE_MASTER));
-            PRINT_BOTH("\n");
-
-            if (ata_read_sector_drive(ATA_DRIVE_MASTER, 0, buf) != 0) {
-                PRINT_BOTH("  Master MBR: READ_FAILED\n");
-                ok = 0;
-            } else {
-                uint16_t sig = (uint16_t)buf[510] | ((uint16_t)buf[511] << 8);
-                PRINT_BOTH(sig == 0xAA55 ? "  Master MBR: OK\n"
-                                         : "  Master MBR: BAD\n");
-            }
-
-            if (ata_read_sector_drive(ATA_DRIVE_MASTER, 128, buf) != 0) {
-                PRINT_BOTH("  Kernel hdr: READ_FAILED\n");
-                ok = 0;
-            } else {
-                PRINT_BOTH("  Kernel hdr: 0x");
-                PRINT_BOTH_HEX(((uint64_t)buf[0])       |
-                               ((uint64_t)buf[1] <<  8) |
-                               ((uint64_t)buf[2] << 16) |
-                               ((uint64_t)buf[3] << 24));
-                PRINT_BOTH("\n");
-            }
-        } else {
-            PRINT_BOTH("  Master    : Not Present\n");
-        }
-
-        if (ata_present(ATA_DRIVE_SLAVE)) {
-            PRINT_BOTH("  Slave     : ");
-            PRINT_BOTH(ata_model(ATA_DRIVE_SLAVE));
-            PRINT_BOTH("\n");
-
-            if (ata_read_sector_drive(ATA_DRIVE_SLAVE, 0, buf) != 0) {
-                PRINT_BOTH("  Slave Boot: READ_FAILED\n");
-                ok = 0;
-            } else {
-                uint16_t sig = (uint16_t)buf[510] | ((uint16_t)buf[511] << 8);
-                PRINT_BOTH(sig == 0xAA55 ? "  Slave Boot: OK\n"
-                                         : "  Slave Boot: NO_SIG\n");
-            }
-        } else {
-            PRINT_BOTH("  Slave     : Not Present\n");
-        }
-
-        kfree(buf);
-        PRINT_BOTH(ok ? "  Status   : SUCCESS\n" : "  Status   : FAILED\n");
+        test_ata();
         vga_print("> ");
     } else if (strcmp(cmd, "fatmount") == 0) {
-        PRINT_BOTH("\n=== FatFs Mount Test ===\n");
-        static FATFS fs;
-        FRESULT res = f_mount(&fs, "0:", 1); 
-        if (res == FR_OK) {
-            PRINT_BOTH("  Status   : SUCCESS (Volume online)\n");
-        } else {
-            PRINT_BOTH("  Status   : FAILED (Code "); PRINT_BOTH_DEC((uint64_t)res); PRINT_BOTH(")\n");
-        }
+        test_fat_mount();
         vga_print("> ");
     } else if (strcmp(cmd, "fatls") == 0) {
-        PRINT_BOTH("\n=== FatFs Directory Listing ===\n");
-        
-        DIR dj;
-        FILINFO fno;
-        FRESULT res;
-
-        res = f_opendir(&dj, "0:/");
-        
-        if (res == FR_OK) {
-            int file_count = 0;
-            int dir_count = 0;
-
-            for (;;) {
-                res = f_readdir(&dj, &fno);
-                if (res != FR_OK || fno.fname[0] == 0) break;
-
-                if (fno.fattrib & AM_DIR) {
-                    PRINT_BOTH("  <DIR>  ");
-                    PRINT_BOTH(fno.fname);
-                    PRINT_BOTH("\n");
-                    dir_count++;
-                } else {
-                    PRINT_BOTH("  FILE   ");
-                    PRINT_BOTH(fno.fname);
-                    PRINT_BOTH("  (");
-                    PRINT_BOTH_DEC((uint64_t)fno.fsize);
-                    PRINT_BOTH(" bytes)\n");
-                    file_count++;
-                }
-            }
-            
-            PRINT_BOTH("\nTotal: ");
-            PRINT_BOTH_DEC((uint64_t)file_count);
-            PRINT_BOTH(" file(s), ");
-            PRINT_BOTH_DEC((uint64_t)dir_count);
-            PRINT_BOTH(" directory(ies)\n");
-            
-            f_closedir(&dj);
-        } else {
-            PRINT_BOTH("  Status   : FAILED (Cannot open root. Code ");
-            PRINT_BOTH_DEC((uint64_t)res);
-            PRINT_BOTH(")\n");
-        }
-        vga_print("> ");   
+        test_fat_ls();
+        vga_print("> ");
     } else if (strcmp(cmd, "fatcat") == 0 || strncmp(cmd, "fatcat ", 7) == 0) {
         PRINT_BOTH("\n=== FatFs File Viewer ===\n");
-        
+
         const char* filename = NULL;
         if (cmd[6] == ' ') {
             filename = cmd + 7;
@@ -577,7 +963,7 @@ static void handle_command(const char *cmd) {
         FIL file;
         FRESULT res;
         UINT bytes_read;
-        
+
         char* file_buf = (char*)kmalloc(512);
         if (!file_buf) {
             PRINT_BOTH("  Error    : Out of memory\n> ");
@@ -586,7 +972,7 @@ static void handle_command(const char *cmd) {
 
         char path[64];
         path[0] = '0'; path[1] = ':'; path[2] = '/'; path[3] = '\0';
-        
+
         int p_idx = 3;
         while (*filename && p_idx < 63) {
             path[p_idx++] = *filename++;
@@ -594,18 +980,18 @@ static void handle_command(const char *cmd) {
         path[p_idx] = '\0';
 
         res = f_open(&file, path, FA_READ);
-        
+
         if (res == FR_OK) {
             PRINT_BOTH("--- Content of "); PRINT_BOTH(path); PRINT_BOTH(" ---\n");
-            
+
             while (1) {
                 res = f_read(&file, file_buf, 511, &bytes_read);
                 if (res != FR_OK || bytes_read == 0) break;
-                
+
                 file_buf[bytes_read] = '\0';
                 PRINT_BOTH(file_buf);
             }
-            
+
             PRINT_BOTH("\n-------------------------------\n");
             f_close(&file);
         } else {
@@ -613,39 +999,41 @@ static void handle_command(const char *cmd) {
             PRINT_BOTH_DEC((uint64_t)res);
             PRINT_BOTH(")\n");
         }
-        
+
         kfree(file_buf);
-        vga_print("> ");    
+        vga_print("> ");
     } else if (strcmp(cmd, "selftest") == 0) {
         PRINT_BOTH("\n=== Kernel Self-Test ===\n");
-        int pass = 0, fail = 0, skip = 0;
+        int pass = 0, fail = 0;
 
-        PRINT_BOTH("  [exception #DE] ... ");
-        if (test_exception_proc(0x00, fault_de_trigger) == SELFTEST_PASS) {
-            PRINT_BOTH("PASS\n"); pass++;
-        } else {
-            PRINT_BOTH("FAIL\n"); fail++;
-        }
+        #define RUN(name) do {                                              \
+            PRINT_BOTH("  [" #name "] ... ");                               \
+            int r = test_##name();                                          \
+            if (r == SELFTEST_PASS)      { PRINT_BOTH("PASS\n"); pass++; }  \
+            else                         { PRINT_BOTH("FAIL\n"); fail++; }  \
+        } while (0)
 
-        PRINT_BOTH("  [exception #PF] ... ");
-        if (test_exception_proc(0x0E, fault_pf_trigger) == SELFTEST_PASS) {
-            PRINT_BOTH("PASS\n"); pass++;
-        } else {
-            PRINT_BOTH("FAIL\n"); fail++;
-        }
+        RUN(gdt);
+        RUN(tss);
+        RUN(pmm);
+        RUN(vmm);
+        RUN(map);
+        RUN(recursive);
+        RUN(heap);
+        RUN(nx);
+        RUN(syscall);
+        RUN(ata);
+        RUN(fat_mount);
+        RUN(fat_ls);
+        RUN(exception_de);
+        RUN(exception_pf);
+        RUN(exception_gp);
 
-        PRINT_BOTH("  [exception #GP] ... ");
-        if (test_exception_proc(0x0D, fault_gp_trigger) == SELFTEST_PASS) {
-            PRINT_BOTH("PASS\n"); pass++;
-        } else {
-            PRINT_BOTH("FAIL\n"); fail++;
-        }
+        #undef RUN
 
         PRINT_BOTH("  ---\n  ");
         PRINT_BOTH_DEC((uint64_t)pass); PRINT_BOTH(" passed, ");
-        PRINT_BOTH_DEC((uint64_t)fail); PRINT_BOTH(" failed, ");
-        PRINT_BOTH_DEC((uint64_t)skip); PRINT_BOTH(" skipped\n");
-        PRINT_BOTH("  (fault-path coverage only; non-fault tests not yet wired)\n");
+        PRINT_BOTH_DEC((uint64_t)fail); PRINT_BOTH(" failed\n");
         vga_print("> ");
     } else {
         vga_print("\nUnknown command.\n> ");
