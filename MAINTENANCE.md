@@ -238,15 +238,23 @@ process terminated because it was a kernel diagnostic," which are
 different concepts that the current code conflates. Not urgent — no
 user-mode fault test exists or is planned.
 
-### 3g. `EFER.NXE` is not enabled
+### 3g. ~~`EFER.NXE` is not enabled~~ ✅
 
-**Status:** latent; the kernel writes NX bits that the CPU ignores
-**Effort:** ~15 minutes to set the bit, ~1 hour to verify safely
-**Found by:** 5a-ii (`test_vmm`'s NXE assertion, tag `20260919L`)
+**Status:** ✅ **DONE (tag `20260919N`).** `enable_nx()` in `kmain.c` now
+sets EFER.NXE (bit 11 of MSR `0xC0000080`) before `sti`, guarded by a
+CPUID.80000001H:EDX.NX check.  `test_vmm` now asserts on NXE rather
+than printing it as an observation.  Verified end-to-end on single-drive
+under KVM: `NX Active: Yes`, `15 passed, 0 failed`, and the user shell's
+malloc test (option 3) still works with NXE on.
 
-`vmm_map_page` and `vmm_map_page_in_cr3` write bit 63 of a PTE when
+Text below kept for history: it describes the state before the fix.
+
+~~**Effort:** ~15 minutes to set the bit, ~1 hour to verify safely~~
+~~**Found by:** 5a-ii (`test_vmm`'s NXE assertion, tag `20260919L`)~~
+
+~~`vmm_map_page` and `vmm_map_page_in_cr3` write bit 63 of a PTE when
 called with the `PT_NX` flag, and `test_nx` confirms the bit lands in
-the PTE. But `EFER.NXE` (bit 11 of MSR `0xC0000080`) is clear:
+the PTE.  But `EFER.NXE` (bit 11 of MSR `0xC0000080`) is clear:~~
 
 ```
 === VMM Dashboard ===
@@ -255,33 +263,71 @@ the PTE. But `EFER.NXE` (bit 11 of MSR `0xC0000080`) is clear:
   NX Active: No
 ```
 
-`user_syscall_init` sets `EFER.SCE` (bit 0) but not `EFER.NXE`. Nothing
-else in the boot path enables it. So every page the kernel marks
-non-executable is still executable. The "NX support" claims in
-`README.md`, `ROADMAP.md`, and `OSDev_Checklist.md` are accurate at the
-software level (the flag is written) and inaccurate at the hardware
-level (the flag is ignored).
+~~`user_syscall_init` sets `EFER.SCE` (bit 0) but not `EFER.NXE`.  Nothing
+else in the boot path enables it.  So every page the kernel marks
+non-executable is still executable.~~
 
-**Fix:** in `kmain`, after `idt_init` and before the first process runs:
+~~**What this actually meant, mode by mode.**~~
+
+~~- **Under KVM.**  Worked, by accident.  KVM's shadow page-table
+  implementation enables NX on the host side regardless of the guest's
+  `EFER.NXE` value.  The host MMU honored bit 63 in the guest's PTEs as
+  if it were valid, so NX was genuinely enforced at runtime.  This was
+  not a property of the guest kernel; it was a property of KVM's shadow
+  MMU being more forgiving than the architecture requires.~~
+
+~~- **Under TCG.**  QEMU's software MMU may or may not have emulated the
+  reserved-bit rule faithfully.  The observed behavior (no fault on
+  `test_nx`'s PTE) suggested TCG was lenient in the QEMU version used.
+  Not guaranteed across QEMU releases.~~
+
+~~- **On bare metal.**  The SDM is explicit: "If IA32_EFER.NXE = 0 and
+  the P flag of a PDE or a PTE is 1, the XD flag (bit 63) is
+  reserved," and a reference using such an entry causes a page-fault
+  exception.  A real CPU would `#PF` the moment the kernel touched an
+  NX-marked page.~~
+
+~~**The fix (now applied).**  In `kmain`, before `sti`:~~
 
 ```c
-uint64_t efer = rdmsr(0xC0000080);
-wrmsr(0xC0000080, efer | (1ULL << 11));   /* EFER.NXE */
+/* EFER.NXE requires CPUID.80000001H:EDX.NX (bit 20). */
+uint32_t eax, ebx, ecx, edx;
+__asm__ volatile("cpuid"
+                 : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                 : "a"(0x80000001));
+if (edx & (1u << 20)) {
+    uint64_t efer = rdmsr(0xC0000080);
+    wrmsr(0xC0000080, efer | (1ULL << 11));
+    PRINT_BOTH("CPU: EFER.NXE enabled\n");
+} else {
+    PRINT_BOTH("WARN: CPU lacks NX; PT_NX mappings will #PF\n");
+}
 ```
 
-**Why this needs its own testing pass, not a drive-by:** once NXE is
-set, any page mapped with `PT_NX` becomes genuinely non-executable. If
-the kernel ever maps a page NX and then executes from it (a bug, but
-one that is currently silent), it will start faulting. The likely
-victims are the ELF loader's data segments (they should be NX and don't
-get executed, so they're fine) and the heap (mapped without NX, so
-unaffected). The safe change is to enable NXE, rebuild, run `selftest`,
-launch the user shell, and run the user shell's malloc test
-(option 3). If nothing faults, the change is safe.
+~~The CPUID guard is required, not optional: the SDM says processors
+that do not support CPUID leaf `0x80000001` do not allow
+`IA32_EFER.NXE` to be set, and `wrmsr` on such a CPU would `#GP`.~~
 
-This is a real correctness gap, not just cosmetic. Documented here
-because fixing it changes hardware behavior and deserves to be its own
-commit rather than a line-item in a test refactor.
+~~**Why the fix was safe for the kernel.**  No page mapped by `pmm`,
+`vmm`, the heap, the kernel stacks, the page tables, or the ELF loader
+was mapped with `PT_NX` at the time of the fix.  `elf_load_into_process`
+maps every segment with `0x1F`, which is a separate bug (data segments
+should be NX), but it meant no currently-mapped page had bit 63 set.
+The only pages that ever got `PT_NX` were the ones `test_nx` and
+`nxtest` map, and both unmap before returning.  Enabling NXE changed
+nothing that ran; it made the bit honest.~~
+
+**Follow-up once NXE is on.**  `elf_load_into_process` should map
+non-executable segments (data, BSS, user stack) with `PT_NX`.  With
+NXE currently off, that would have been a `#PF`; with it on, it
+becomes correct.  This is a natural companion to the fix, not a
+prerequisite — the fix is done and verified, the ELF-loader change
+is a separate, optional enhancement.
+
+**Claims in the other docs.**  `README.md`, `ROADMAP.md`, and
+`OSDev_Checklist.md` describe NX as supported.  With `enable_nx()`
+in place, that is now accurate at the hardware level, not just at
+the software level.
 
 ### 3h. The GDT lives in low memory
 
@@ -447,6 +493,16 @@ normal operation after boot, now that the ATA read-path prints are
 gated off. But it is the design the console subsystem should be
 built on, and it should be in place before per-user tty support is
 added.
+
+**Observed symptom, pre-fix, that this design addresses:** in the
+`20260919N` capture, the user shell's banner appears twice, with the
+second copy truncated mid-word (`ib 4.x User Shell==`).  The kernel's
+`PRINT_BOTH` output and the user shell's `printf` (via `sys_write`)
+are both writing to the same console, and the kernel's prompt logic
+races with the user shell's banner.  The print lock covers kernel-side
+prints; it does not cover user-mode `sys_write` output.  This is the
+class of interleaving the ring buffer design fixes once a tty layer
+exists.  Not urgent.
 
 ### 4f. Print functions must remain leaf functions
 
@@ -637,8 +693,8 @@ prerequisite for the headless part of 5c.
 | 3d | `heap_base` per-process | 15 min | Whenever |
 | 3e | TLB flush in VMM | — | Leave as-is, documented |
 | 3f | Self-test fault-trigger constraint | — | Documented (20260919K) |
-| 3g | `EFER.NXE` not enabled | 15 min + 1 hr verify | Next feature-sized fix |
-| 3h | GDT lives in low memory | 2–3 hrs | After 3g |
+| 3g | `EFER.NXE` not enabled | 15 min + 1 hr verify | ✅ Done (20260919N) |
+| 3h | GDT lives in low memory | 2–3 hrs | Next feature-sized fix |
 | 4a | Dead declarations | 15 min | ✅ Done (20260919F) |
 | 4b | Double-build in `run` | 15 min | ✅ Done (20260919F) |
 | 4c | Stale comments | 30 min | ✅ Done (20260919F) |
@@ -660,18 +716,15 @@ order of value:
    self-test work.  5b runs the same 15 tests at boot and halts; 5c
    wraps 5b in a headless QEMU invocation and greps the serial log
    for the summary line.  Do these before starting new features.
-2. **Item 3g (`EFER.NXE`)** — a real correctness gap that the test
-   suite just surfaced.  Two-line fix, but deserves its own commit
-   and its own testing pass (rebuild, `selftest`, launch the user
-   shell, run the user-shell malloc test).  The README/ROADMAP/
-   Checklist claims about NX support are inaccurate until this is
-   fixed.
-3. **Item 3h (GDT in low memory)** — same class as the boot-stack
-   issue that was fixed in `e246db6`.  Not urgent, but every boot
-   log that shows `GDT base=0x101DC` is a reminder.
-4. **The ring buffer (4e)** — the correct long-term design for the
-   print path.  Do this before the tty subsystem lands.
-5. **`sys_exec`** — the next feature milestone (user programs from
+2. **Item 3h (GDT in low memory)** — same class as the boot-stack
+   issue that was fixed in `e246db6`.  Now the highest-priority
+   open item.  Not urgent, but every boot log that shows
+   `GDT base=0x101DC` is a reminder.
+3. **The ring buffer (4e)** — the correct long-term design for the
+   print path.  Do this before the tty subsystem lands.  The
+   duplicated user-shell banner in the `20260919N` capture is a
+   preview of the interleaving this fixes.
+4. **`sys_exec`** — the next feature milestone (user programs from
    disk).  Not on this list because it's a feature, not maintenance.
 
 ---

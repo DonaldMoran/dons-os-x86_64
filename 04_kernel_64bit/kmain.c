@@ -77,6 +77,59 @@ void user_syscall_init(void) {
     serial_print("**RING** 3 syscalls active\n");
 }
 
+/*
+ * Enable EFER.NXE (bit 11) so the CPU honors bit 63 of a PTE.
+ *
+ * Without this, bit 63 is architecturally a reserved bit: the Intel
+ * SDM says "If IA32_EFER.NXE = 0 and the P flag of a PDE or a PTE is
+ * 1, the XD flag (bit 63) is reserved," and a reference that uses
+ * such an entry causes a page-fault exception.  The kernel has been
+ * writing NX bits into PTEs via vmm_map_page(..., PT_NX) regardless,
+ * because KVM's shadow MMU enables NX on the host side and therefore
+ * honors the bit even when the guest's EFER.NXE is clear.  That made
+ * the behavior look correct under KVM by accident; under TCG the
+ * behavior is QEMU-version-dependent, and on bare metal the first
+ * access to an NX-marked page would #PF.
+ *
+ * Setting NXE makes the guest's configuration architecturally valid
+ * and consistent across KVM, TCG, and real hardware.
+ *
+ * The CPUID guard is required, not defensive.  CPUs that do not
+ * support CPUID leaf 0x80000001 do not allow IA32_EFER.NXE to be
+ * set, and a wrmsr on bit 11 of such a CPU would #GP.  Every x86_64
+ * CPU that can run this kernel has NX, so the first branch is the
+ * one that runs in practice; the guard makes the code correct rather
+ * than lucky.
+ *
+ * This must run before the first vmm_map_page call that uses PT_NX.
+ * In the current kernel nothing maps PT_NX before test_nx / nxtest
+ * are invoked, so this placement (before sti, before pmm_init) is
+ * more than early enough.  Placing it here also makes the CPU setup
+ * contiguous with the other early CPU-feature initialization
+ * (idt_init, pit_init).
+ *
+ * user_syscall_init() runs later and does wrmsr(EFER, efer | 1) to
+ * set SCE.  Because it reads the current EFER value first, the NXE
+ * bit set here survives that write.  No change is needed there.
+ */
+static void enable_nx(void) {
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile("cpuid"
+                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     : "a"(0x80000001u));
+
+    if (edx & (1u << 20)) {              /* CPUID.80000001H:EDX.NX */
+        uint64_t efer = rdmsr(0xC0000080);
+        wrmsr(0xC0000080, efer | (1ULL << 11));
+        serial_print("CPU: EFER.NXE enabled\n");
+    } else {
+        /* Should never happen on x86_64.  If it does, the kernel
+           will #PF the moment anything maps a page with PT_NX, so
+           say so loudly. */
+        serial_print("WARN: CPU lacks NX; PT_NX mappings will #PF\n");
+    }
+}
+
 static int strcmp(const char *s1, const char *s2) {
     while (*s1 && (*s1 == *s2)) { s1++; s2++; }
     return *(const unsigned char*)s1 - *(const unsigned char*)s2;
@@ -376,11 +429,13 @@ static int test_vmm(void) {
     /* Paging must be on, or nothing works. */
     if (!(cr0 & (1ULL << 31)))           return SELFTEST_FAIL;
 
-    /* EFER.NXE is currently OFF.  vmm_map_page writes the NX bit into
-       PTEs (test_nx confirms the bit lands), but with NXE=0 the CPU
-       ignores it, so a page marked non-executable is still executable.
-       That is a known gap, not a failure of this test.  Do not assert
-       on NXE here; see MAINTENANCE.md item 3g. */
+    /* NX must be enabled.  enable_nx() in kmain sets EFER.NXE before
+       this test can run; if it is off, either enable_nx failed
+       (CPU lacks NX) or something cleared the bit afterward.  Either
+       way, PT_NX mappings will #PF on real hardware, so this is a
+       real FAIL.  See MAINTENANCE.md item 3g. */
+    if (!(efer & (1ULL << 11)))          return SELFTEST_FAIL;
+
     return SELFTEST_PASS;
 }
 
@@ -488,6 +543,10 @@ static int test_heap(void) {
  *
  * The original nxtest command leaked the physical page.  Freeing here
  * keeps selftest idempotent.
+ *
+ * With EFER.NXE now enabled by enable_nx() in kmain, bit 63 is a real
+ * permission bit rather than a reserved bit; the PTE this test maps
+ * is genuinely non-executable at the hardware level.
  * ===================================================================== */
 
 static int test_nx(void) {
@@ -1064,6 +1123,14 @@ void kmain(BootInfo *info) {
     vga_set_cursor_shape(0x00, 0x0F);
     idt_init();
     pit_init(100);
+
+    /*
+     * Enable EFER.NXE before sti, before pmm_init, before anything
+     * that could map a page with PT_NX.  See enable_nx() above for
+     * the full rationale.
+     */
+    enable_nx();
+
     asm volatile("sti");
     pmm_init(g_bootinfo);
     vmm_init(info);
