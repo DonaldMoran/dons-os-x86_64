@@ -19,10 +19,20 @@ extern uint64_t isr_default_table[256];
 extern void pic_remap(void);
 extern void idt_load(void);
 
-static void set_idt_entry(int vec, uint64_t handler) {
+/*
+ * Install one IDT gate.
+ *
+ *   vec      : interrupt vector number
+ *   handler  : 64-bit address of the assembly stub
+ *   ist      : IST index (0 = no IST, 1 = IST1, ..., 7 = IST7).
+ *              The CPU switches to the corresponding TSS IST stack
+ *              before pushing the exception frame. Used for #DF so a
+ *              double fault can't fault on its own frame push.
+ */
+static void set_idt_entry(int vec, uint64_t handler, uint8_t ist) {
     idt[vec].offset_low  = handler & 0xFFFF;
     idt[vec].selector    = 0x18;
-    idt[vec].ist         = 0;
+    idt[vec].ist         = ist & 0x7;   /* bits 0..2 only; 3..7 reserved */
     idt[vec].type_attr   = 0x8E;
     idt[vec].offset_mid  = (handler >> 16) & 0xFFFF;
     idt[vec].offset_high = (handler >> 32) & 0xFFFFFFFF;
@@ -44,17 +54,25 @@ void idt_init(void) {
      */
     for (int vec = 0; vec < IDT_SIZE; vec++) {
         uint64_t handler;
+        uint8_t  ist = 0;
         switch (vec) {
             case 0:  handler = (uint64_t)isr0_stub;  break;
             case 1:  handler = (uint64_t)isr1_stub;  break;
-            case 8:  handler = (uint64_t)isr8_stub;  break;
+            case 8:
+                handler = (uint64_t)isr8_stub;
+                /* IST1 is reserved for #DF. The CPU switches to
+                 * tss->ist1 before pushing the double-fault frame,
+                 * so a corrupted kernel stack cannot turn a
+                 * diagnosable #DF into a silent triple fault. */
+                ist = 1;
+                break;
             case 13: handler = (uint64_t)isr13_stub; break;
             case 14: handler = (uint64_t)isr14_stub; break;
             case 32: handler = (uint64_t)irq0_stub;  break;
             case 33: handler = (uint64_t)irq1_stub;  break;
             default: handler = isr_default_table[vec]; break;
         }
-        set_idt_entry(vec, handler);
+        set_idt_entry(vec, handler, ist);
     }
 
     pic_remap();

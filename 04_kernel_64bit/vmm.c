@@ -60,18 +60,17 @@ void vmm_init(BootInfo* info) {
 
     vmm_max_physical = max_phys;
 
-    //~ for (uint64_t addr = 0; addr < 0x200000; addr += 0x1000) {
-        //~ vmm_map_page(addr, addr, PT_PRESENT | PT_WRITE | PAGE_UNCACHED);
-    //~ }
     for (uint64_t addr = 0; addr < 0x200000; addr += 0x1000) {
         vmm_map_page(addr, addr, PT_PRESENT | PT_WRITE);
     }
 
+    serial_lock();
     serial_print("VMM: init OK, ");
     serial_print_dec(total_usable / (1024 * 1024));
     serial_print(" MB usable, max phys 0x");
     serial_print_hex(max_phys);
     serial_print("\n");
+    serial_unlock();
 }
 
 void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
@@ -205,17 +204,19 @@ void vmm_dump_page_table(uint64_t virt) {
     uint32_t pd_idx   = (virt >> 21) & 0x1FF;
     uint32_t pt_idx   = (virt >> 12) & 0x1FF;
 
+    serial_lock();
     serial_print("\n=== PAGE TABLE DUMP ===\n");
-    if (!(pml4[pml4_idx] & PT_PRESENT)) return;
+    if (!(pml4[pml4_idx] & PT_PRESENT)) { serial_unlock(); return; }
     uint64_t* pdpt = phys_to_virt(pml4[pml4_idx] & ~0xFFFULL);
-    if (!(pdpt[pdpt_idx] & PT_PRESENT)) return;
+    if (!(pdpt[pdpt_idx] & PT_PRESENT)) { serial_unlock(); return; }
     uint64_t* pd = phys_to_virt(pdpt[pdpt_idx] & ~0xFFFULL);
-    if (!(pd[pd_idx] & PT_PRESENT)) return;
+    if (!(pd[pd_idx] & PT_PRESENT)) { serial_unlock(); return; }
     uint64_t* pt = phys_to_virt(pd[pd_idx] & ~0xFFFULL);
 
     serial_print("  PTE Entry Found: 0x");
     serial_print_hex(pt[pt_idx]);
     serial_print("\n");
+    serial_unlock();
 }
 
 uint64_t vmm_clone_page_table(uint64_t src_cr3) {
@@ -322,7 +323,6 @@ void vmm_map_page_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t fl
         asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
     }
 }
-
 
 void vmm_unmap_page_in_cr3(uint64_t cr3, uint64_t virt) {
     uint64_t* pml4 = (uint64_t*)phys_to_virt(cr3);

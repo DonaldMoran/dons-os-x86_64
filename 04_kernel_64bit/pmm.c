@@ -150,9 +150,11 @@ void pmm_init(BootInfo *info) {
             }
         }
         pmm_compute_zones(max_pages);
+        serial_lock();
         serial_print("PMM: init OK (fallback), free=");
         serial_print_dec(pmm_free_pages);
         serial_print(" pages\n");
+        serial_unlock();
         return;
     }
 
@@ -252,11 +254,13 @@ void pmm_init(BootInfo *info) {
         kstart = (kstart / PAGE_SIZE) * PAGE_SIZE;
         kend = ((kend + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
 
+        serial_lock();
         serial_print("PMM: reserving kernel [0x");
         serial_print_hex(kstart);
         serial_print(", 0x");
         serial_print_hex(kend);
         serial_print(") via _kernel_end\n");
+        serial_unlock();
 
         for (uint64_t addr = kstart; addr < kend && addr < pmm_max_physical; addr += PAGE_SIZE) {
             uint64_t page = addr / PAGE_SIZE;
@@ -295,11 +299,13 @@ void pmm_init(BootInfo *info) {
 
     pmm_compute_zones(max_pages);
 
+    serial_lock();
     serial_print("PMM: init OK, free=");
     serial_print_dec(pmm_free_pages);
     serial_print(" pages (");
     serial_print_dec(pmm_free_pages * PAGE_SIZE / (1024 * 1024));
     serial_print(" MB)\n");
+    serial_unlock();
 }
 
 uint64_t pmm_alloc_page(page_type_t type) {
@@ -332,11 +338,13 @@ uint64_t pmm_alloc_page(page_type_t type) {
             if (page == pmm_high_start_page) break;
         }
 
+        serial_lock();
         serial_print("PMM: ERROR - Out of HIGH-zone memory for user type ");
         serial_print(page_type_string(type));
         serial_print("! Free pages: ");
         serial_print_dec(pmm_free_pages);
         serial_print("\n");
+        serial_unlock();
         return 0;
     } else {
         if (pmm_low_start_page == 0 && pmm_low_end_page == 0) {
@@ -370,11 +378,13 @@ uint64_t pmm_alloc_page(page_type_t type) {
             if (page == pmm_low_end_page) break;
         }
 
+        serial_lock();
         serial_print("PMM: ERROR - Out of LOW-zone memory for kernel/table type ");
         serial_print(page_type_string(type));
         serial_print("! Free pages: ");
         serial_print_dec(pmm_free_pages);
         serial_print("\n");
+        serial_unlock();
         return 0;
     }
 }
@@ -386,9 +396,11 @@ void pmm_free_page(uint64_t phys_addr) {
     if (page >= MAX_PAGES) return;
 
     if (!bitmap_test(page)) {
+        serial_lock();
         serial_print("PMM: WARNING - Double free of page 0x");
         serial_print_hex(phys_addr);
         serial_print("\n");
+        serial_unlock();
         return;
     }
 
@@ -486,6 +498,7 @@ uint64_t pmm_get_total_pages(void) {
 }
 
 void pmm_dump_stats(void) {
+    serial_lock();
     serial_print("\n=== PMM STATS ===\n");
     serial_print("Total pages: ");
     serial_print_dec(pmm_total_pages);
@@ -521,4 +534,5 @@ void pmm_dump_stats(void) {
     serial_print_dec(pmm_next_high_page);
     serial_print("\n");
     serial_print("==================\n\n");
+    serial_unlock();
 }

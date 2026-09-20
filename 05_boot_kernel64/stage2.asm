@@ -12,35 +12,53 @@ BOOTINFO_VERSION equ 1
 ; Kernel staging and destination layout
 ; --------------------------------------------
 ;   Staging A : 0x80000 .. 0x9FFFF  (128 KB, PASS 1 + PASS 2)
-;   Staging B : 0x20000 .. 0x2FFFF  ( 64 KB, PASS 3)
-;   Destination : 0x100000 .. (128 KB from A, then 48 KB from B)
+;   Staging B : 0x20000 .. 0x7FFFF  (384 KB, PASS 3 .. PASS 7,
+;                                    of which the first 320 KB is used)
+;   Destination: 0x100000 .. (128 KB from A, then 320 KB from B)
+;                for a total of 448 KB.
 ;
-;   The previous layout staged PASS 3 at 0xA000:0000 (0xA0000..0xAFFFF),
-;   which is VGA graphics memory. Writes there are unreliable in
-;   QEMU/BIOS, so PASS 3's bytes were frequently 0xFF. Moving PASS 3
-;   to 0x20000 (plain RAM below stage2) fixes the corruption of
-;   .userelf that was clobbering build_user_shell_elf.
+;   Low memory layout, from low to high:
+;     0x00000 .. 0x004FF   IVT + BDA
+;     0x00500 .. 0x07BFF   conventional free
+;     0x07C00 .. 0x07DFF   boot sector (stage1)
+;     0x07E00 .. 0x1FFFF   conventional free
+;     0x20000 .. 0x7FFFF   staging B (384 KB)  <-- PASS 3..7
+;     0x80000 .. 0x9FFFF   staging A (128 KB)  <-- PASS 1..2
+;     0xA0000 .. 0xBFFFF   VGA memory (unusable)
+;     0xC0000 .. 0xFFFFF   BIOS ROM (unusable)
+;     0x100000 ..          kernel destination + free RAM
 ;
-;   A single-pass staging area cannot exceed 128 KB in this memory map:
-;   0xA0000..0xBFFFF is VGA, 0xC0000..0xFFFFF is BIOS ROM. So the
-;   read/copy is split into two rounds, and long_mode_entry performs
-;   both rep movsq copies back-to-back.
+;   Why two staging areas instead of one: the only low-memory window
+;   large enough for a single staging area is split by the VGA hole at
+;   0xA0000. So the kernel is read in two rounds:
+;     - 128 KB from staging A (PASS 1 + 2)
+;     - 320 KB from staging B (PASS 3..7)
+;   and long_mode_entry performs both rep movsq copies back-to-back.
 ;
-; Kernel source: LBA 128 on the disk (was LBA 64).  The shift
-; is because boot.asm now reads 128 sectors (64 KB) for stage2;
-; 64 sectors were not enough once pt_low was added.
+;   Historical note: an early version staged PASS 3 at 0xA0000, which
+;   is VGA graphics memory. Writes there are unreliable in QEMU/BIOS,
+;   so PASS 3's bytes were frequently 0xFF and corrupted the kernel
+;   image. All staging is now below the VGA hole.
+;
+; Kernel source: LBA 128 on the disk. Each PASS reads 128 sectors
+; (64 KB) starting at LBA 128, 256, 384, 512, 640, 768, 896.
 ; ============================================
 KERNEL_SECTORS_PER_PASS equ 128
-KERNEL_PASSES           equ 3
+KERNEL_PASSES           equ 7
 KERNEL_TOTAL_SECTORS    equ KERNEL_SECTORS_PER_PASS * KERNEL_PASSES
-; Total bytes actually copied = 176 KB (128 KB from staging A + 48 KB from staging B).
-KERNEL_TOTAL_BYTES      equ 176 * 1024
-KERNEL_TOTAL_QWORDS     equ KERNEL_TOTAL_BYTES / 8          ; (unused after split; kept for reference)
+
+; Total bytes actually copied = 448 KB
+;   128 KB from staging A (PASS 1+2) + 320 KB from staging B (PASS 3..7).
+; Staging B is 384 KB (0x20000..0x7FFFF), so the final 64 KB of that
+; window is unused. The read count is still 7 * 128 = 896 sectors, which
+; matches KERNEL_TOTAL_BYTES.
+KERNEL_TOTAL_BYTES      equ 448 * 1024
+KERNEL_TOTAL_QWORDS     equ KERNEL_TOTAL_BYTES / 8
 
 ; First copy: 128 KB from 0x80000 -> 0x100000
 KERNEL_COPY1_QWORDS     equ (128 * 1024) / 8                ; 16384
-; Second copy: 48 KB from 0x20000 -> 0x120000 (fills total 176 KB)
-KERNEL_COPY2_QWORDS     equ (48 * 1024) / 8                 ; 6144
+; Second copy: 320 KB from 0x20000 -> 0x120000 (fills total 448 KB)
+KERNEL_COPY2_QWORDS     equ (320 * 1024) / 8                ; 40960
 
 ; ============================================
 ; DAP entries
@@ -102,10 +120,58 @@ start:
 
     ; ----------------------------------------------------
     ; PASS 3: 128 sectors (64 KB) -> 0x2000:0000
-    ;   Note: reset segment to 0x2000, NOT +0x1000, to avoid VGA.
+    ;   Reset segment to 0x2000 (NOT +0x1000) to land at 0x20000.
     ; ----------------------------------------------------
     mov word [dap_kernel.segment], 0x2000
     add dword [dap_kernel.lba], 128         ; -> 384
+
+    mov si, dap_kernel
+    mov dl, 0x80
+    mov ah, 0x42
+    int 0x13
+    jc disk_error
+
+    ; ----------------------------------------------------
+    ; PASS 4: 128 sectors (64 KB) -> 0x3000:0000
+    ; ----------------------------------------------------
+    add word [dap_kernel.segment], 0x1000   ; -> 0x3000
+    add dword [dap_kernel.lba], 128         ; -> 512
+
+    mov si, dap_kernel
+    mov dl, 0x80
+    mov ah, 0x42
+    int 0x13
+    jc disk_error
+
+    ; ----------------------------------------------------
+    ; PASS 5: 128 sectors (64 KB) -> 0x4000:0000
+    ; ----------------------------------------------------
+    add word [dap_kernel.segment], 0x1000   ; -> 0x4000
+    add dword [dap_kernel.lba], 128         ; -> 640
+
+    mov si, dap_kernel
+    mov dl, 0x80
+    mov ah, 0x42
+    int 0x13
+    jc disk_error
+
+    ; ----------------------------------------------------
+    ; PASS 6: 128 sectors (64 KB) -> 0x5000:0000
+    ; ----------------------------------------------------
+    add word [dap_kernel.segment], 0x1000   ; -> 0x5000
+    add dword [dap_kernel.lba], 128         ; -> 768
+
+    mov si, dap_kernel
+    mov dl, 0x80
+    mov ah, 0x42
+    int 0x13
+    jc disk_error
+
+    ; ----------------------------------------------------
+    ; PASS 7: 128 sectors (64 KB) -> 0x6000:0000
+    ; ----------------------------------------------------
+    add word [dap_kernel.segment], 0x1000   ; -> 0x6000
+    add dword [dap_kernel.lba], 128         ; -> 896
 
     mov si, dap_kernel
     mov dl, 0x80
@@ -193,7 +259,9 @@ long_mode_entry:
     mov qword [rbx + 0x18], rax
 
     ; ============================================
-    ; Copy kernel: 128 KB from staging A (0x80000), then 48 KB from staging B (0x20000).
+    ; Copy kernel:
+    ;   - 128 KB from staging A (0x80000) -> 0x100000
+    ;   - 320 KB from staging B (0x20000) -> 0x120000
     ; ============================================
     mov rsi, 0x00080000
     mov rdi, 0x00100000

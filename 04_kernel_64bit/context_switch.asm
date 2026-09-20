@@ -89,7 +89,50 @@ context_switch:
     jmp .skip_save
 
     ; --- RING-0 SAVE PATH ---
+    ;
+    ; Called when a kernel-mode process yields voluntarily. At this
+    ; point, the shell/process has called us through the normal C
+    ; ABI, so the live callee-saved registers are the ones the caller
+    ; expects to be preserved: rbp, rbx, r12, r13, r14, r15.
+    ;
+    ; They were pushed at function entry and are on the stack at:
+    ;   [rsp + 0x00] = r15
+    ;   [rsp + 0x08] = r14
+    ;   [rsp + 0x10] = r13
+    ;   [rsp + 0x18] = r12
+    ;   [rsp + 0x20] = rbx
+    ;   [rsp + 0x28] = rbp
+    ;   [rsp + 0x30] = caller's return address
+    ;
+    ; We MUST copy those live values into the PCB before building the
+    ; resume frame. If we don't, the frame is built from the PCB's
+    ; *stale* register values (whatever was last written by the timer
+    ; preemption handler or by process_create's initial frame — which
+    ; sets everything to zero). On resume, `pop rbp` restores 0, and
+    ; the very first `[rbp - N]` access in the resumed function faults
+    ; with CR2 = -N. That is exactly the #PF at kmain_shell_loop+0x10B
+    ; (`movzbl -0x2a(%rbp), %eax`) that motivated this fix.
+    ;
+    ; Caller-saved registers (rax, rcx, rdx, rsi, rdi, r8-r11) are
+    ; intentionally not saved: the C ABI lets context_switch clobber
+    ; them, so the caller has already spilled any live values across
+    ; the call.
 .ring0_save:
+    ; Persist the live callee-saved registers into the PCB.
+    mov rax, [rsp + 0x00]
+    mov [r15 + 0x098], rax              ; r15
+    mov rax, [rsp + 0x08]
+    mov [r15 + 0x0A0], rax              ; r14
+    mov rax, [rsp + 0x10]
+    mov [r15 + 0x0A8], rax              ; r13
+    mov rax, [rsp + 0x18]
+    mov [r15 + 0x0B0], rax              ; r12
+    mov rax, [rsp + 0x20]
+    mov [r15 + 0x100], rax              ; rbx
+    mov rax, [rsp + 0x28]
+    mov [r15 + 0x0D8], rax              ; rbp
+
+    ; Now build the resume frame from the (now up-to-date) PCB values.
     mov rax, [rsp + 48]                 ; caller's return address = kernel RIP
     push rax                            ; temp0 (RIP)  @ [rsp+0]
     lea rax, [rsp + 64]                 ; caller's RSP = orig_rsp + 56

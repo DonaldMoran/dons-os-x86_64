@@ -13,6 +13,9 @@
 #include "include/heap.h"
 #include "ff.h"
 
+/* Defined in kmain.c — reboots the machine via keyboard controller + ACPI reset port. */
+extern void handle_reboot_sequence(void);
+
 #define WRITE_CHUNK 256
 static char g_write_bounce[WRITE_CHUNK];
 
@@ -68,6 +71,24 @@ static int safe_copy_to_user(void* user_dest, const void* kernel_src, size_t cou
 }
 
 // ============================================================
+// FILE TABLE HELPERS
+// ============================================================
+/* Close every open file handle in a process's file table.
+ * f_close triggers f_sync -> FLUSH CACHE, so pending writes
+ * reach disk before we return. Used by sys_exit and the reboot
+ * handler. */
+static void close_all_files(pcb_t* proc) {
+    if (!proc) return;
+    for (int i = 3; i < MAX_PROCESS_FILES; i++) {
+        if (proc->file_table[i]) {
+            f_close((FIL*)proc->file_table[i]);
+            kfree(proc->file_table[i]);
+            proc->file_table[i] = NULL;
+        }
+    }
+}
+
+// ============================================================
 // EXTENSION DESCRIPTOR SYSCALLS
 // ============================================================
 long sys_open(const char* path, int flags) {
@@ -100,7 +121,7 @@ long sys_open(const char* path, int flags) {
         case 0:  mode |= FA_READ;             break;  /* O_RDONLY */
         case 1:  mode |= FA_WRITE;            break;  /* O_WRONLY */
         case 2:  mode |= FA_READ | FA_WRITE;  break;  /* O_RDWR   */
-        default: kfree(NULL); return -1;
+        default: return -1;
     }
 
     /* Creation / truncation / exclusivity. */
@@ -288,22 +309,29 @@ long sys_getpid(void) {
 
 void sys_exit(int status) {
     (void)status;
-    pcb_t* self = process_get_current();
-    if (self) {
-        for (int i = 3; i < MAX_PROCESS_FILES; i++) {
-            if (self->file_table[i]) {
-                f_close((FIL*)self->file_table[i]);
-                kfree(self->file_table[i]);
-                self->file_table[i] = NULL;
-            }
-        }
-    }
+    close_all_files(process_get_current());
     process_exit();
 }
 
 void sys_arch_set_fs(void* base) {
     uint64_t addr = (uint64_t)base;
     wrmsr(0xC0000100, addr);
+}
+
+/* Kernel-side reboot handler.
+ *
+ * Named kernel_do_reboot to avoid colliding with the pre-existing
+ * `void sys_reboot(void);` declaration in include/syscall.h.
+ *
+ * Closes every open file handle in the current process's file table.
+ * f_close triggers f_sync -> FLUSH CACHE, so any pending writes reach
+ * disk before the reset. Then fires the hardware reset sequence
+ * (keyboard controller 0xFE, ACPI reset port 0xCF9, triple-fault
+ * backstop). Does not return. */
+static void kernel_do_reboot(void) {
+    serial_print("[REBOOT] closing file handles before reset\n");
+    close_all_files(process_get_current());
+    handle_reboot_sequence();  /* noreturn */
 }
 
 uint64_t syscall_dispatch(uint64_t num,
@@ -318,6 +346,7 @@ uint64_t syscall_dispatch(uint64_t num,
         case 6:  return (uint64_t)sys_close((int)arg0);
         case 10: return (uint64_t)sys_brk((long)arg0);
         case 20: return (uint64_t)sys_getpid();
+        case 25: kernel_do_reboot(); return 0; /* noreturn; return is a safety net */
         case 5:  sys_arch_set_fs((void*)arg0); return 0;
         default:
             serial_print("Unknown syscall: ");

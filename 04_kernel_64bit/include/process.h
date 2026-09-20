@@ -90,4 +90,19 @@ void process_exit(void) __attribute__((noreturn));
 void kernel_idle_loop(void);
 void process_wake_all_blocked(void);
 
+/*
+ * Kernel shell accessors.
+ *
+ * The kernel shell is a real kernel-mode process created at boot (on
+ * the 'k' branch of the boot prompt). Its PCB is stored here so that
+ * process_exit's fallback can resume it after a kernel diagnostic
+ * process exits. Before the shell is created, the pointer is NULL.
+ *
+ * The shell is marked BLOCKED when it yields to another process (the
+ * user shell), so it is not picked up by the scheduler until someone
+ * explicitly wakes it.
+ */
+pcb_t* process_get_kernel_shell(void);
+void   process_set_kernel_shell(pcb_t* shell);
+
 #endif

@@ -23,6 +23,11 @@ section .data
 msg1: db "Hello from userland!", 0x0A
 msg2: db "This is a second line.", 0x0A
 
+
+
+
+
+
 ;~ global _start
 
 ;~ section .text

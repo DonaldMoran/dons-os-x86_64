@@ -16,6 +16,37 @@ uint64_t *kernel_stack_top = &kernel_stack[4096];
    scheduler_switch_to, process_exit, and timer_preempt_handler. */
 uint64_t g_syscall_stack_top = 0;
 
+/* Dedicated 4 KB stack for the #DF handler, loaded via IST1.
+ *
+ * A double fault is, by construction, a situation where something has
+ * already gone wrong: either the CPU took a fault while delivering a
+ * fault, or (more commonly) the current kernel stack is corrupted or
+ * unmapped. If we handled #DF on the normal kernel stack, the push of
+ * the exception frame itself could fault — turning a diagnosable
+ * double fault into a silent triple-fault reset.
+ *
+ * The CPU switches to tss->ist1 before pushing the #DF frame, so this
+ * stack must be:
+ *   - mapped at whatever address the CPU will use (physical is fine;
+ *     the kernel's identity map covers low RAM)
+ *   - 16-byte aligned
+ *   - at least as large as the #DF frame (5 CPU-pushed fields + 15
+ *     GPRs pushed by the stub + one error code = ~200 bytes)
+ *
+ * 4 KB gives a lot of headroom; if the handler recurses (it shouldn't),
+ * the extra space buys one or two frames before the stack itself
+ * underflows. */
+static uint8_t df_ist_stack[4096] __attribute__((aligned(16)));
+
+void tss_init_ist(void) {
+    uint64_t top = (uint64_t)df_ist_stack + sizeof(df_ist_stack);
+    top &= ~0xFULL;  /* 16-byte alignment for the SysV ABI */
+    tss->ist1 = top;
+
+    serial_print("TSS: IST1 (#DF) top = 0x");
+    serial_print_hex(top);
+    serial_print("\n");
+}
 
 void tss_init(void) {
     // Zero the entire TSS region (TSS + I/O Permission Bitmap)
@@ -34,6 +65,9 @@ void tss_init(void) {
 
     // I/O bitmap base = end of the TSS structure
     tss->iopb_base = sizeof(tss_t);
+
+    // Configure IST1 for the #DF handler.
+    tss_init_ist();
 
     // Point the GDT TSS descriptor at our TSS
     gdt_set_tss((uint64_t)tss, TSS_TOTAL_SIZE - 1);

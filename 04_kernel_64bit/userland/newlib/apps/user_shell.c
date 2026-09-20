@@ -5,6 +5,9 @@
 #include <string.h>
 #include <errno.h>
 
+/* Defined in arc2/syscalls.c. Fires SYS_REBOOT (kernel: hardware reset). */
+extern void sys_reboot(void);
+
 /* ============================================================
  * Helper: print the menu.
  * ============================================================ */
@@ -20,6 +23,8 @@ static void print_menu(void) {
     printf("  5. Persistence check (run after option 4 + reboot)\n");
     printf("  6. Multi-file test (create, list, delete)\n");
     printf("  7. Large write test (4 KB round-trip)\n");
+    printf("  8. List known files\n");
+    printf("  9. Reboot\n");
     printf("\n] ");
 }
 
@@ -84,12 +89,12 @@ static void test_malloc(void) {
 }
 
 /* ============================================================
- * Option 4 — the original FS round-trip, with the length fixed.
+ * Option 4 — FS round-trip. Writes USER2.TXT, reopens USER2.TXT.
  * ============================================================ */
 static void test_fs_roundtrip(void) {
     printf("\n[FS TEST] step 1: open for write/create/truncate\n");
 
-    int fd = open("0:/USER.TXT",
+    int fd = open("0:/USER2.TXT",
                   O_WRONLY | O_CREAT | O_TRUNC,
                   0644);
     printf("  open() returned %d\n", fd);
@@ -118,7 +123,7 @@ static void test_fs_roundtrip(void) {
     }
 
     printf("\n[FS TEST] step 4: reopen for read\n");
-    int rfd = open("0:/USER.TXT", O_RDONLY, 0);
+    int rfd = open("0:/USER2.TXT", O_RDONLY, 0);
     printf("  open(O_RDONLY) returned %d\n", rfd);
     if (rfd < 0) {
         printf("[FS TEST] FAILED at reopen\n] ");
@@ -143,18 +148,14 @@ static void test_fs_roundtrip(void) {
 }
 
 /* ============================================================
- * Option 5 — persistence check.
- *
- * The expected content is the same string option 4 writes. If the
- * file exists and matches, persistence is proven. If it doesn't
- * exist, we say so and tell the user to run option 4 and reboot.
+ * Option 5 — persistence check on USER2.TXT.
  * ============================================================ */
 static void test_persistence(void) {
-    printf("\n[PERSIST TEST] Checking for USER.TXT from a previous boot\n");
+    printf("\n[PERSIST TEST] Checking for USER2.TXT from a previous boot\n");
 
-    int fd = open("0:/USER.TXT", O_RDONLY, 0);
+    int fd = open("0:/USER2.TXT", O_RDONLY, 0);
     if (fd < 0) {
-        printf("  USER.TXT not found (fd=%d)\n", fd);
+        printf("  USER2.TXT not found (fd=%d)\n", fd);
         printf("  Run option 4, then reboot and run option 5.\n");
         printf("[PERSIST TEST] INCONCLUSIVE (no prior write)\n] ");
         return;
@@ -179,10 +180,6 @@ static void test_persistence(void) {
 
 /* ============================================================
  * Option 6 — multi-file test.
- *
- * Creates three short files, lists them via readdir-equivalent
- * (open each and read), deletes them, then confirms deletion by
- * attempting to open them again and expecting failure.
  * ============================================================ */
 static void test_multi_file(void) {
     printf("\n[MULTI TEST] Create 3 files, verify, delete, verify deletion\n");
@@ -198,7 +195,6 @@ static void test_multi_file(void) {
         "charlie",
     };
 
-    /* Phase 1: create and write. */
     int created = 0;
     for (int i = 0; i < 3; i++) {
         int fd = open(names[i], O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -218,7 +214,6 @@ static void test_multi_file(void) {
     }
     printf("  created %d/3 files\n", created);
 
-    /* Phase 2: reopen and verify contents. */
     int verified = 0;
     for (int i = 0; i < 3; i++) {
         int fd = open(names[i], O_RDONLY, 0);
@@ -239,8 +234,6 @@ static void test_multi_file(void) {
     }
     printf("  verified %d/3 files\n", verified);
 
-    /* Phase 3: delete. unlink is not wired through the syscall table,
-     * so we can't test deletion from ring 3 yet. Report that. */
     printf("  (deletion not available: no SYS_UNLINK syscall yet)\n");
 
     if (created == 3 && verified == 3) {
@@ -252,10 +245,6 @@ static void test_multi_file(void) {
 
 /* ============================================================
  * Option 7 — large write test.
- *
- * Writes 4096 bytes (a full page, crossing one or more clusters),
- * reads them back, and verifies byte-exact. Catches multi-cluster
- * bugs that a 19-byte write won't hit.
  * ============================================================ */
 static void test_large_write(void) {
     printf("\n[BIG TEST] 4096-byte round-trip through FatFs\n");
@@ -314,15 +303,79 @@ static void test_large_write(void) {
 }
 
 /* ============================================================
+ * Option 8 — list known files.
+ *
+ * There is no directory-iteration syscall yet, so we probe a
+ * known set of names by attempting to open each one. This reports
+ * the same information for the files this shell creates, and for
+ * the two files shipped in test-files/.
+ *
+ * A real `ls` needs SYS_OPENDIR / SYS_READDIR / SYS_CLOSEDIR.
+ * ============================================================ */
+static void test_list_files(void) {
+    printf("\n[LIST] Known files on 0:/\n");
+
+    const char* known[] = {
+        "0:/HELLO.TXT",
+        "0:/USER.TXT",
+        "0:/USER2.TXT",
+        "0:/A.TXT",
+        "0:/B.TXT",
+        "0:/C.TXT",
+        "0:/BIG.BIN",
+        NULL
+    };
+
+    int count = 0;
+    for (int i = 0; known[i] != NULL; i++) {
+        int fd = open(known[i], O_RDONLY, 0);
+        if (fd >= 0) {
+            char buf[41];
+            memset(buf, 0, sizeof(buf));
+            int rn = read(fd, buf, 40);
+            close(fd);
+
+            for (int j = 0; j < rn; j++) {
+                if (buf[j] == '\r' || buf[j] == '\n') buf[j] = '.';
+                else if (buf[j] < 0x20 || buf[j] > 0x7E) buf[j] = '?';
+            }
+            buf[rn] = 0;
+
+            printf("  %s  (%d bytes)%s%s\n",
+                   known[i], rn,
+                   rn > 0 ? "  \"" : "",
+                   rn > 0 ? buf : "");
+            if (rn > 0) printf("\"\n");
+            count++;
+        }
+    }
+
+    printf("\n  %d file(s) found\n", count);
+    printf("[LIST] done\n] ");
+}
+
+/* ============================================================
+ * Option 9 — reboot.
+ *
+ * Calls SYS_REBOOT (25), which the kernel routes to
+ * handle_reboot_sequence(): keyboard controller reset (0x64/0xFE),
+ * ACPI reset port (0xCF9), then a triple-fault backstop. The
+ * kernel path does not return; this shell will not resume.
+ * ============================================================ */
+static void test_reboot(void) {
+    printf("\n[REBOOT] Calling SYS_REBOOT...\n");
+    sys_reboot();
+    /* Only reached if the kernel's reboot syscall failed to take effect. */
+    printf("[REBOOT] syscall returned without resetting the machine.\n] ");
+}
+
+/* ============================================================
  * Main loop.
  * ============================================================ */
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
 
-    /* Unbuffered stdout so every printf immediately hits sys_write.
-     * This means test output appears in order even if a later test
-     * crashes the shell. */
     setvbuf(stdout, NULL, _IONBF, 0);
 
     print_menu();
@@ -340,9 +393,9 @@ int main(int argc, char** argv) {
                 case '5': test_persistence();  break;
                 case '6': test_multi_file();   break;
                 case '7': test_large_write();  break;
+                case '8': test_list_files();   break;
+                case '9': test_reboot();       break;
                 default:
-                    /* Ignore unrecognized keys silently; the next
-                     * menu reprint after a test shows the prompt. */
                     break;
             }
             print_menu();

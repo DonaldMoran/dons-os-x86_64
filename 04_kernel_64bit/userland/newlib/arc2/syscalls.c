@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
 
 // PRESERVED: Retaining your system's original historic system call mapping vectors cleanly
 #define SYS_WRITE   1
@@ -41,8 +42,9 @@ void exit(int status) {
     }
 }
 
-// FIXED: Dynamic memory allocator tracker that queries your kernel's native 
-// 0x8000200000 heap base location automatically to eliminate address pointer gaps.
+/* Dynamic memory allocator tracker. On first call, queries the kernel's
+ * native heap base (0x8000200000) via sys_brk(0) so the userland heap
+ * starts where the kernel expects it. */
 void *sbrk(ptrdiff_t incr) {
     static int64_t heap_end_cached = 0;
 
@@ -101,7 +103,18 @@ void *_sbrk(ptrdiff_t incr) { return sbrk(incr); }
  * DONSDOS CUSTOM EXTENSION SYSTEM VECTORS
  * --------------------------------------------------------------------------- */
 
+/* Reboot the machine.
+ *
+ * Order matters:
+ *   1. fflush(NULL) drains every buffered stdio stream in userland.
+ *      Without this, data sitting in a FILE*'s buffer is lost when
+ *      the kernel resets — the kernel can close the fd, but it
+ *      cannot reach into userland memory to drain newlib's buffer.
+ *   2. SYS_REBOOT asks the kernel to close remaining file handles
+ *      (triggering f_sync -> FLUSH CACHE) and then fire the hardware
+ *      reset. The kernel does not return from this syscall. */
 void sys_reboot(void) {
+    fflush(NULL);
     syscall3(SYS_REBOOT, 0, 0, 0);
 }
 
@@ -109,8 +122,8 @@ void sys_reboot(void) {
  * REQUIRED STRUCTURAL LINKS TO SATISFY LINKER SCHEMATICS
  * --------------------------------------------------------------------------- */
 
-// FIXED: Explicitly populates the character device attribute flag (S_IFCHR)
-// to verify to Newlib that stdout/stderr are active interactive console streams.
+/* Report stdout/stderr as character devices (S_IFCHR) so newlib's stdio
+ * treats them as interactive streams rather than regular files. */
 int fstat(int fd, struct stat *st) { 
     if (fd == 1 || fd == 2) {
         st->st_mode = S_IFCHR; 

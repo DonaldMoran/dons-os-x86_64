@@ -636,4 +636,6 @@ Boot chain is complete and stable.
 The roadmap is intentionally incremental.  
 Each milestone builds toward a fully functional x86_64 kernel while keeping the project educational and approachable.
 
+For known debt, latent bugs, and cleanup work, see [`MAINTENANCE.md`](MAINTENANCE.md). That file is the counterpart to this roadmap: this file lists features, that file lists everything else that needs attention.
+
 MIT licensed — contributions welcome.

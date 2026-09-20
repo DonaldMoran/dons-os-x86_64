@@ -66,6 +66,19 @@
  */
 #define ATA_WRITE_PROTECT_LBAS  2048
 
+/*
+ * Per-operation debug prints in the read path.
+ *
+ * When enabled, ata_read_chunk prints one line per sector read. This is
+ * useful when bringing up the driver or diagnosing a specific failure,
+ * but produces a wall of output during normal operation (every FatFs
+ * sector read goes through here, including userland file I/O). It is
+ * also a source of interleaved output with the timer's boot trace.
+ *
+ * Set to 1 to enable. Leave at 0 in normal builds.
+ */
+#define ATA_DEBUG 0
+
 static int    s_present[2] = {0, 0};
 static char   s_model[2][41];
 static uint8_t s_default_drive = ATA_DRIVE_MASTER;
@@ -122,83 +135,55 @@ static void ata_select_drive(uint8_t drive, uint32_t lba) {
 }
 
 /* ------------------------------------------------------------------ *
- * IDENTIFY  (with step-by-step instrumentation)
+ * IDENTIFY
+ *
+ * The step-by-step instrumentation that lived here during bring-up
+ * (serial prints after every register write) was removed after the
+ * three ATA bugs it helped diagnose were fixed:
+ *   - PIC mask restoration (commit 20260913A)
+ *   - exception frame offsets (same)
+ *   - LBA mode bit (same)
+ * If the driver ever needs instrumenting again, `git show 20260913A`
+ * has the original version of this function.
  * ------------------------------------------------------------------ */
 
 static int ata_identify_raw(uint8_t drive, uint16_t* out) {
-    serial_print("ATA:   id_raw: enter drive=");
-    serial_print_dec(drive);
-    serial_print("\n");
-
-    /* IDENTIFY ignores the L bit, so use the plain select values here. */
+    /* IDENTIFY ignores the L bit, so use the plain select values. */
     uint8_t sel = (drive == ATA_DRIVE_MASTER)
                     ? ATA_DRIVE_MASTER_SEL
                     : ATA_DRIVE_SLAVE_SEL;
 
-    serial_print("ATA:   id_raw: outb(0x1F6, 0x");
-    serial_print_hex(sel);
-    serial_print(")\n");
     outb(ATA_PRIMARY_DRIVE_HEAD, sel);
-    serial_print("ATA:   id_raw: outb(0x1F6) done\n");
-
     ata_400ns_delay();
-    serial_print("ATA:   id_raw: 400ns delay done\n");
 
-    serial_print("ATA:   id_raw: zeroing sec count / LBA regs\n");
     outb(ATA_PRIMARY_SECCOUNT, 0);
     outb(ATA_PRIMARY_LBA_LO,   0);
     outb(ATA_PRIMARY_LBA_MID,  0);
     outb(ATA_PRIMARY_LBA_HI,   0);
-    serial_print("ATA:   id_raw: LBA regs zeroed\n");
 
-    serial_print("ATA:   id_raw: outb(0x1F7, 0xEC)\n");
     outb(ATA_PRIMARY_STATUS, ATA_CMD_IDENTIFY);
-    serial_print("ATA:   id_raw: IDENTIFY command sent\n");
-
     ata_400ns_delay();
 
     uint8_t st = inb(ATA_PRIMARY_STATUS);
-    serial_print("ATA:   id_raw: status after cmd = 0x");
-    serial_print_hex(st);
-    serial_print("\n");
-
     if (st == 0x00) {
-        serial_print("ATA:   id_raw: no device (status 0x00)\n");
-        return -1;
+        return -1;      /* no device */
     }
 
     uint8_t mid = inb(ATA_PRIMARY_LBA_MID);
     uint8_t hi  = inb(ATA_PRIMARY_LBA_HI);
-    serial_print("ATA:   id_raw: LBA mid=0x");
-    serial_print_hex(mid);
-    serial_print(" hi=0x");
-    serial_print_hex(hi);
-    serial_print("\n");
-
     if (mid != 0 || hi != 0) {
-        serial_print("ATA:   id_raw: ATAPI device detected\n");
-        return -2;
+        return -2;      /* ATAPI device */
     }
 
-    serial_print("ATA:   id_raw: polling BSY clear...\n");
     int rc = ata_poll_bsy_clear();
-    serial_print("ATA:   id_raw: poll_bsy_clear rc=");
-    serial_print_dec((uint64_t)(-rc));
-    serial_print("\n");
     if (rc != 0) return rc;
 
-    serial_print("ATA:   id_raw: polling DRQ...\n");
     rc = ata_poll_drq();
-    serial_print("ATA:   id_raw: poll_drq rc=");
-    serial_print_dec((uint64_t)(-rc));
-    serial_print("\n");
     if (rc != 0) return rc;
 
-    serial_print("ATA:   id_raw: reading 256 words\n");
     for (int i = 0; i < 256; i++) {
         out[i] = inw(ATA_PRIMARY_DATA);
     }
-    serial_print("ATA:   id_raw: read complete\n");
     return 0;
 }
 
@@ -225,48 +210,32 @@ static void ata_extract_model(const uint16_t* id, char* out) {
     }
 }
 
+/* Print one ATA probe message atomically. */
+static void ata_probe_msg(uint8_t drive, const char* suffix) {
+    serial_lock();
+    serial_print("ATA: probe drive ");
+    serial_print_dec(drive);
+    serial_print(suffix);
+    serial_unlock();
+}
+
 static int ata_probe(uint8_t drive) {
-    serial_print("ATA: probe drive ");
-    serial_print_dec(drive);
-    serial_print("\n");
-
     uint16_t id[256];
-
     int rc = ata_identify_raw(drive, id);
-    serial_print("ATA: probe drive ");
-    serial_print_dec(drive);
-    serial_print(" id_raw rc=");
-    serial_print_dec((uint64_t)(-rc));
-    serial_print("\n");
 
-    if (rc == -1) {
-        serial_print("ATA: probe drive ");
-        serial_print_dec(drive);
-        serial_print(": no device\n");
-        return 0;
-    }
-    if (rc == -2) {
-        serial_print("ATA: probe drive ");
-        serial_print_dec(drive);
-        serial_print(": ATAPI (skipped)\n");
-        return 0;
-    }
-    if (rc != 0) {
-        serial_print("ATA: probe drive ");
-        serial_print_dec(drive);
-        serial_print(": IDENTIFY failed\n");
-        return 0;
-    }
+    if (rc == -1) { ata_probe_msg(drive, ": no device\n");       return 0; }
+    if (rc == -2) { ata_probe_msg(drive, ": ATAPI (skipped)\n"); return 0; }
+    if (rc != 0)  { ata_probe_msg(drive, ": IDENTIFY failed\n"); return 0; }
 
-    serial_print("ATA: probe drive ");
-    serial_print_dec(drive);
-    serial_print(": extracting model\n");
     ata_extract_model(id, s_model[drive]);
+
+    serial_lock();
     serial_print("ATA: probe drive ");
     serial_print_dec(drive);
     serial_print(": model = ");
     serial_print(s_model[drive]);
     serial_print("\n");
+    serial_unlock();
     return 1;
 }
 
@@ -275,16 +244,20 @@ int ata_init(void) {
 
     s_present[ATA_DRIVE_MASTER] = ata_probe(ATA_DRIVE_MASTER);
     if (s_present[ATA_DRIVE_MASTER]) {
+        serial_lock();
         serial_print("ATA:   master: ");
         serial_print(s_model[ATA_DRIVE_MASTER]);
         serial_print("\n");
+        serial_unlock();
     }
 
     s_present[ATA_DRIVE_SLAVE] = ata_probe(ATA_DRIVE_SLAVE);
     if (s_present[ATA_DRIVE_SLAVE]) {
+        serial_lock();
         serial_print("ATA:   slave:  ");
         serial_print(s_model[ATA_DRIVE_SLAVE]);
         serial_print("\n");
+        serial_unlock();
     }
 
     if (s_present[ATA_DRIVE_MASTER]) {
@@ -297,9 +270,11 @@ int ata_init(void) {
         return -1;
     }
 
+    serial_lock();
     serial_print("ATA: ready, default drive = ");
     serial_print_dec(s_default_drive);
     serial_print("\n");
+    serial_unlock();
     return 0;
 }
 
@@ -336,36 +311,52 @@ uint32_t ata_get_sector_count(uint8_t drive) {
  * ------------------------------------------------------------------ */
 
 static int ata_read_chunk(uint8_t drive, uint32_t lba, uint8_t count, void* buf) {
+#if ATA_DEBUG
+    serial_lock();
     serial_print("ATA: read_chunk lba=");
     serial_print_dec(lba);
     serial_print(" count=");
     serial_print_dec(count);
     serial_print("\n");
+    serial_unlock();
+#endif
 
     int rc = ata_poll_bsy_clear();
     if (rc != 0) {
+#if ATA_DEBUG
+        serial_lock();
         serial_print("ATA: read_chunk: poll_bsy fail rc=");
         serial_print_dec((uint64_t)(-rc));
         serial_print("\n");
+        serial_unlock();
+#endif
         return rc;
     }
 
     ata_select_drive(drive, lba);
+#if ATA_DEBUG
     serial_print("ATA: read_chunk: drive selected\n");
+#endif
 
     outb(ATA_PRIMARY_SECCOUNT, count);
     outb(ATA_PRIMARY_LBA_LO,   (uint8_t)(lba & 0xFF));
     outb(ATA_PRIMARY_LBA_MID,  (uint8_t)((lba >> 8) & 0xFF));
     outb(ATA_PRIMARY_LBA_HI,   (uint8_t)((lba >> 16) & 0xFF));
+#if ATA_DEBUG
     serial_print("ATA: read_chunk: LBA programmed\n");
+#endif
 
     outb(ATA_PRIMARY_STATUS, ATA_CMD_READ_SECTORS);
     ata_400ns_delay();
 
+#if ATA_DEBUG
     uint8_t st = inb(ATA_PRIMARY_STATUS);
+    serial_lock();
     serial_print("ATA: read_chunk: status after cmd = 0x");
     serial_print_hex(st);
     serial_print("\n");
+    serial_unlock();
+#endif
 
     uint16_t* p = (uint16_t*)buf;
     uint32_t sectors = (count == 0) ? 256 : count;
@@ -373,11 +364,15 @@ static int ata_read_chunk(uint8_t drive, uint32_t lba, uint8_t count, void* buf)
     for (uint32_t s = 0; s < sectors; s++) {
         rc = ata_poll_drq();
         if (rc != 0) {
+#if ATA_DEBUG
+            serial_lock();
             serial_print("ATA: read_chunk: poll_drq fail on sector ");
             serial_print_dec(s);
             serial_print(" rc=");
             serial_print_dec((uint64_t)(-rc));
             serial_print("\n");
+            serial_unlock();
+#endif
             return rc;
         }
         for (int i = 0; i < 256; i++) {
@@ -386,7 +381,9 @@ static int ata_read_chunk(uint8_t drive, uint32_t lba, uint8_t count, void* buf)
         ata_400ns_delay();
     }
 
+#if ATA_DEBUG
     serial_print("ATA: read_chunk: done\n");
+#endif
     return 0;
 }
 
@@ -469,11 +466,13 @@ int ata_write_sectors_drive(uint8_t drive, uint32_t lba, uint32_t count, const v
      * starts at LBA 0 and holds only a filesystem.
      */
     if (drive == ATA_DRIVE_MASTER && lba < ATA_WRITE_PROTECT_LBAS) {
+        serial_lock();
         serial_print("ATA: refuse write below LBA ");
         serial_print_dec(ATA_WRITE_PROTECT_LBAS);
         serial_print(" on master (requested LBA ");
         serial_print_dec(lba);
         serial_print(")\n");
+        serial_unlock();
         return -2;
     }
     if (lba + count <= lba) return -1;
