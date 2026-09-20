@@ -24,7 +24,7 @@ For known debt and cleanup work, see [`MAINTENANCE.md`](MAINTENANCE.md).
 
 ---
 
-## 2. Core Kernel Features (31/31 Complete)
+## 2. Core Kernel Features (38/38 Complete)
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
@@ -33,10 +33,10 @@ For known debt and cleanup work, see [`MAINTENANCE.md`](MAINTENANCE.md).
 | 8 | **PIT Timer** | ✅ Complete | IRQ0 tick counter, scheduling foundation |
 | 9 | **Keyboard Driver** | ✅ Complete | IRQ1, scancode set 1, shift/caps, input buffer |
 | 10 | **VGA Console Upgrade** | ✅ Complete | Scrolling, cursor control, shell‑ready console |
-| 11 | **Kernel Shell** | ✅ Complete | Diagnostic console reached via `k` at boot. Commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, elfload, proclist, proccreate, vmmclone, runproc, schstat, testyield, usershell, gdtdump, tssdump, atatest, fatmount, fatls, fatcat |
+| 11 | **Kernel Shell** | ✅ Complete | Diagnostic console reached via `k` at boot. Commands: help, clear, info, mem, version, reboot, pmmtest, test, vmmtest, serialtest, heapstat, maptest, testrec, heaptest, nxtest, syscall, elfload, proclist, proccreate, vmmclone, runproc, schstat, testyield, usershell, gdtdump, tssdump, selftest, atatest, fatmount, fatls, fatcat |
 | 12 | **E820 Memory Map** | ✅ Complete | Memory detection, BootInfo struct passed to kernel |
 | 13 | **Physical Memory Manager** | ✅ Complete | Bitmap allocator, page alloc/free, reserved region marking |
-| 14 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510]. HHDM mapping at PML4[256]. Dynamic page table allocation. User-space page mapping with PT_USER. **NX bit support via PT_NX.** **Dynamic HHDM mapping via `ensure_hhdm_mapped()`.** **Page table cloning via `vmm_clone_page_table()`.** |
+| 14 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510]. HHDM mapping at PML4[256]. Dynamic page table allocation. User-space page mapping with PT_USER. **NX bit support via PT_NX, with EFER.NXE enabled so the CPU enforces it (v0.5.1).** **Dynamic HHDM mapping via `ensure_hhdm_mapped()`.** **Page table cloning via `vmm_clone_page_table()`.** |
 | 15 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging alongside VGA |
 | 16 | **Kernel Heap Allocator** | ✅ Complete | `kmalloc()`/`kfree()` with free list, `heapstat`/`heaptest`. 64MB initial heap with automatic expansion. |
 | 17 | **User Mode (Ring 3)** | ✅ Complete | GDT with user segments (0x33 code, 0x2B data). TSS configured for stack switching. `iretq` transition. CPL=3 with page protection. |
@@ -63,6 +63,12 @@ For known debt and cleanup work, see [`MAINTENANCE.md`](MAINTENANCE.md).
 | 38 | **Single-Drive Layout** | ✅ Complete ⭐ v0.5.0 | `FAT_CONFIG=dual|single` selects the layout. FAT16 partition at LBA 2048. `diskio.c` applies `FAT_PARTITION_OFFSET`. `FF_MULTI_PARTITION = 0` means FatFs is not partition-aware, so the offset lives in `diskio.c`, not the BPB. `hdd-single.img` built by `mkfs.vfat --offset=2048 -h 2048` and populated by `mcopy`. |
 | 39 | **Persistence Across Reboot** | ✅ Complete ⭐ v0.5.0 | Verified end-to-end: user shell option 5 writes in one boot, verifies byte-exact after reboot on the same image. Proves writes are durable, not just buffered. |
 | 40 | **Config Diagnostic at Boot** | ✅ Complete ⭐ v0.5.0 | `kmain.c` prints a config-specific storage line to VGA and serial (`"Storage: single-drive, FAT@LBA 2048"` vs `"Storage: dual-drive, FAT@LBA 0 on slave"`). Mount failures now appear on VGA, not just serial. |
+| 41 | **Self-Test Infrastructure** | ✅ Complete ⭐ v0.5.1 | `selftest` kernel shell command runs 15 tests and prints a pass/fail summary. Coverage: GDT descriptor contents, TSS fields, PMM allocation/free, VMM control registers, page mapping, recursive paging, heap integrity, NX bit in final PTE, syscall entry point, ATA reads, FatFs mount/directory listing, and the three exception handlers (#DE, #PF, #GP). Expected-fault protocol lets the exception tests recover cleanly. |
+| 42 | **`EFER.NXE` Enabled (NX on Hardware)** | ✅ Complete ⭐ v0.5.1 | Previously the kernel wrote NX bits into PTEs via `PT_NX` but the CPU ignored them because `EFER.NXE` was clear. `enable_nx()` in `kmain.c` now sets the bit, guarded by a CPUID check. `test_vmm` asserts on it. |
+| 43 | **Kernel-Owned GDT (Higher-Half)** | ✅ Complete ⭐ v0.5.1 | Previously the GDT lived in low memory (base `0x101DC`, inside `stage2.asm`'s loaded image). `gdt_init` now builds `kernel_gdt[16]` in `.bss` at a higher-half address, `lgdt`s it, and reloads the segment registers. `gdt_set_tss` writes the TSS descriptor directly. `gdt_fix_user_segments` became a no-op. |
+| 44 | **Print Atomicity (Shared Serial/VGA Lock)** | ✅ Complete ⭐ v0.5.1 | Serial and VGA drivers share a single print lock (cli/sti critical section with nesting counter and RFLAGS save/restore). Multi-part boot messages wrap in `serial_lock`/`serial_unlock`. The DonsDOS banner truncation and interleaved boot trace are gone. |
+| 45 | **`#DF` through IST1** | ✅ Complete ⭐ v0.5.1 | A dedicated 4 KB stack and an IST entry on the `#DF` gate turn a double fault into a printed diagnostic instead of a silent triple-fault reset. |
+| 46 | **Kernel Shell on a Pool-Allocated Stack** | ✅ Complete ⭐ v0.5.1 | The kernel shell is now a real process (`kshell`) with a stack from the kernel stack pool, not a hardcoded address. `0xFFFFFFFF8008FF00` is gone. |
 
 ---
 
@@ -70,14 +76,14 @@ For known debt and cleanup work, see [`MAINTENANCE.md`](MAINTENANCE.md).
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 41 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
-| 42 | **Virtual Memory Manager** | ✅ Complete | Recursive paging, HHDM, dynamic page tables, NX, dynamic HHDM mapping, page table cloning |
-| 43 | **Serial Debug Output** | ✅ Complete | COM1 serial output, integrated with QEMU |
-| 44 | **Kernel Heap** | ✅ Complete | `kmalloc()`/`kfree()` with free list. Memory reuse verified. |
-| 45 | **User Memory Mapping** | ✅ Complete | Pages mapped with PT_USER for user/kernel isolation |
-| 46 | **NX (No Execute) Bit** | ✅ Complete | PT_NX flag, `nxtest`, NX status in `vmmtest` |
-| 47 | **HHDM Dynamic Mapping** | ✅ Complete | `ensure_hhdm_mapped()` for on-demand physical memory access. Used by ELF loader and page table cloning. |
-| 48 | **`sys_brk` Heap Growth** | ✅ Complete ⭐ v0.4.7 | Per-process heap state in `current->brk_virt`. Pages mapped with `invlpg` after map. |
+| 47 | **Higher‑Half Kernel** | ✅ Complete | Kernel mapped to `0xFFFFFFFF80100000`, identity map preserved |
+| 48 | **Virtual Memory Manager** | ✅ Complete | Recursive paging, HHDM, dynamic page tables, NX, dynamic HHDM mapping, page table cloning |
+| 49 | **Serial Debug Output** | ✅ Complete | COM1 serial output, integrated with QEMU |
+| 50 | **Kernel Heap** | ✅ Complete | `kmalloc()`/`kfree()` with free list. Memory reuse verified. |
+| 51 | **User Memory Mapping** | ✅ Complete | Pages mapped with PT_USER for user/kernel isolation |
+| 52 | **NX (No Execute) Bit** | ✅ Complete | PT_NX flag, `nxtest`, NX status in `vmmtest`.  Since v0.5.1, `EFER.NXE` is enabled so the CPU actually enforces it. |
+| 53 | **HHDM Dynamic Mapping** | ✅ Complete | `ensure_hhdm_mapped()` for on-demand physical memory access. Used by ELF loader and page table cloning. |
+| 54 | **`sys_brk` Heap Growth** | ✅ Complete ⭐ v0.4.7 | Per-process heap state in `current->brk_virt`. Pages mapped with `invlpg` after map. |
 
 ---
 
@@ -85,13 +91,13 @@ For known debt and cleanup work, see [`MAINTENANCE.md`](MAINTENANCE.md).
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 49 | **ATA PIO Driver** | ✅ Complete ⭐ v0.4.10 | Primary channel, LBA28, polled. Per-drive entry points, FLUSH CACHE. Write-protect floor on master. `atatest` diagnostic. |
-| 50 | **FatFs Integration** | ✅ Complete ⭐ v0.4.10 | FatFs R0.15, read and write. Kernel shell and userland access. |
-| 51 | **Single-Drive Layout** | ✅ Complete ⭐ v0.5.0 | Boot chain + kernel + FAT16 partition on one `hdd.img`. FAT at LBA 2048. |
-| 52 | **Persistence Across Reboot** | ✅ Complete ⭐ v0.5.0 | User-shell option 5 proves writes survive reboot. |
-| 53 | **Dual-Drive Layout (Retained)** | ✅ Complete | Kernel on master, FAT16 on slave. Remains the default; useful for debugging. |
-| 54 | **`SYS_UNLINK`** | ☐ Not Started | `f_unlink` behind a syscall. Completes the user-shell multi-file test. |
-| 55 | **User Programs from Disk** | ☐ Not Started | `sys_exec`-style syscall, load ELF files from the FAT volume. Enables external commands in a real shell. |
+| 55 | **ATA PIO Driver** | ✅ Complete ⭐ v0.4.10 | Primary channel, LBA28, polled. Per-drive entry points, FLUSH CACHE. Write-protect floor on master. `atatest` diagnostic. |
+| 56 | **FatFs Integration** | ✅ Complete ⭐ v0.4.10 | FatFs R0.15, read and write. Kernel shell and userland access. |
+| 57 | **Single-Drive Layout** | ✅ Complete ⭐ v0.5.0 | Boot chain + kernel + FAT16 partition on one `hdd.img`. FAT at LBA 2048. |
+| 58 | **Persistence Across Reboot** | ✅ Complete ⭐ v0.5.0 | User-shell option 5 proves writes survive reboot. |
+| 59 | **Dual-Drive Layout (Retained)** | ✅ Complete | Kernel on master, FAT16 on slave. Remains the default; useful for debugging. |
+| 60 | **`SYS_UNLINK`** | ☐ Not Started | `f_unlink` behind a syscall. Completes the user-shell multi-file test. |
+| 61 | **User Programs from Disk** | ☐ Not Started | `sys_exec`-style syscall, load ELF files from the FAT volume. Enables external commands in a real shell. |
 
 ---
 
@@ -99,19 +105,19 @@ For known debt and cleanup work, see [`MAINTENANCE.md`](MAINTENANCE.md).
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| 56 | **System Calls** | ✅ Complete | SYS_WRITE, SYS_EXIT, SYS_READ, SYS_OPEN, SYS_CLOSE, SYS_BRK, SYS_GETPID, SYS_REBOOT. Safe user-space access. |
-| 57 | **ELF Loader** | ✅ Complete ⭐ FINALIZED | ELF64 parsing, user-mode transition, `elfload`. Works on first boot. |
-| 58 | **Process Foundation** | ✅ Complete | PCB, `process_create`, `proclist`, `vmmclone` |
-| 59 | **Process Stack Setup** | ✅ Complete | Static kernel stack pool, user/kernel stacks, `runproc`, `process_destroy` |
-| 60 | **Cooperative Scheduler** | ✅ Complete | Ready queue, `process_yield()`, `process_exit()`, `testyield`, `schstat` |
-| 61 | **Preemptive Scheduler** | ✅ Complete | PIT timer preemption, quantum slicing, timer-driven kernel-mode preemption |
-| 62 | **newlib Userland C Library** | ✅ Complete ⭐ v0.4.7 | Full newlib 4.x linked into user programs. Standard C available in Ring 3. |
-| 63 | **Blocking I/O** | ✅ Complete ⭐ v0.4.7 | `sys_read` on fd 0 blocks via BLOCKED + `hlt`, woken by `irq1`. |
-| 64 | **File I/O from Ring 3** | ✅ Complete ⭐ v0.4.10 | `open`/`close`/`read`/`write` on FAT files from userland. |
-| 65 | **User-Mode Processes** | 🚧 In Progress | Kernel-mode processes work; per-process tty / focus is the remaining piece for multiple concurrent user shells. |
-| 66 | **Process Cleanup on Exit** | ✅ Complete ⭐ v0.4.8 | `process_reclaim` frees ELF pages and user stack pages, marks PCB UNUSED, resets pid, decrements count. `process_exit` runs with interrupts disabled. Page-table teardown deferred. |
-| 67 | **Expanded User-Shell Regression Harness** | ✅ Complete ⭐ v0.5.0 | Options 4 (FS round-trip), 5 (persistence across reboot), 6 (multi-file), 7 (4 KB round-trip). All pass in dual-drive and single-drive. |
-| 68 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
+| 62 | **System Calls** | ✅ Complete | SYS_WRITE, SYS_EXIT, SYS_READ, SYS_OPEN, SYS_CLOSE, SYS_BRK, SYS_GETPID, SYS_REBOOT. Safe user-space access. |
+| 63 | **ELF Loader** | ✅ Complete ⭐ FINALIZED | ELF64 parsing, user-mode transition, `elfload`. Works on first boot. |
+| 64 | **Process Foundation** | ✅ Complete | PCB, `process_create`, `proclist`, `vmmclone` |
+| 65 | **Process Stack Setup** | ✅ Complete | Static kernel stack pool, user/kernel stacks, `runproc`, `process_destroy` |
+| 66 | **Cooperative Scheduler** | ✅ Complete | Ready queue, `process_yield()`, `process_exit()`, `testyield`, `schstat` |
+| 67 | **Preemptive Scheduler** | ✅ Complete | PIT timer preemption, quantum slicing, timer-driven kernel-mode preemption |
+| 68 | **newlib Userland C Library** | ✅ Complete ⭐ v0.4.7 | Full newlib 4.x linked into user programs. Standard C available in Ring 3. |
+| 69 | **Blocking I/O** | ✅ Complete ⭐ v0.4.7 | `sys_read` on fd 0 blocks via BLOCKED + `hlt`, woken by `irq1`. |
+| 70 | **File I/O from Ring 3** | ✅ Complete ⭐ v0.4.10 | `open`/`close`/`read`/`write` on FAT files from userland. |
+| 71 | **User-Mode Processes** | 🚧 In Progress | Kernel-mode processes work; per-process tty / focus is the remaining piece for multiple concurrent user shells. |
+| 72 | **Process Cleanup on Exit** | ✅ Complete ⭐ v0.4.8 | `process_reclaim` frees ELF pages and user stack pages, marks PCB UNUSED, resets pid, decrements count. `process_exit` runs with interrupts disabled. Page-table teardown deferred. |
+| 73 | **Expanded User-Shell Regression Harness** | ✅ Complete ⭐ v0.5.0 | Options 4 (FS round-trip), 5 (persistence across reboot), 6 (multi-file), 7 (4 KB round-trip). All pass in dual-drive and single-drive. |
+| 74 | **Slab Allocator** | ❌ Not Needed | Free list already provides memory reuse for kmalloc/kfree |
 
 ---
 
@@ -120,19 +126,32 @@ For known debt and cleanup work, see [`MAINTENANCE.md`](MAINTENANCE.md).
 | Phase | Completed | Total | Progress |
 |-------|-----------|-------|----------|
 | Boot & System Init | 5 | 5 | **100%** ✅ |
-| Core Kernel | 31 | 31 | **100%** ✅ |
+| Core Kernel | 38 | 38 | **100%** ✅ |
 | Memory Management | 8 | 8 | **100%** ✅ |
 | Storage & File Systems | 5 | 7 | **71%** 🚧 |
 | User Space | 11 | 13 | **85%** 🚧 |
-| **Overall** | **60** | **64** | **94%** |
+| **Overall** | **67** | **71** | **94%** |
 
 The overall number is lower than the earlier 98% because the checklist now counts the storage milestones as separate items. This is more honest: storage was not present in the earlier counts even though the roadmap listed it as "Next." The project is materially closer to complete on the previously-tracked items, and the roadmap is more accurate about what remains.
+
+The Core Kernel count rose from 31 to 38 with the addition of the v0.5.1 maintenance items (§2 items 41–46).
 
 ---
 
 ## Recent Milestone Achievements (Chronological Order — Newest First)
 
-### v0.5.0 — Storage Layer Complete ⭐ NEW
+### v0.5.1 — Maintenance Batch: Self-Test, NX on Hardware, Kernel-Owned GDT ⭐ NEW
+- **Self-test infrastructure (`selftest` command).**  15 tests covering GDT descriptor contents, TSS fields, PMM allocation and freeing, VMM control registers, page mapping, recursive paging, heap integrity, the NX bit in the final PTE, syscall entry point, ATA reads, FatFs mount and directory listing, and the three exception handlers (#DE, #PF, #GP).  The exception tests use an expected-fault protocol: a small kernel-mode child takes the fault, the handler records the vector, terminates the child, and resumes the kernel shell.  First time the exception handlers have been exercised by anything.
+- **`EFER.NXE` enabled.**  Previously the kernel wrote NX bits into PTEs but the CPU ignored them because `EFER.NXE` was clear.  Worked under KVM by accident (KVM's shadow MMU enables NX on the host side regardless of the guest's EFER); would have faulted on bare metal.  `enable_nx()` in `kmain.c` now sets the bit, guarded by a CPUID check.  `test_vmm` asserts on it.
+- **Kernel-owned GDT.**  The GDT lived in low memory (base `0x101DC`, inside `stage2.asm`'s loaded image).  `gdt_init` now builds `kernel_gdt[16]` in `.bss` at a higher-half address, `lgdt`s it, and reloads the segment registers.  `gdt_set_tss` writes the TSS descriptor directly.  `gdt_fix_user_segments` became a no-op.  `test_gdt`'s strict assertion is restored.
+- **Print atomicity.**  Kernel serial and VGA drivers now share a single print lock.  Multi-part boot messages wrap in `serial_lock`/`serial_unlock`; ATA's read-path prints are gated behind `ATA_DEBUG`.  The DonsDOS banner truncation and interleaved boot trace are gone.
+- **#DF through IST1.**  A dedicated 4 KB stack and an IST entry on the `#DF` gate turn a double fault into a printed diagnostic instead of a silent triple-fault reset.
+- **Kernel shell is process-backed.**  It runs as a real process (`kshell`) with a pool-allocated kernel stack, not a hardcoded address.
+- **Staging ceiling raised** from 176 KB to 448 KB by adding PASS 4–7 in `stage2.asm`.
+- **Reboot flushes file handles.**  The user shell's reboot path flushes open file handles before the hardware reset; option 9 added.
+- **MAINTENANCE.md updated throughout.**  No open findings remain.  Sections 5b (boot-time self-test mode) and 5c (make test) deferred with the conditions that would make them worth revisiting.
+
+### v0.5.0 — Storage Layer Complete
 - **ATA PIO block device driver** on the primary channel. `ata_init` probes master and slave via IDENTIFY, extracts model strings, and logs to serial. Per-drive entry points.
 - **Three ATA bring-up bugs found and fixed:** PIC mask restoration, exception frame offsets, LBA mode bit.
 - **FatFs R0.15 vendored** with a `diskio.c` shim. Read and write, kernel-side and userland.
@@ -255,9 +274,9 @@ The overall number is lower than the earlier 98% because the checklist now count
 
 ## Next Steps (Recommended Order)
 
-1. **`SYS_UNLINK`** — small syscall addition; completes the multi-file test in the user shell (option 6's delete phase).
-2. **User Programs from Disk (`sys_exec`)** — add a syscall that opens an ELF file on the FAT volume, loads it, and spawns a process. Stop embedding programs in the kernel image. Enables a real shell with external commands.
-3. **Kernel shell on a proper stack** — move `kmain_shell_loop` off the hardcoded `0xFFFFFFFF8008FF00` boot stack, allocate from the kernel stack pool. Companion: IST for `#DF`.
+1. **User Programs from Disk (`sys_exec`)** — the next feature milestone.  Add a syscall that opens an ELF file on the FAT volume, loads it, and spawns a process.  Stop embedding programs in the kernel image.  Enables a real shell with external commands (`ls`, `cat`, etc.).
+2. **`SYS_UNLINK`** — small syscall addition; completes the multi-file test in the user shell (option 6's delete phase).
+3. **ELF Loader `PT_NX` Follow-up** — with `EFER.NXE` now enabled, `elf_load_into_process` can mark non-executable segments (data, BSS, user stack) with `PT_NX`.  About an hour of work; closes the follow-up noted in `MAINTENANCE.md` §3g.
 4. **User-Mode Processes (full)** — per-process tty / focus so multiple shells can coexist.
 5. **Serial Console Debug Access** — kernel shell over COM1 (the right shape for runtime kernel-shell access; the magic-key-combo approach was tried and abandoned).
 6. **Framebuffer Graphics** — Move from VGA text mode to graphics.
@@ -265,4 +284,4 @@ The overall number is lower than the earlier 98% because the checklist now count
 
 ---
 
-*Last Updated: September 2026 (v0.5.0)*
+*Last Updated: September 2026 (v0.5.1)*
