@@ -142,6 +142,88 @@ static void suspend_self_for_diagnostic(void) {
     if (self) self->state = PROC_STATE_BLOCKED;
 }
 
+/* =====================================================================
+ * Self-test scaffolding.
+ *
+ * The three fault triggers are tiny kernel functions that take one
+ * exception each.  They are the entry points of child processes
+ * spawned by test_exception_proc().  If the fault fires, the exception
+ * handler sees g_expect_fault set, records the vector in
+ * g_fault_observed, and calls fault_kill_current(), which terminates
+ * the child and resumes the kernel shell.  If the fault does not fire,
+ * the trigger reaches its trailing process_exit() and the child ends
+ * cleanly; test_exception_proc() then sees g_fault_observed still at
+ * -1 and reports FAIL.
+ *
+ * The triggers use inline asm for #DE and a direct store to a
+ * non-canonical address for #GP, because those are the only reliable
+ * ways to produce those exceptions from C.  #PF comes from a store to
+ * a canonical but unmapped higher-half address.
+ *
+ * All three triggers must remain kernel-mode functions (entry_point
+ * >= KERNEL_BASE).  process_exit() uses that distinction to choose
+ * between "resume the kernel shell" and "halt"; a user-mode trigger
+ * would halt instead of resuming, and the self-test would never get
+ * control back.
+ * ===================================================================== */
+
+static void fault_de_trigger(void) {
+    __asm__ volatile(
+        "xor %%rax, %%rax\n\t"
+        "xor %%rbx, %%rbx\n\t"
+        "div %%rbx\n\t"
+        ::: "rax", "rbx", "rdx"
+    );
+    process_exit();   /* #DE did not fire */
+}
+
+static void fault_pf_trigger(void) {
+    *(volatile uint64_t*)0xFFFFFFFF00000000ULL = 0xDEADBEEF;
+    process_exit();   /* #PF did not fire */
+}
+
+static void fault_gp_trigger(void) {
+    *(volatile uint64_t*)0x000FFFFF00000000ULL = 0xDEADBEEF;
+    process_exit();   /* #GP did not fire */
+}
+
+#define SELFTEST_PASS 0
+#define SELFTEST_FAIL 1
+
+/*
+ * Run one expected-fault test.
+ *
+ * Spawns a kernel-mode child whose entry point is `trigger`, sets the
+ * global expected-fault marker, suspends the shell, and switches to the
+ * child.  The child either faults (handler calls fault_kill_current,
+ * which terminates it and resumes the shell) or returns (trigger's
+ * trailing process_exit, same effect).  Either way control comes back
+ * here when the shell resumes, and g_fault_observed tells us which path
+ * was taken.
+ *
+ * Returns SELFTEST_PASS if the expected vector was observed, otherwise
+ * SELFTEST_FAIL.
+ */
+static int test_exception_proc(int vec, void (*trigger)(void)) {
+    pcb_t* child = process_create("faulttest", (uint64_t)trigger, 0);
+    if (!child) return SELFTEST_FAIL;
+
+    g_fault_observed = -1;
+    g_expect_fault   = vec;
+
+    suspend_self_for_diagnostic();
+    scheduler_switch_to(child);
+
+    /*
+     * Control resumes here when the child terminates and
+     * process_exit's fallback switches back to the kernel shell.
+     * Clear the marker so an unexpected fault in a later test is not
+     * silently attributed to this one.
+     */
+    g_expect_fault = -1;
+    return (g_fault_observed == vec) ? SELFTEST_PASS : SELFTEST_FAIL;
+}
+
 static void handle_command(const char *cmd) {
     if (cmd == NULL || cmd[0] == '\0') {
         vga_print("> ");
@@ -149,7 +231,7 @@ static void handle_command(const char *cmd) {
     }
 
     if (strcmp(cmd, "help") == 0) {
-        vga_print("\nCmds:\n  help, clear, version, reboot, pmmtest, info, mem, test,\n  vmmtest, serialtest, heapstat, maptest, testrec, heaptest,\n  nxtest, syscall, elfload, proclist, proccreate, vmmclone,\n  runproc, schstat, testyield, usershell, gdtdump, tssdump, \n  atatest, fatmount, fatls, fatcat <file>\n> ");
+        vga_print("\nCmds:\n  help, clear, version, reboot, pmmtest, info, mem, test,\n  vmmtest, serialtest, heapstat, maptest, testrec, heaptest,\n  nxtest, syscall, elfload, proclist, proccreate, vmmclone,\n  runproc, schstat, testyield, usershell, gdtdump, tssdump,\n  atatest, fatmount, fatls, fatcat <file>, selftest\n> ");
     } else if (strcmp(cmd, "clear") == 0) {
         vga_clear(); vga_print("DonsDOS v0.5.0\nType 'help'\n> ");
     } else if (strcmp(cmd, "version") == 0) {
@@ -534,6 +616,37 @@ static void handle_command(const char *cmd) {
         
         kfree(file_buf);
         vga_print("> ");    
+    } else if (strcmp(cmd, "selftest") == 0) {
+        PRINT_BOTH("\n=== Kernel Self-Test ===\n");
+        int pass = 0, fail = 0, skip = 0;
+
+        PRINT_BOTH("  [exception #DE] ... ");
+        if (test_exception_proc(0x00, fault_de_trigger) == SELFTEST_PASS) {
+            PRINT_BOTH("PASS\n"); pass++;
+        } else {
+            PRINT_BOTH("FAIL\n"); fail++;
+        }
+
+        PRINT_BOTH("  [exception #PF] ... ");
+        if (test_exception_proc(0x0E, fault_pf_trigger) == SELFTEST_PASS) {
+            PRINT_BOTH("PASS\n"); pass++;
+        } else {
+            PRINT_BOTH("FAIL\n"); fail++;
+        }
+
+        PRINT_BOTH("  [exception #GP] ... ");
+        if (test_exception_proc(0x0D, fault_gp_trigger) == SELFTEST_PASS) {
+            PRINT_BOTH("PASS\n"); pass++;
+        } else {
+            PRINT_BOTH("FAIL\n"); fail++;
+        }
+
+        PRINT_BOTH("  ---\n  ");
+        PRINT_BOTH_DEC((uint64_t)pass); PRINT_BOTH(" passed, ");
+        PRINT_BOTH_DEC((uint64_t)fail); PRINT_BOTH(" failed, ");
+        PRINT_BOTH_DEC((uint64_t)skip); PRINT_BOTH(" skipped\n");
+        PRINT_BOTH("  (fault-path coverage only; non-fault tests not yet wired)\n");
+        vga_print("> ");
     } else {
         vga_print("\nUnknown command.\n> ");
     }

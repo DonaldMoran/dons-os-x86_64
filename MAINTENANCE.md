@@ -192,6 +192,37 @@ translation. `sys_brk` does this. New callers should too. The fix would
 be to make `vmm_map_page_in_cr3` optionally flush, but that has its own
 tradeoffs. Leave as-is; it's documented.
 
+### 3f. Self-test fault triggers must be kernel-mode functions
+
+**Status:** documented constraint; holds today
+**Effort:** n/a now; ~1 hour if a user-mode fault test is ever wanted
+**Introduced by:** 5a-i (tag `20260919K`)
+
+`fault_kill_current` (in `interrupts.c`) terminates the current process
+by calling `process_exit`. `process_exit` uses `exiting->entry_point >=
+KERNEL_BASE` to decide between "resume the kernel shell" (kernel-mode
+diagnostic) and "halt" (user-mode process). The self-test's three fault
+triggers (`fault_de_trigger`, `fault_pf_trigger`, `fault_gp_trigger` in
+`kmain.c`) are kernel text, so they take the resume-the-shell path, and
+`selftest` gets control back after each fault.
+
+**The constraint:** if a fault trigger is ever made a user-mode
+function (e.g. to test a user-mode `#PF` from the self-test), the child
+will *halt* on exit instead of resuming the shell, and the self-test
+will never get control back. The result is a hang, not a FAIL, because
+`g_fault_observed` is set but never read.
+
+**Why this is fine today:** `selftest` is a kernel-shell command, and
+all three triggers are kernel-mode by construction. The comment block
+above the triggers in `kmain.c` says so.
+
+**What a future refactor would need:** a per-PCB `expected_fault` field
+that `process_exit` checks *before* the `entry_point >= KERNEL_BASE`
+policy. That decouples "the process terminated by design" from "the
+process terminated because it was a kernel diagnostic," which are
+different concepts that the current code conflates. Not urgent — no
+user-mode fault test exists or is planned.
+
 ---
 
 ## 4. Code hygiene
@@ -360,16 +391,60 @@ you ever wonder "is printing slow?"
 
 ## 5. Testing infrastructure
 
-**Status:** ad-hoc; runs exist but are not automated
-**Effort:** ~3 hours
-**Payoff:** makes every future change cheaper to verify
+**Status:** partial; fault-path coverage exists, non-fault coverage does not
+**Effort:** ~4 hours remaining (5a-ii, 5a-iii, 5b, 5c)
 
 ### 5a. Kernel-shell self-test
 
-A single command that runs all the existing test commands in sequence
-(`pmmtest`, `vmmtest`, `heaptest`, `atatest`, `fatmount`, `fatls`,
-`elfload`, `testyield`, `syscall`, etc.) and reports a pass/fail summary.
-Currently each test must be typed by hand.
+**Split into three commits.  5a-i is done.**
+
+- **5a-i ✅ DONE (tag `20260919K`).**  Expected-fault protocol
+  (`g_expect_fault` / `g_fault_observed` / `fault_kill_current`) and
+  a `selftest` command that runs the three exception tests.  Each
+  test spawns a kernel-mode child whose entry point is a small
+  trigger function, sets the expected vector, yields to the child,
+  and checks `g_fault_observed` when the shell resumes.  The three
+  exception handlers (`isr0_handler`, `isr13_handler`,
+  `isr14_handler`) gained a guard at the top: if `g_expect_fault`
+  matches their vector, they call `fault_kill_current` instead of
+  the diagnostic-and-halt path.  Verified end-to-end on
+  single-drive: `3 passed, 0 failed, 0 skipped`.
+
+  This is the first time the exception handlers have been exercised
+  by anything.  Prior to this commit, a broken `isr14_stub` frame
+  offset or a mis-wired IDT gate would only have been visible by
+  typing `test` and reading the dump by hand.
+
+  Files touched: `interrupts.h`, `interrupts.c`, `kmain.c`.  No
+  changes to `process.c`, `scheduler.c`, `context_switch.asm`,
+  `isr.asm`, or `process.h`.  The `_Static_assert` offsets in
+  `process.c` remain valid because `pcb_t` is untouched.
+
+  **What is not covered by 5a-i:** the handlers' *diagnostic* path
+  (`g_expect_fault == -1`) is untested — that's the path the `test`
+  command takes.  User-mode faults are untested; see item 3f for the
+  coupling that makes this non-trivial.
+
+- **5a-ii.**  Refactor `pmmtest`, `vmmtest`, `heaptest`,
+  `atatest`, `fatmount`, `fatls`, `gdtdump`, `tssdump`,
+  `syscall` into `static int test_xxx(void)` and wire them
+  into `selftest`.  Estimated ~1 hr, mechanical.
+
+- **5a-iii.**  Fix `test_program.asm` to call `SYS_EXIT` so
+  `elfload` returns; add `elfload` to `selftest`.  The current
+  `test_program.asm` ends with `cli; hlt; jmp` in Ring 3 — the
+  child never exits, and the kernel shell never gets control back.
+  The commented-out lower half of the file is the version that
+  exits cleanly.  Optional: add `testyield` to the batch.  Note
+  that a user-mode child that faults will halt rather than resume
+  the shell (by design in `process_exit`; see item 3f), so
+  `elfload` can only be included once its test program exits
+  cleanly.
+
+Original estimate of "1 hr" was optimistic: the exception handlers
+were halting, so a recoverable fault path had to be designed and
+built before any of the fault tests could be sequenced.  5a-i alone
+was ~2 hrs of work.
 
 ### 5b. Boot-time self-test mode
 
@@ -384,12 +459,11 @@ the serial output, and reports pass/fail based on the output. Automatable
 with a serial-to-file and a grep. Would let you catch regressions without
 watching the boot.
 
-### When to do this
+### When to do the rest
 
-Nothing is blocking this. The remaining items on this list are either
-deferred (3c, 3d) or architectural (4e), and none of them change the
-kernel in ways that would break a self-test written today. It can be
-built on the current code.
+5a-ii is mechanical and can be done any time.  5a-iii depends on a fix
+to `test_program.asm`.  5b and 5c build on 5a-ii and 5a-iii.  None of
+them are blocked by the remaining items on this list.
 
 ---
 
@@ -404,6 +478,7 @@ built on the current code.
 | 3c | Page table teardown | 2–3 hrs | Defer until multiple processes |
 | 3d | `heap_base` per-process | 15 min | Whenever |
 | 3e | TLB flush in VMM | — | Leave as-is, documented |
+| 3f | Self-test fault-trigger constraint | — | Documented (20260919K) |
 | 4a | Dead declarations | 15 min | ✅ Done (20260919F) |
 | 4b | Double-build in `run` | 15 min | ✅ Done (20260919F) |
 | 4c | Stale comments | 30 min | ✅ Done (20260919F) |
@@ -411,16 +486,20 @@ built on the current code.
 | 4e | Print lock → ring buffer | 1–2 hrs | Before tty/per-user console |
 | 4f | Print functions as leaf functions | — | Documented invariant |
 | 4g | Print-lock hold diagnostic | 30 min | Build when needed |
-| 5a | Kernel-shell self-test | 1 hr | Next available slot |
-| 5b | Boot-time self-test | 1 hr | After 5a |
+| 5a-i | Self-test: exception path | 2 hrs | ✅ Done (20260919K) |
+| 5a-ii | Self-test: non-fault tests | 1 hr | Next available slot |
+| 5a-iii | `elfload` in selftest (needs `test_program` fix) | 30 min | After 5a-ii |
+| 5b | Boot-time self-test mode | 1 hr | After 5a-iii |
 | 5c | `make test` target | 1 hr | After 5b |
 
 Everything on this list is either done, deferred, or architectural.
 Nothing urgent remains. The natural next steps, in order of value:
 
-1. **Testing infrastructure (5a–5c)** — three sessions, and it pays off
-   every time you change the kernel afterward. Do this before starting
-   new features.
+1. **Testing infrastructure (5a-ii, 5a-iii, 5b, 5c)** — the remaining
+   half of what 5a started.  5a-ii is mechanical; 5a-iii needs a
+   small fix to `test_program.asm`; 5b and 5c build on both.  Each
+   session pays off every time you change the kernel afterward.  Do
+   these before starting new features.
 2. **The ring buffer (4e)** — the correct long-term design for the print
    path. Do this before the tty subsystem lands.
 3. **`sys_exec`** — the next feature milestone (user programs from disk).

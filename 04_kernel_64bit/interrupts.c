@@ -114,6 +114,39 @@ volatile uint64_t g_ticks = 0;
 static int g_shift = 0;
 static int g_caps  = 0;
 
+/*
+ * Expected-fault protocol for the kernel self-test.  See interrupts.h
+ * for the contract.  -1 means "no fault expected"; any other value is
+ * the vector the self-test has deliberately triggered.  0 is a valid
+ * vector (#DE) so it cannot be the sentinel.
+ */
+volatile int g_expect_fault   = -1;
+volatile int g_fault_observed = -1;
+
+/*
+ * Terminate the current process from an expected fault.
+ *
+ * process_exit() is declared noreturn in process.h.  It disables
+ * interrupts, removes the current process from the ready queue, marks
+ * it TERMINATED, calls process_reclaim() to free its ELF pages and
+ * kernel stack slot, and switches back to the kernel shell (when the
+ * exiting process is a kernel-mode diagnostic — which is the case for
+ * every faulttest child spawned by the self-test).  That is exactly
+ * the behavior the self-test needs: the child that faulted is
+ * destroyed, and the shell resumes at the point after the
+ * scheduler_switch_to() that spawned it.
+ *
+ * The kernel shell reads g_fault_observed when it resumes and uses it
+ * to decide pass/fail.  The reset of g_expect_fault here means a
+ * subsequent unexpected fault will take the normal diagnostic-and-halt
+ * path rather than being silently attributed to the previous test.
+ */
+void fault_kill_current(int vec) {
+    g_fault_observed = vec;
+    g_expect_fault   = -1;
+    process_exit();
+    __builtin_unreachable();
+}
 
 /* The timer preempt handler straddles an ABI boundary that the C compiler
    does not model: irq0_stub pushes a 15-GPR frame on the stack, calls
@@ -314,7 +347,22 @@ void irq1_handler(void) {
     outb(PIC1_CMD, PIC_EOI);
 }
 
-void isr0_handler(void) {
+/*
+ * #DE — divide by zero.
+ *
+ * If the self-test has deliberately triggered this vector, take the
+ * expected-fault path: record the vector and kill the current process
+ * (which will be the faulttest child).  Otherwise print the diagnostic
+ * and halt, as before.
+ *
+ * The frame argument is the top of the GPR save area, same layout as
+ * isr13_handler / isr14_handler.  #DE does not use it; it is present
+ * so the signature matches the stub's calling convention (isr0_stub
+ * sets rdi = rsp before the call).
+ */
+void isr0_handler(exception_frame_t *frame) {
+    (void)frame;
+    if (g_expect_fault == 0x00) fault_kill_current(0x00);
     vga_print("\n*** DIVIDE BY ZERO EXCEPTION (#DE) ***\n");
     while (1) __asm__ volatile("hlt");
 }
@@ -408,6 +456,8 @@ void isr8_handler(exception_frame_t *frame) {
 }
 
 void isr13_handler(exception_frame_t *frame) {
+    if (g_expect_fault == 0x0D) fault_kill_current(0x0D);
+
     uint64_t *raw = (uint64_t *)frame;
     uint64_t error_code = raw[EXC_OFF_ERROR_CODE];
     uint64_t fault_rip  = raw[EXC_OFF_RIP];
@@ -485,6 +535,8 @@ void isr13_handler(exception_frame_t *frame) {
 }
 
 void isr14_handler(exception_frame_t *frame) {
+    if (g_expect_fault == 0x0E) fault_kill_current(0x0E);
+
     uint64_t *raw = (uint64_t *)frame;
     uint64_t error_code = raw[EXC_OFF_ERROR_CODE];
     uint64_t fault_rip  = raw[EXC_OFF_RIP];
