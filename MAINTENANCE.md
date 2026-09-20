@@ -211,7 +211,7 @@ tradeoffs. Leave as-is; it's documented.
 
 **Status:** documented constraint; holds today
 **Effort:** n/a now; ~1 hour if a user-mode fault test is ever wanted
-**Introduced by:** 5a-i (tag `20260919K`)
+**Introduced by:** 5a-i (commit `f132903`)
 
 `fault_kill_current` (in `interrupts.c`) terminates the current process
 by calling `process_exit`. `process_exit` uses `exiting->entry_point >=
@@ -240,9 +240,9 @@ user-mode fault test exists or is planned.
 
 ### 3g. ~~`EFER.NXE` is not enabled~~ ✅
 
-**Status:** ✅ **DONE (tag `20260919N`).** `enable_nx()` in `kmain.c` now
-sets EFER.NXE (bit 11 of MSR `0xC0000080`) before `sti`, guarded by a
-CPUID.80000001H:EDX.NX check.  `test_vmm` now asserts on NXE rather
+**Status:** ✅ **DONE (commit `028da72`).** `enable_nx()` in `kmain.c`
+now sets EFER.NXE (bit 11 of MSR `0xC0000080`) before `sti`, guarded by
+a CPUID.80000001H:EDX.NX check.  `test_vmm` now asserts on NXE rather
 than printing it as an observation.  Verified end-to-end on single-drive
 under KVM: `NX Active: Yes`, `15 passed, 0 failed`, and the user shell's
 malloc test (option 3) still works with NXE on.
@@ -250,7 +250,7 @@ malloc test (option 3) still works with NXE on.
 Text below kept for history: it describes the state before the fix.
 
 ~~**Effort:** ~15 minutes to set the bit, ~1 hour to verify safely~~
-~~**Found by:** 5a-ii (`test_vmm`'s NXE assertion, tag `20260919L`)~~
+~~**Found by:** 5a-ii (`test_vmm`'s NXE assertion, commit `182c1ef`)~~
 
 ~~`vmm_map_page` and `vmm_map_page_in_cr3` write bit 63 of a PTE when
 called with the `PT_NX` flag, and `test_nx` confirms the bit lands in
@@ -330,7 +330,7 @@ software level.
 
 ### 3h. ~~The GDT lives in low memory~~ ✅
 
-**Status:** ✅ **DONE (tag `20260919O`).** `gdt_init` in `gdt.c` now
+**Status:** ✅ **DONE (commit `a3ee0d2`).** `gdt_init` in `gdt.c` now
 builds a kernel-owned GDT (`kernel_gdt[16]` in `.bss`) and `lgdt`s it
 before `idt_init` runs.  `gdt_set_tss` writes the TSS descriptor
 directly into `kernel_gdt[7..8]` instead of through `sgdt`.
@@ -348,7 +348,7 @@ Verified end-to-end on single-drive:
 Text below kept for history: it describes the state before the fix.
 
 ~~**Effort:** 2–3 hours to rebuild the GDT at a higher-half address~~
-~~**Found by:** 5a-ii (`test_gdt`'s base assertion, tag `20260919L`)~~
+~~**Found by:** 5a-ii (`test_gdt`'s base assertion, commit `182c1ef`)~~
 
 ~~`sgdt` reported the GDT base as `0x101DC`, inside the first 64 KB of
 physical memory:~~
@@ -604,7 +604,7 @@ coverage does not
 
 **5a-i and 5a-ii are done.  5a-iii is declined.**
 
-- **5a-i ✅ DONE (tag `20260919K`).**  Expected-fault protocol
+- **5a-i ✅ DONE (commit `f132903`).**  Expected-fault protocol
   (`g_expect_fault` / `g_fault_observed` / `fault_kill_current`) and
   a `selftest` command that runs the three exception tests.  Each
   test spawns a kernel-mode child whose entry point is a small
@@ -616,7 +616,8 @@ coverage does not
   the diagnostic-and-halt path.  Verified end-to-end on
   single-drive: `3 passed, 0 failed`.
 
-  This is the first time the exception handlers have been exercised  by anything.  Prior to this commit, a broken `isr14_stub` frame
+  This is the first time the exception handlers have been exercised
+  by anything.  Prior to this commit, a broken `isr14_stub` frame
   offset or a mis-wired IDT gate would only have been visible by
   typing `test` and reading the dump by hand.
 
@@ -630,7 +631,7 @@ coverage does not
   command takes.  User-mode faults are untested; see item 3f for the
   coupling that makes this non-trivial.
 
-- **5a-ii ✅ DONE (tag `20260919L`).**  Every non-fault test that
+- **5a-ii ✅ DONE (commit `182c1ef`).**  Every non-fault test that
   had an inline body in `handle_command` was refactored into a
   `static int test_xxx(void)` that returns `SELFTEST_PASS` or
   `SELFTEST_FAIL`.  The shell commands became one-line wrappers
@@ -739,9 +740,9 @@ prerequisite for the headless part of 5c.
 | 3c | Page table teardown | 2–3 hrs | Defer until multiple processes |
 | 3d | `heap_base` per-process | 15 min | Whenever |
 | 3e | TLB flush in VMM | — | Leave as-is, documented |
-| 3f | Self-test fault-trigger constraint | — | Documented (20260919K) |
-| 3g | `EFER.NXE` not enabled | 15 min + 1 hr verify | ✅ Done (20260919N) |
-| 3h | GDT lives in low memory | 2–3 hrs | ✅ Done (20260919O) |
+| 3f | Self-test fault-trigger constraint | — | Documented (f132903) |
+| 3g | `EFER.NXE` not enabled | 15 min + 1 hr verify | ✅ Done (028da72) |
+| 3h | GDT lives in low memory | 2–3 hrs | ✅ Done (a3ee0d2) |
 | 4a | Dead declarations | 15 min | ✅ Done (20260919F) |
 | 4b | Double-build in `run` | 15 min | ✅ Done (20260919F) |
 | 4c | Stale comments | 30 min | ✅ Done (20260919F) |
@@ -750,8 +751,8 @@ prerequisite for the headless part of 5c.
 | 4f | Print functions as leaf functions | — | Documented invariant |
 | 4g | Print-lock hold diagnostic | 30 min | Build when needed |
 | 4h | Comments that name functions by role | — | Ongoing discipline |
-| 5a-i | Self-test: exception path | 2 hrs | ✅ Done (20260919K) |
-| 5a-ii | Self-test: non-fault tests | 1.5 hrs | ✅ Done (20260919L) |
+| 5a-i | Self-test: exception path | 2 hrs | ✅ Done (f132903) |
+| 5a-ii | Self-test: non-fault tests | 1.5 hrs | ✅ Done (182c1ef) |
 | 5a-iii | `elfload` in selftest | — | Declined (see §5a) |
 | 5b | Boot-time self-test mode | 1 hr | Next |
 | 5c | `make test` target | 1 hr | After 5b |
