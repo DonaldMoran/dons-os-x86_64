@@ -37,6 +37,43 @@ static uint64_t pmm_next_high_page = 0;
 
 static uint64_t pages_by_type[PAGE_TYPE_COUNT] = {0};
 
+/*
+ * Save RFLAGS into *flags and disable interrupts.
+ * Restore with pmm_irq_restore(*flags).
+ *
+ * The PMM's allocator does a non-atomic test-and-set on the bitmap:
+ * bitmap_test(page) followed by bitmap_set(page). If a timer IRQ
+ * arrives between those two, and the IRQ handler itself allocates a
+ * page (timer_preempt_handler does not, but the scheduler it drives
+ * can dispatch a process whose next instruction is a syscall that
+ * does, and on some paths the handler itself may run preemptible
+ * code), the same page can be handed out twice. That produces silent
+ * cross-process aliasing: two PCBs' elf_page_list entries point at
+ * the same physical page, and when one process is reclaimed its
+ * pages are freed while the other is still using them.
+ *
+ * This bug class is exactly what produced the flaky, layout-dependent
+ * symptoms in the SYS_EXEC bring-up: a corrupted path string, a
+ * child that faults at RIP=0/1, and different behavior on every
+ * rebuild because the interrupt timing shifts with the code size.
+ *
+ * The fix is to disable interrupts across the entire critical
+ * section. The restore preserves whatever IF was on entry, so the
+ * allocator can be called from an IRQ context (IF=0 on entry) or
+ * from normal kernel code (IF=1 on entry).
+ */
+static inline uint64_t pmm_irq_save(void) {
+    uint64_t flags;
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(flags) : : "memory");
+    return flags;
+}
+
+static inline void pmm_irq_restore(uint64_t flags) {
+    if (flags & 0x200) {
+        __asm__ volatile("sti" ::: "memory");
+    }
+}
+
 static void bitmap_set(uint64_t page) {
     uint64_t byte = page / 8;
     uint8_t bit = page % 8;
@@ -312,10 +349,16 @@ uint64_t pmm_alloc_page(page_type_t type) {
     uint64_t max_pages = pmm_max_physical / PAGE_SIZE;
     if (max_pages > MAX_PAGES) max_pages = MAX_PAGES;
 
+    /* Interrupts off: the test-and-set on the bitmap below must be
+     * atomic with respect to any other allocation path. See the
+     * pmm_irq_save() comment for the failure mode. */
+    uint64_t flags = pmm_irq_save();
+    uint64_t result = 0;
+
     if (type == PAGE_USER_DATA || type == PAGE_USER_PAGE_TABLE) {
         if (pmm_high_start_page == 0 && pmm_high_end_page == 0) {
             serial_print("PMM: ERROR - No HIGH zone for user allocations\n");
-            return 0;
+            goto done;
         }
 
         for (uint64_t page = pmm_next_high_page; page >= pmm_high_start_page; page--) {
@@ -332,7 +375,8 @@ uint64_t pmm_alloc_page(page_type_t type) {
                 pages_by_type[PAGE_FREE]--;
                 pages_by_type[type]++;
 
-                return page * PAGE_SIZE;
+                result = page * PAGE_SIZE;
+                goto done;
             }
 
             if (page == pmm_high_start_page) break;
@@ -345,11 +389,10 @@ uint64_t pmm_alloc_page(page_type_t type) {
         serial_print_dec(pmm_free_pages);
         serial_print("\n");
         serial_unlock();
-        return 0;
     } else {
         if (pmm_low_start_page == 0 && pmm_low_end_page == 0) {
             serial_print("PMM: ERROR - No LOW zone for kernel/table allocations\n");
-            return 0;
+            goto done;
         }
 
         for (uint64_t page = pmm_next_low_page; page <= pmm_low_end_page; page++) {
@@ -372,7 +415,8 @@ uint64_t pmm_alloc_page(page_type_t type) {
                 pages_by_type[PAGE_FREE]--;
                 pages_by_type[type]++;
 
-                return phys;
+                result = phys;
+                goto done;
             }
 
             if (page == pmm_low_end_page) break;
@@ -385,8 +429,11 @@ uint64_t pmm_alloc_page(page_type_t type) {
         serial_print_dec(pmm_free_pages);
         serial_print("\n");
         serial_unlock();
-        return 0;
     }
+
+done:
+    pmm_irq_restore(flags);
+    return result;
 }
 
 void pmm_free_page(uint64_t phys_addr) {
@@ -395,12 +442,15 @@ void pmm_free_page(uint64_t phys_addr) {
     uint64_t page = phys_addr / PAGE_SIZE;
     if (page >= MAX_PAGES) return;
 
+    uint64_t flags = pmm_irq_save();
+
     if (!bitmap_test(page)) {
         serial_lock();
         serial_print("PMM: WARNING - Double free of page 0x");
         serial_print_hex(phys_addr);
         serial_print("\n");
         serial_unlock();
+        pmm_irq_restore(flags);
         return;
     }
 
@@ -427,6 +477,8 @@ void pmm_free_page(uint64_t phys_addr) {
             }
         }
     }
+
+    pmm_irq_restore(flags);
 }
 
 page_type_t pmm_get_page_type(uint64_t phys_addr) {
@@ -450,6 +502,8 @@ void pmm_reserve_page(uint64_t phys_addr) {
     uint64_t page = phys_addr / PAGE_SIZE;
     if (page >= MAX_PAGES) return;
 
+    uint64_t flags = pmm_irq_save();
+
     if (bitmap_test(page)) {
         page_type_t old_type = pmm_page_info[page].type;
         pmm_page_info[page].type = PAGE_RESERVED;
@@ -463,11 +517,15 @@ void pmm_reserve_page(uint64_t phys_addr) {
         pages_by_type[PAGE_FREE]--;
         pages_by_type[PAGE_RESERVED]++;
     }
+
+    pmm_irq_restore(flags);
 }
 
 void pmm_unreserve_page(uint64_t phys_addr) {
     uint64_t page = phys_addr / PAGE_SIZE;
     if (page >= MAX_PAGES) return;
+
+    uint64_t flags = pmm_irq_save();
 
     if (pmm_page_info[page].type == PAGE_RESERVED) {
         pmm_page_info[page].type = PAGE_FREE;
@@ -487,6 +545,8 @@ void pmm_unreserve_page(uint64_t phys_addr) {
             }
         }
     }
+
+    pmm_irq_restore(flags);
 }
 
 uint64_t pmm_get_free_pages(void) {

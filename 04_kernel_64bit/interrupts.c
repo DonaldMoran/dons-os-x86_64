@@ -22,7 +22,8 @@
 
 /* Boot fingerprint: dump the raw interrupt frame for the first few
    ticks so we can sanity-check the initial timer interceptions. */
-#define TIMER_BOOT_TRACE_TICKS 3
+// #define TIMER_BOOT_TRACE_TICKS 3
+#define TIMER_BOOT_TRACE_TICKS 0
 
 /*
  * Exception frame layout, as seen by C after the stub has pushed all GPRs:
@@ -427,31 +428,6 @@ void isr8_handler(exception_frame_t *frame) {
     vga_print("  RSP        : 0x"); vga_print_hex_cur(fault_rsp); vga_print("\n");
     vga_print("  SS         : 0x"); vga_print_hex_cur(fault_ss);  vga_print("\n");
 
-    {
-        struct __attribute__((packed)) {
-            uint16_t limit;
-            uint64_t base;
-        } gdt_ptr;
-        __asm__ volatile("sgdt %0" : "=m"(gdt_ptr));
-
-        uint64_t* gdt = (uint64_t*)gdt_ptr.base;
-        uint64_t tss_desc_low  = gdt[0x38 / 8];
-        uint64_t tss_desc_high = gdt[0x38 / 8 + 1];
-        uint64_t tss_base = ((tss_desc_low >> 16) & 0xFFFFFF)
-                          | (((tss_desc_low >> 56) & 0xFF) << 24)
-                          | ((tss_desc_high & 0xFFFFFFFF) << 32);
-
-        serial_lock();
-        serial_print("  TSS base   : 0x"); serial_print_hex(tss_base); serial_print("\n");
-        if (tss_base) {
-            uint64_t rsp0 = *(uint64_t*)(tss_base + 4);
-            uint64_t ist1 = *(uint64_t*)(tss_base + 36);   /* offset of ist1 */
-            serial_print("  TSS.RSP0   : 0x"); serial_print_hex(rsp0); serial_print("\n");
-            serial_print("  TSS.IST1   : 0x"); serial_print_hex(ist1); serial_print("\n");
-        }
-        serial_unlock();
-    }
-
     while (1) __asm__ volatile("hlt");
 }
 
@@ -477,29 +453,6 @@ void isr13_handler(exception_frame_t *frame) {
     vga_print("  Code Seg (CS): 0x"); vga_print_hex_cur(fault_cs);   vga_print("\n");
     vga_print("  Stack (RSP)  : 0x"); vga_print_hex_cur(fault_rsp);  vga_print("\n");
     vga_print("  Error Code   : 0x"); vga_print_hex_cur(error_code); vga_print("\n");
-
-    {
-        struct __attribute__((packed)) {
-            uint16_t limit;
-            uint64_t base;
-        } gdt_ptr;
-        __asm__ volatile("sgdt %0" : "=m"(gdt_ptr));
-
-        uint64_t* gdt = (uint64_t*)gdt_ptr.base;
-        uint64_t tss_desc_low  = gdt[0x38 / 8];
-        uint64_t tss_desc_high = gdt[0x38 / 8 + 1];
-        uint64_t tss_base = ((tss_desc_low >> 16) & 0xFFFFFF)
-                          | (((tss_desc_low >> 56) & 0xFF) << 24)
-                          | ((tss_desc_high & 0xFFFFFFFF) << 32);
-
-        serial_lock();
-        serial_print("  TSS base   : 0x"); serial_print_hex(tss_base); serial_print("\n");
-        if (tss_base) {
-            uint64_t rsp0 = *(uint64_t*)(tss_base + 4);
-            serial_print("  TSS.RSP0   : 0x"); serial_print_hex(rsp0); serial_print("\n");
-        }
-        serial_unlock();
-    }
 
     {
         extern pcb_t* process_get_current(void);

@@ -219,21 +219,104 @@ void vmm_dump_page_table(uint64_t virt) {
     serial_unlock();
 }
 
+/*
+ * Deep-clone a page table.
+ *
+ * The version this replaces copied the source PML4's entries verbatim
+ * into the new PML4. That shares every PDPT, PD, and PT between the
+ * source and the clone. When the caller later calls
+ * vmm_map_page_in_cr3 on the clone to map a user page, the walk
+ * reaches the shared leaf PT and overwrites the PTE — which is the
+ * same PT the source is using. Result: mapping a page for the clone
+ * *unmaps or remaps the same page in the source*.
+ *
+ * This is exactly what happened during SYS_EXEC bring-up: the child's
+ * elf_load_into_process and process_create mapped the child's ELF
+ * segments and user stack, and every one of those writes also
+ * replaced the parent shell's mappings at the same virtual addresses.
+ * The shell's code, .rodata, and user stack were silently replaced
+ * by the child's, which is why the shell's spawn string got corrupted
+ * and why the shell eventually faulted at RIP=0 or RIP=1 after
+ * sysret — it was executing the child's code with the child's stack.
+ *
+ * The fix is a deep copy: allocate fresh PDPT/PD/PT pages for every
+ * mapped PML4 entry below index 256, and copy the leaf PTEs verbatim
+ * (they still point at the same physical data pages, which is correct
+ * for shared kernel mappings and harmless for user mappings, since
+ * the child's elf_load_into_process overwrites the entries it cares
+ * about).
+ *
+ * PML4 entries 256..511 are shallow-copied. Those cover the HHDM
+ * (0xFFFF800000000000) and the kernel image (0xFFFFFFFF80000000).
+ * They are shared by design and are never remapped per-process, so
+ * sharing the PDPT/PD/PT is both correct and far cheaper than
+ * deep-copying ~130 MB of HHDM page tables.
+ */
 uint64_t vmm_clone_page_table(uint64_t src_cr3) {
     uint64_t new_pml4_phys = pmm_alloc_page_for_tables();
     if (!new_pml4_phys) return 0;
 
     uint64_t* src_pml4 = (uint64_t*)phys_to_virt(src_cr3);
     uint64_t* new_pml4 = (uint64_t*)phys_to_virt(new_pml4_phys);
-
     memset(new_pml4, 0, PAGE_SIZE);
 
     for (int i = 0; i < 512; i++) {
         if (i == RECURSIVE_PML4_INDEX) continue;
-        if (src_pml4[i] & PT_PRESENT) {
-            new_pml4[i] = src_pml4[i];
+
+        uint64_t src_pml4e = src_pml4[i];
+        if (!(src_pml4e & PT_PRESENT)) continue;
+
+        /* High-half entries (HHDM, kernel image) are shared. */
+        if (i >= 256) {
+            new_pml4[i] = src_pml4e;
+            continue;
         }
+
+        /* Low-half entries: deep-copy the whole hierarchy below. */
+        uint64_t new_pdpt_phys = pmm_alloc_page_for_tables();
+        if (!new_pdpt_phys) return 0;
+        uint64_t* src_pdpt = (uint64_t*)phys_to_virt(src_pml4e & ~0xFFFULL);
+        uint64_t* new_pdpt = (uint64_t*)phys_to_virt(new_pdpt_phys);
+        memset(new_pdpt, 0, PAGE_SIZE);
+
+        for (int j = 0; j < 512; j++) {
+            uint64_t src_pdpte = src_pdpt[j];
+            if (!(src_pdpte & PT_PRESENT)) continue;
+
+            uint64_t new_pd_phys = pmm_alloc_page_for_tables();
+            if (!new_pd_phys) return 0;
+            uint64_t* src_pd = (uint64_t*)phys_to_virt(src_pdpte & ~0xFFFULL);
+            uint64_t* new_pd = (uint64_t*)phys_to_virt(new_pd_phys);
+            memset(new_pd, 0, PAGE_SIZE);
+
+            for (int k = 0; k < 512; k++) {
+                uint64_t src_pde = src_pd[k];
+                if (!(src_pde & PT_PRESENT)) continue;
+
+                /* 2 MB huge page: copy verbatim. */
+                if (src_pde & 0x80) {
+                    new_pd[k] = src_pde;
+                    continue;
+                }
+
+                uint64_t new_pt_phys = pmm_alloc_page_for_tables();
+                if (!new_pt_phys) return 0;
+                uint64_t* src_pt = (uint64_t*)phys_to_virt(src_pde & ~0xFFFULL);
+                uint64_t* new_pt = (uint64_t*)phys_to_virt(new_pt_phys);
+
+                for (int m = 0; m < 512; m++) {
+                    new_pt[m] = src_pt[m];
+                }
+
+                new_pd[k] = new_pt_phys | (src_pde & 0xFFF);
+            }
+
+            new_pdpt[j] = new_pd_phys | (src_pdpte & 0xFFF);
+        }
+
+        new_pml4[i] = new_pdpt_phys | (src_pml4e & 0xFFF);
     }
+
     new_pml4[RECURSIVE_PML4_INDEX] = new_pml4_phys | PT_PRESENT | PT_WRITE;
     return new_pml4_phys;
 }

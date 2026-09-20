@@ -89,34 +89,6 @@ context_switch:
     jmp .skip_save
 
     ; --- RING-0 SAVE PATH ---
-    ;
-    ; Called when a kernel-mode process yields voluntarily. At this
-    ; point, the shell/process has called us through the normal C
-    ; ABI, so the live callee-saved registers are the ones the caller
-    ; expects to be preserved: rbp, rbx, r12, r13, r14, r15.
-    ;
-    ; They were pushed at function entry and are on the stack at:
-    ;   [rsp + 0x00] = r15
-    ;   [rsp + 0x08] = r14
-    ;   [rsp + 0x10] = r13
-    ;   [rsp + 0x18] = r12
-    ;   [rsp + 0x20] = rbx
-    ;   [rsp + 0x28] = rbp
-    ;   [rsp + 0x30] = caller's return address
-    ;
-    ; We MUST copy those live values into the PCB before building the
-    ; resume frame. If we don't, the frame is built from the PCB's
-    ; *stale* register values (whatever was last written by the timer
-    ; preemption handler or by process_create's initial frame — which
-    ; sets everything to zero). On resume, `pop rbp` restores 0, and
-    ; the very first `[rbp - N]` access in the resumed function faults
-    ; with CR2 = -N. That is exactly the #PF at kmain_shell_loop+0x10B
-    ; (`movzbl -0x2a(%rbp), %eax`) that motivated this fix.
-    ;
-    ; Caller-saved registers (rax, rcx, rdx, rsi, rdi, r8-r11) are
-    ; intentionally not saved: the C ABI lets context_switch clobber
-    ; them, so the caller has already spilled any live values across
-    ; the call.
 .ring0_save:
     ; Persist the live callee-saved registers into the PCB.
     mov rax, [rsp + 0x00]
@@ -169,88 +141,75 @@ context_switch:
     test r12, r12
     jz .restore_and_return
 
+    ; Load the incoming process's address space.
     mov rax, [r12 + 0x30]
     mov cr3, rax
-    mov rax, cr3
-    mov cr3, rax
-    nop
-    nop
-    nop
-    mov cr3, rax
 
-    mov rax, [r12 + 0x38]
-    cmp rax, 0xFFFFFFFF80000000
-    jae .kernel_task
-
-    ; --- User process path ---
-    mov rcx, [r12 + 0x38]
-    invlpg [rcx]
-    mov rcx, [r12 + 0x70]
-    invlpg [rcx]
-
-    mov rax, [r12 + 0x108]
-    mov rbx, [r12 + 0x100]
-    mov rcx, [r12 + 0x0F8]
-    mov rdx, [r12 + 0x0F0]
-    mov rbp, [r12 + 0x0D8]
-    mov r8,  [r12 + 0x0D0]
-    mov r9,  [r12 + 0x0C8]
-    mov r10, [r12 + 0x0C0]
-    mov r11, [r12 + 0x0B8]
-    mov r13, [r12 + 0x0A8]
-    mov r14, [r12 + 0x0A0]
-    mov r15, [r12 + 0x098]
-    mov rdi, [r12 + 0x0E0]
-    mov rsi, [r12 + 0x0E8]
-
-    push qword 0x2B
-    push qword [r12 + 0x70]
-    push qword 0x3202
-    push qword 0x33
-    push qword [r12 + 0x38]
-
-    mov r12, [r12 + 0x0B0]
-    iretq
-
-.kernel_task:
-    ; Frame validation: catch a corrupt iretq frame before it produces
-    ; an opaque kernel-mode #GP. The expected frame is a 20-slot block
-    ; at [r12 + 0x110], with rip at +0x78 and cs at +0x80. A healthy
-    ; kernel-mode frame has rip >= KERNEL_BASE and cs == 0x18. If
-    ; either check fails, emit a single marker byte on COM1 and halt.
+    ; Restore from the saved frame. This unified path replaces the
+    ; previous two-branch (user / kernel) dispatch.
     ;
-    ; This check costs two compares and two conditional branches per
-    ; switch. It is left in permanently: the failure mode it catches
-    ; (a corrupt resume frame producing a #GP on the iretq with no
-    ; indication of which slot was wrong) is otherwise very hard to
-    ; diagnose, and the checks are invisible on the healthy path.
+    ; The old code chose the resume path by comparing next->entry_point
+    ; against KERNEL_BASE. That works for the *first* dispatch of a
+    ; process, because process_create builds the frame with
+    ; entry_point in the RIP slot and CS=0x33 or 0x18. But it is wrong
+    ; for resuming a process that was preempted or blocked in kernel
+    ; mode: such a process has entry_point=0x8000000000 (a user
+    ; address) but its saved frame has CS=0x18 and a kernel RIP. The
+    ; old code would take the user branch and rebuild the frame from
+    ; entry_point / user_stack_top, silently restarting the process
+    ; at its _start as if it had just been created. That is what
+    ; produced the "shell restarts after waitpid returns" symptom.
+    ;
+    ; The fix is to trust the saved frame verbatim. process_create and
+    ; the two save paths above all build frames in the same 20-slot
+    ; layout: [0..14] GPRs, [15] RIP, [16] CS, [17] RFLAGS, [18] RSP,
+    ; [19] SS. The CS field distinguishes kernel (0x18) from user
+    ; (0x33) resumes. Only the validation of RIP differs by CS, and
+    ; only because a mismatch there is a strong indicator of frame
+    ; corruption.
     mov rsp, [r12 + 0x110]
 
-    mov rbx, [rsp + 0x78]               ; frame's rip
+    mov rbx, [rsp + 0x80]               ; saved CS
+    cmp rbx, 0x18
+    je .frame_cs_kernel
+    cmp rbx, 0x33
+    je .frame_cs_user
+
+    ; Unknown CS: emit 'C' and halt.
+    mov dx, 0x3F8
+    mov al, 'C'
+    out dx, al
+    mov al, 0x0A
+    out dx, al
+    hlt
+
+.frame_cs_kernel:
+    mov rbx, [rsp + 0x78]               ; saved RIP
     mov rcx, KERNEL_BASE
     cmp rbx, rcx
-    jae .frame_rip_ok
-
-    mov dx, 0x3F8                       ; COM1
-    mov al, 'R'                         ; rip out of range
-    out dx, al
-    mov al, 0x0A
-    out dx, al
-    hlt
-
-.frame_rip_ok:
-    mov rbx, [rsp + 0x80]               ; frame's cs
-    cmp rbx, 0x18
-    je .frame_cs_ok
-
+    jae .pop_frame
+    ; Kernel frame with user RIP: emit 'K' and halt.
     mov dx, 0x3F8
-    mov al, 'C'                         ; cs != 0x18
+    mov al, 'K'
     out dx, al
     mov al, 0x0A
     out dx, al
     hlt
 
-.frame_cs_ok:
+.frame_cs_user:
+    mov rbx, [rsp + 0x78]               ; saved RIP
+    mov rcx, KERNEL_BASE
+    cmp rbx, rcx
+    jb .pop_frame
+    ; User frame with kernel RIP: emit 'U' and halt.
+    mov dx, 0x3F8
+    mov al, 'U'
+    out dx, al
+    mov al, 0x0A
+    out dx, al
+    hlt
+
+.pop_frame:
     pop r15
     pop r14
     pop r13

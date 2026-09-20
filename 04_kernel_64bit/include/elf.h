@@ -19,7 +19,7 @@ typedef struct {
     uint16_t e_phnum;        // Program header table entry count
     uint16_t e_shentsize;    // Section header table entry size
     uint16_t e_shnum;        // Section header table entry count
-    uint16_t e_shstrndx;     // Section header string table index
+    uint16_t e_shstrndx;     // Section header table string table index
 } __attribute__((packed)) Elf64_Ehdr;
 
 // ELF64 program header
@@ -51,5 +51,17 @@ typedef struct {
 // Function prototypes
 void elf_load(const void* elf_data);
 void elf_add_page_to_pcb(pcb_t* pcb, uint64_t phys);
+
+/*
+ * Load an ELF64 image that is already resident in kernel memory into
+ * the address space of `pcb`.  Allocates and maps every page the
+ * LOAD segments need, copies file bytes in, zeroes the bss tail, and
+ * returns the ELF's entry point (0 on failure).
+ *
+ * The caller must have already created `pcb` with process_create and
+ * removed it from the ready queue; the caller must re-add it after
+ * setting pcb->entry_point to the returned value.
+ */
+uint64_t elf_load_into_process(pcb_t* pcb, const void* elf_data);
 
 #endif

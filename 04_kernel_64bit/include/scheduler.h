@@ -18,8 +18,4 @@ pcb_t* scheduler_get_current(void);
 void scheduler_set_current(pcb_t* proc);
 void scheduler_stats(void);
 
-// Shell process management
-void scheduler_set_shell_process(pcb_t* shell);
-pcb_t* scheduler_get_shell_process(void);
-
 #endif

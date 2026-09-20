@@ -4,9 +4,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <errno.h>
-
-/* Defined in arc2/syscalls.c. Fires SYS_REBOOT (kernel: hardware reset). */
-extern void sys_reboot(void);
+#include "donsdos.h"   /* spawn(), waitpid(), sys_reboot() */
 
 /* ============================================================
  * Helper: print the menu.
@@ -25,6 +23,7 @@ static void print_menu(void) {
     printf("  7. Large write test (4 KB round-trip)\n");
     printf("  8. List known files\n");
     printf("  9. Reboot\n");
+    printf("  A. Spawn 0:/HELLO.ELF (disk-loaded ELF)\n");
     printf("\n] ");
 }
 
@@ -89,7 +88,7 @@ static void test_malloc(void) {
 }
 
 /* ============================================================
- * Option 4 — FS round-trip. Writes USER2.TXT, reopens USER2.TXT.
+ * Option 4 — FS round-trip.
  * ============================================================ */
 static void test_fs_roundtrip(void) {
     printf("\n[FS TEST] step 1: open for write/create/truncate\n");
@@ -148,7 +147,7 @@ static void test_fs_roundtrip(void) {
 }
 
 /* ============================================================
- * Option 5 — persistence check on USER2.TXT.
+ * Option 5 — persistence check.
  * ============================================================ */
 static void test_persistence(void) {
     printf("\n[PERSIST TEST] Checking for USER2.TXT from a previous boot\n");
@@ -325,19 +324,13 @@ static void test_large_write(void) {
 
 /* ============================================================
  * Option 8 — list known files.
- *
- * There is no directory-iteration syscall yet, so we probe a
- * known set of names by attempting to open each one. This reports
- * the same information for the files this shell creates, and for
- * the two files shipped in test-files/.
- *
- * A real `ls` needs SYS_OPENDIR / SYS_READDIR / SYS_CLOSEDIR.
  * ============================================================ */
 static void test_list_files(void) {
     printf("\n[LIST] Known files on 0:/\n");
 
     const char* known[] = {
         "0:/HELLO-WORLD.TXT",
+        "0:/HELLO.ELF",
         "0:/USER.TXT",
         "0:/USER2.TXT",
         "0:/A.TXT",
@@ -377,17 +370,47 @@ static void test_list_files(void) {
 
 /* ============================================================
  * Option 9 — reboot.
- *
- * Calls SYS_REBOOT (25), which the kernel routes to
- * handle_reboot_sequence(): keyboard controller reset (0x64/0xFE),
- * ACPI reset port (0xCF9), then a triple-fault backstop. The
- * kernel path does not return; this shell will not resume.
  * ============================================================ */
 static void test_reboot(void) {
     printf("\n[REBOOT] Calling SYS_REBOOT...\n");
     sys_reboot();
-    /* Only reached if the kernel's reboot syscall failed to take effect. */
     printf("[REBOOT] syscall returned without resetting the machine.\n] ");
+}
+
+/* ============================================================
+ * Option A — spawn a disk-loaded ELF.
+ *
+ * Calls spawn("0:/HELLO.ELF"), which issues SYS_EXEC (8).  The
+ * kernel opens the file on the FAT volume, loads it as an ELF64,
+ * creates a process, and returns its pid.  We then block in
+ * waitpid(), which suspends us until HELLO.ELF exits and the
+ * kernel wakes us.  The child's output interleaves with ours on
+ * the shared console.
+ * ============================================================ */
+static void test_spawn(void) {
+    printf("\n[SPAWN TEST] spawn(\"0:/HELLO.ELF\")\n");
+
+    int pid = spawn("0:/HELLO.ELF");
+    if (pid < 0) {
+        printf("  spawn() returned %d (failed)\n", pid);
+        printf("  Is HELLO.ELF on the FAT image?\n");
+        printf("[SPAWN TEST] FAILED\n] ");
+        return;
+    }
+
+    printf("  spawn() returned pid=%d; waiting...\n", pid);
+
+    int status = 0;
+    int reaped = waitpid(pid, &status, 0);
+
+    printf("  child %d exited with status %d (waitpid returned %d)\n",
+           pid, status, reaped);
+
+    if (reaped == pid) {
+        printf("[SPAWN TEST] OK\n] ");
+    } else {
+        printf("[SPAWN TEST] UNEXPECTED (waitpid mismatch)\n] ");
+    }
 }
 
 /* ============================================================
@@ -416,6 +439,8 @@ int main(int argc, char** argv) {
                 case '7': test_large_write();  break;
                 case '8': test_list_files();   break;
                 case '9': test_reboot();       break;
+                case 'a':
+                case 'A': test_spawn();        break;
                 default:
                     break;
             }

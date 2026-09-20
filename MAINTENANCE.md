@@ -177,6 +177,18 @@ a PDPT, a PD, and a PT per clone, since `vmm_clone_page_table` appears
 to allocate a fresh tree). Repeated `selftest` runs in one boot will
 show the PMM's free count dropping by a few pages per run.
 
+**Interaction with v0.5.3 (the deep clone).** Since v0.5.3,
+`vmm_clone_page_table` performs a *deep* copy of the low-half page-table
+hierarchy: it allocates fresh PDPT/PD/PT pages at every level below the
+PML4 for PML4 entries 0..255. Each clone therefore owns more page-table
+pages than it did before v0.5.3 — a PML4 plus a handful of PDPT/PD/PTs
+per clone, rather than just a PML4. The leak per process is still small
+(a few pages) and is bounded by the 32-slot PCB pool, but the total
+leak across a full pool of dead-but-unreclaimed processes is larger than
+it was before the fix. The fix for this is the same as the fix for the
+underlying issue: walk the tree in `process_reclaim` and free the
+user-space portion.
+
 This is acceptable for now — the leak is small and bounded by the 32-slot
 PCB pool — but the "run selftest twice and compare" idempotency check
 that a reader might reach for will *fail* on the free-page count until
@@ -467,6 +479,146 @@ filed; no reduced test case).
 compiling `ff.c` with Clang. If all three bugs are gone, remove the
 GCC override. Until then, `FATFS_CC` stays.
 
+### 3j. ~~`SYS_EXEC` bring-up surfaced three latent memory-safety bugs~~ ✅
+
+**Status:** ✅ **DONE (v0.5.3).** All three are fixed. This entry is
+kept for history and to document the *specific symptom* each bug
+produced, because each symptom was subtle enough that a reader who
+sees it recur will want the fingerprint.
+
+**Effort:** each was a small fix, but collectively this was a multi-day
+debugging session because the three bugs were entangled and each one's
+symptom masked the others.
+
+#### Bug A — PMM allocator reentrancy
+
+**Symptom:** `sys_exec`'s path-string argument arrived at the kernel
+*corrupted*, with individual bytes replaced by values that depended on
+kernel layout. The corruption varied between rebuilds. Early in the
+session this looked like a compiler bug or a `safe_copy_from_user`
+issue; it was neither.
+
+**Root cause:** `pmm_alloc_page` did a non-atomic read-modify-write on
+the shared bitmap:
+
+```c
+if (!bitmap_test(page)) {   // read
+    bitmap_set(page);       // write
+    return page * PAGE_SIZE;
+}
+```
+
+Between the read and the write, a timer IRQ could fire. If the timer's
+handler (or the process it dispatched) also called `pmm_alloc_page`,
+the second call would see the same page as free, mark it used, and
+return it. Two callers would then own the same physical page. When one
+of them was later freed, the other's data was silently lost.
+
+**Fix:** wrap the entire critical section in `cli`/`sti` in
+`pmm_alloc_page`, `pmm_free_page`, `pmm_reserve_page`, and
+`pmm_unreserve_page`. Use `pushfq`/`pop` to save and restore the
+caller's IF so the allocator remains callable from IRQ context (where
+IF is already clear) as well as from normal kernel code.
+
+**Note on SMP:** `cli`/`sti` is a uniprocessor fix. On SMP this would
+need a spinlock instead. The kernel is currently single-core.
+
+#### Bug B — page-table aliasing in `vmm_clone_page_table`
+
+**Symptom:** the user shell's `.text`, `.rodata`, and user stack were
+silently replaced by the child process's contents. The shell would
+start executing the child's code with the child's stack. Symptoms
+included user-mode `#PF` at RIP=0 and RIP=1, "hello world" banner
+prints appearing in the shell's own output, and the shell's
+`spawn("0:/HELLO.ELF")` argument being read as the child's `.rodata`
+bytes.
+
+**Root cause:** `vmm_clone_page_table` copied the source PML4's
+entries into the new PML4 verbatim. That shares every PDPT, PD, and PT
+between parent and child. Any subsequent `vmm_map_page_in_cr3` on the
+child walked the shared leaf PT and overwrote the *parent's* PTE. So
+mapping the child's ELF segments or user stack also remapped the
+parent's code, `.rodata`, and stack.
+
+**Fix:** deep-copy the low-half page-table hierarchy (PML4 entries
+0..255), allocating fresh PDPT/PD/PT pages at each level. Copy the
+leaf PTEs verbatim — they still point at the same physical data pages,
+which is correct for shared kernel mappings and harmless for user
+mappings because the child's `elf_load_into_process` overwrites the
+entries it cares about. PML4 entries 256..511 (HHDM and kernel) are
+shallow-copied: they are shared by design and are never remapped
+per-process.
+
+**Note:** with the deep copy in place, each process owns its full
+low-half page-table hierarchy. The page-table teardown story in §3c
+now needs to walk and free these tables, not just the leaf data pages.
+Each clone is currently a PML4 + a few PDPT/PD/PTs, so the leak is
+slightly larger than it was before v0.5.3 — still bounded by the
+32-slot PCB pool.
+
+#### Bug C — `context_switch` resumed processes by `entry_point`
+
+**Symptom:** after `waitpid` returned, the user shell *restarted from
+its entry point* instead of resuming where it had blocked. The restart
+cleared `.bss`, reinitialized newlib, and re-entered `main`. Newlib's
+global state was not designed to survive a second initialization, so
+`printf` misbehaved for some format strings — the shell accepted `A`
+and `9` (which use the syscall path directly) but ignored `1` (which
+goes through newlib's `printf`).
+
+**Root cause:** the resume side of `context_switch` chose between the
+user and kernel resume paths by comparing `next->entry_point` against
+`KERNEL_BASE`:
+
+```asm
+    mov rax, [r12 + 0x38]              ; next->entry_point
+    cmp rax, 0xFFFFFFFF80000000
+    jae .kernel_task
+    ; --- User process path ---
+    ; rebuild iretq frame from entry_point and user_stack_top
+```
+
+This is correct for the *first* dispatch of a fresh process, because
+`process_create` builds the frame with `entry_point` in the RIP slot.
+But it is wrong for resuming a process that was preempted or blocked
+in kernel mode: such a process has `entry_point = 0x8000000000` (a
+user address) but its saved frame has `CS = 0x18` and a kernel RIP.
+The old code took the user branch and *rebuilt* the frame from
+`entry_point` and `user_stack_top`, silently restarting the process
+at `_start`.
+
+**Fix:** the resume side now trusts the saved frame verbatim and
+chooses the validation rule from the frame's own CS:
+
+```asm
+    mov rsp, [r12 + 0x110]
+    mov rbx, [rsp + 0x80]               ; saved CS
+    cmp rbx, 0x18
+    je .frame_cs_kernel
+    cmp rbx, 0x33
+    je .frame_cs_user
+    ; unknown CS: emit 'C' and halt
+.frame_cs_kernel:
+    ; RIP must be >= KERNEL_BASE
+.frame_cs_user:
+    ; RIP must be <  KERNEL_BASE
+.pop_frame:
+    ; pop 15 GPRs, iretq
+```
+
+This handles all three cases — fresh-start, preempted-user, and
+preempted-kernel — with one code path. The diagnostic marker bytes
+('C' for bad CS, 'K' for kernel-frame-with-user-RIP, 'U' for
+user-frame-with-kernel-RIP) go to COM1 and are documented in the
+`.skip_save` comment block.
+
+**Related:** the earlier `mov r12, [r12 + 0x0B0]` register-clobber
+bug in the same file was fixed in the same session. The user path used
+to load `r12` from the PCB *before* building the iretq frame, which
+destroyed the PCB pointer before the two `push [r12 + offset]` reads
+that followed. Fixed by reordering the loads so `r12` is clobbered
+only after the frame is complete.
+
 ---
 
 ## 4. Code hygiene
@@ -687,7 +839,7 @@ coverage does not
 
 ### 5a. Kernel-shell self-test
 
-**5a-i and 5a-ii are done.  5a-iii is declined.**
+**5a-i and 5a-ii are done.  5a-iii is declined.  5a-iv is done.**
 
 - **5a-i ✅ DONE (commit `f132903`).**  Expected-fault protocol
   (`g_expect_fault` / `g_fault_observed` / `fault_kill_current`) and
@@ -784,20 +936,18 @@ coverage does not
   kernel text — which tests a different scenario than `usershell`
   exercises, and is not worth building just for `selftest`.
 
-### 5a-iv. Multi-file delete test (option 6) ✅
+- **5a-iv ✅ DONE (v0.5.2).** Multi-file delete test (user shell
+  option 6). The user shell's multi-file test now exercises the full
+  file lifecycle: create 3 files, write to each, close, reopen, read
+  back, close, `unlink`, then confirm each file is gone by attempting
+  to reopen it. Option 6 passes end to end.
 
-**Status:** ✅ **DONE (v0.5.2).** The user shell's multi-file test
-now exercises the full file lifecycle: create 3 files, write to
-each, close, reopen, read back, close, `unlink`, then confirm each
-file is gone by attempting to reopen it.  Option 6 passes end to
-end.
+  This requires `SYS_UNLINK` (syscall #7) and the userland `unlink()`
+  shim. Both were added in v0.5.2.
 
-This requires `SYS_UNLINK` (syscall #7) and the userland `unlink()`
-shim.  Both were added in v0.5.2.
-
-**Interaction with 3i.** This test surfaced the Clang 22.1.8
-miscompile at `-O1`.  With `ff.c` at `-O1`, the delete phase hangs;
-with `ff.o` compiled by the cross-GCC, it passes.
+  **Interaction with 3i.** This test surfaced the Clang 22.1.8
+  miscompile at `-O1`. With `ff.c` at `-O1`, the delete phase hangs;
+  with `ff.o` compiled by the cross-GCC, it passes.
 
 ### 5b. Boot-time self-test mode
 
@@ -815,12 +965,68 @@ the serial output, and reports pass/fail based on the output. Automatable
 with a serial-to-file and a grep. Would let you catch regressions without
 watching the boot.
 
+### 5d. Spawn regression test (new, from v0.5.3)
+
+**Status:** not yet built
+**Effort:** ~1 hour, once 5a-i's infrastructure is understood
+**Priority:** after 5b and 5c, but before the next feature
+
+`SYS_EXEC` and `SYS_WAITPID` are now the newest and most complex
+features in the tree. They exercise three separate subsystems
+(`pmm_alloc_page`, `vmm_clone_page_table`, `context_switch`) that all
+had memory-safety bugs during bring-up, and the bugs were subtle
+enough that they manifested only under specific timing. A future
+regression in any of the three would be caught by the shell option A
+promptly, but only if someone runs it.
+
+A test that runs the same path from the self-test would give a
+deterministic signal. The shape:
+
+- A kernel-mode child process whose entry point calls `sys_exec` on
+  a known ELF (`0:/HELLO.ELF`), reads the returned pid, and then
+  blocks in `sys_waitpid` on that pid.
+- The child's exit status is 0 if the spawn+wait sequence completes
+  and the reaped pid matches, non-zero otherwise.
+- The kernel shell's `selftest` command runs the child, waits for it
+  to exit, and reads back the status.
+
+**The complication:** `sys_exec` spawns a *user-mode* process, and
+user-mode processes halt the CPU when they exit (see 5a-iii). So the
+inner spawned child cannot be the one whose exit status the test
+reads. The outer child (the one that called `sys_exec`) must be
+kernel-mode, so its exit resumes the kernel shell. This is the same
+"expected-fault triggers must be kernel-mode" constraint as item 3f,
+in a different guise.
+
+Concretely, the test would need:
+
+1. A kernel-mode child whose entry point runs the spawn+wait+assert
+   sequence and returns 0 or 1.
+2. A way to communicate "this child is a self-test, don't halt on
+   its inner user-mode child's exit." The mechanism for the inner
+   child's exit is the standard parent-wake path: `process_exit`
+   wakes the parent and the parent's `sys_waitpid` returns. Only the
+   *outer* child's exit is special.
+3. `HELLO.ELF` present on the mounted FAT volume. This is guaranteed
+   in the single-drive build (the Makefile `mcopy`s it in), but not
+   necessarily in the dual-drive build unless the `fat.img` in the
+   tree has it. Guard the test accordingly, or make it conditional
+   on the storage configuration.
+
+This is worth building. It closes the loop on the three fixes in §3j
+by making them regression-detectable. It is not blocking any feature
+work, but it should be done before the next feature lands.
+
 ### When to do the rest
 
 5b and 5c build on 5a-i and 5a-ii.  Neither is blocked by the remaining
 items on this list.  They can be done in either order; 5c is more
 valuable because it enables `make test` in a loop, but 5b is a
 prerequisite for the headless part of 5c.
+
+5d depends on 5a-i (the expected-fault protocol's infrastructure) but
+is otherwise independent. It is the highest-value test to add next,
+because it covers the newest and least-exercised feature.
 
 ---
 
@@ -839,6 +1045,9 @@ prerequisite for the headless part of 5c.
 | 3g | `EFER.NXE` not enabled | 15 min + 1 hr verify | ✅ Done (028da72) |
 | 3h | GDT lives in low memory | 2–3 hrs | ✅ Done (a3ee0d2) |
 | 3i | Clang/LLD miscompile ff.c at all -O levels | — | ✅ Worked around (v0.5.2: cross-GCC for ff.o) |
+| 3j-a | PMM allocator reentrancy | 30 min | ✅ Done (v0.5.3) |
+| 3j-b | `vmm_clone_page_table` shallow copy | 1 hr | ✅ Done (v0.5.3) |
+| 3j-c | `context_switch` resume-by-entry-point | 1 hr | ✅ Done (v0.5.3) |
 | 4a | Dead declarations | 15 min | ✅ Done (20260919F) |
 | 4b | Double-build in `run` | 15 min | ✅ Done (20260919F) |
 | 4c | Stale comments | 30 min | ✅ Done (20260919F) |
@@ -853,6 +1062,7 @@ prerequisite for the headless part of 5c.
 | 5a-iv | Multi-file delete test (option 6) | — | ✅ Done (v0.5.2) |
 | 5b | Boot-time self-test mode | 1 hr | Next |
 | 5c | `make test` target | 1 hr | After 5b |
+| 5d | Spawn regression test | 1 hr | Before next feature |
 
 The Clang/LLD workaround (item 3i) is temporary and depends on the
 upstream fixes landing. It is not a finding in this project's code, but
@@ -867,10 +1077,24 @@ architectural.  The natural next steps, in order of value:
    self-test work.  5b runs the same 17 tests at boot and halts; 5c
    wraps 5b in a headless QEMU invocation and greps the serial log
    for the summary line.  Do these before starting new features.
-2. **The ring buffer (4e)** — the correct long-term design for the
+2. **A spawn regression test (5d)** — `SYS_EXEC` and `SYS_WAITPID`
+   are the newest and most complex features in the tree. A
+   kernel-mode self-test child that opens `0:/HELLO.ELF`, spawns it,
+   waits for it, and asserts exit status 0 would catch future
+   regressions in `vmm_clone_page_table`, `pmm_alloc_page`, or
+   `context_switch` before they reach the user shell.
+3. **The ring buffer (4e)** — the correct long-term design for the
    print path.  Do this before the tty subsystem lands.
-3. **`sys_exec`** — the next feature milestone (user programs from
-   disk).  Not on this list because it's a feature, not maintenance.
+4. **The ELF-loader `PT_NX` follow-up (§3g)** — mark non-executable
+   segments (data, BSS, user stack) as `PT_NX`.  With `EFER.NXE` on
+   since v0.5.1 and the deep `vmm_clone_page_table` in place since
+   v0.5.3, this is now a small, safe change.
+5. **`sys_exec` composition into a real shell** — `SYS_EXEC` and
+   `SYS_WAITPID` give the kernel a working "run a program and wait
+   for it" primitive, but the user shell's menu is still a fixed
+   list.  A real shell would take a command name, `spawn` the
+   matching ELF, and `waitpid` on it.  This is the next feature
+   milestone, not maintenance, and belongs in `ROADMAP.md`.
 
 ---
 
@@ -893,4 +1117,4 @@ is to keep the list of "things we know we're wrong about" honest and short.
 Feature work goes in `ROADMAP.md`. Capability tracking goes in
 `OSDev_Checklist.md`. Debt and maintenance go here.
 
-*Last Updated: September 2026 (v0.5.2)*
+*Last Updated: September 2026 (v0.5.3)*

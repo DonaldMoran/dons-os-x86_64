@@ -1,7 +1,7 @@
 AS := nasm
 
 .PHONY: all clean run run-log run-debug run-verbose run-headless run-kvm run-telnet \
-        run-single run-kvm-single watch-serial clean-logs
+        run-single run-kvm-single watch-serial clean-logs hello-elf
 
 all: boot.bin stage2.bin hdd.img
 
@@ -10,6 +10,9 @@ all: boot.bin stage2.bin hdd.img
 # ---------------------------------------------------------
 SINGLE_DRIVE_LBA := 2048
 DISK_SECTORS     := 40960
+
+# Path to the standalone user program built by the userland Makefile.
+HELLO_ELF := ../04_kernel_64bit/userland/newlib/apps/hello.elf
 
 # ---------------------------------------------------------
 # Build targets
@@ -20,10 +23,12 @@ boot.bin: boot.asm
 stage2.bin: stage2.asm
 	$(AS) -f bin stage2.asm -o stage2.bin
 
+# Build the disk-loaded hello.elf. Delegates to the userland Makefile
+# so this Makefile does not need to know how a user program is built.
+hello-elf:
+	$(MAKE) -C ../04_kernel_64bit/userland/newlib hello
+
 # Dual-drive image: hdd.img (boot chain + kernel) + fat.img (slave).
-# fat.img is a committed binary in the tree. Rebuild it on the host with
-#   mkfs.vfat -F 16 -n DONSOS fat.img
-# and populate with mcopy as needed.
 hdd.img: boot.bin stage2.bin ../04_kernel_64bit/kernel.bin
 	rm -f hdd.img
 	qemu-img create -f raw hdd.img 20M
@@ -32,8 +37,9 @@ hdd.img: boot.bin stage2.bin ../04_kernel_64bit/kernel.bin
 	dd if=../04_kernel_64bit/kernel.bin of=hdd.img bs=512 seek=128 conv=notrunc
 
 # Single-drive image: boot chain + kernel + FAT16 partition at LBA 2048.
-# Test files are copied from test-files/ via mcopy.
-hdd-single.img: boot.bin stage2.bin ../04_kernel_64bit/kernel.bin
+# The test-files/ directory is copied by mcopy, and HELLO.ELF is copied
+# from the userland build output.
+hdd-single.img: boot.bin stage2.bin ../04_kernel_64bit/kernel.bin hello-elf
 	rm -f hdd-single.img
 	qemu-img create -f raw hdd-single.img 20M
 	dd if=boot.bin of=hdd-single.img conv=notrunc
@@ -47,6 +53,15 @@ hdd-single.img: boot.bin stage2.bin ../04_kernel_64bit/kernel.bin
 	        mcopy -i hdd-single.img@@$$(( $(SINGLE_DRIVE_LBA) * 512 )) "$$f" ::/ ; \
 	    fi \
 	done
+	@if [ -f "$(HELLO_ELF)" ]; then \
+	    echo "mcopy $(HELLO_ELF) -> ::/HELLO.ELF"; \
+	    mcopy -i hdd-single.img@@$$(( $(SINGLE_DRIVE_LBA) * 512 )) \
+	        "$(HELLO_ELF)" ::/HELLO.ELF ; \
+	else \
+	    echo "WARN: $(HELLO_ELF) not found; HELLO.ELF will be missing from the image"; \
+	fi
+	@echo "--- FAT partition contents (hdd-single.img) ---"
+	@mdir -i hdd-single.img@@$$(( $(SINGLE_DRIVE_LBA) * 512 )) ::/ || true
 	@echo "--- verifying FAT boot sector at LBA $(SINGLE_DRIVE_LBA) ---"
 	@dd if=hdd-single.img bs=512 skip=$(SINGLE_DRIVE_LBA) count=1 2>/dev/null | \
 	    xxd | head -2
@@ -69,15 +84,12 @@ run-single: hdd-single.img
 		-drive file=hdd-single.img,format=raw,if=ide,index=0 \
 		-serial stdio -display sdl -monitor none
 
-# Serial output to file
 run-log:
 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial file:serial.log -display sdl
 
-# GDB server (port 1234)
 run-debug:
 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -display sdl -s -S
 
-# Full debug with logging
 run-verbose:
 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw \
 		-serial stdio \
@@ -86,11 +98,9 @@ run-verbose:
 		-no-reboot -no-shutdown \
 		-D qemu_debug.log
 
-# Headless
 run-headless:
 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial stdio -nographic -monitor none
 
-# KVM acceleration
 run-kvm:
 	qemu-system-x86_64 -drive file=hdd.img,format=raw,if=ide,index=0 \
 		-drive file=fat.img,format=raw,if=ide,index=1 \
@@ -106,11 +116,9 @@ run-kvm-single: hdd-single.img
 		-enable-kvm \
 		-cpu host
 
-# Telnet serial
 run-telnet:
 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw -serial telnet::4444,server,nowait -display sdl
 
-# Legacy debug targets
 log:
 	qemu-system-x86_64 -cpu max -drive file=hdd.img,format=raw \
 		-d int,cpu_reset,guest_errors,unimp,page \

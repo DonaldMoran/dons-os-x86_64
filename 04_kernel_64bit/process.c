@@ -110,6 +110,9 @@ static void process_initialize_pcb(pcb_t* pcb) {
     pcb->elf_page_list = NULL;
     pcb->elf_num_pages = 0;
     pcb->kernel_stack_slot = KERNEL_STACK_SLOT_NONE;
+    pcb->parent_pid = 0;
+    pcb->exit_status = 0;
+    pcb->wait_pid = 0;
     process_count++;
 }
 
@@ -286,15 +289,53 @@ pcb_t* process_find_by_pid(uint64_t pid) {
  * Waking it from irq1 causes it to resume at the same time as the
  * user shell, which is how the earlier interleaved-banner bug
  * happened. The shell is resumed only by process_exit's fallback.
+ *
+ * Processes blocked in waitpid are also skipped: they are waiting
+ * for a child, not for a key.  The child's process_exit wakes them.
  */
 void process_wake_all_blocked(void) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (&pcb_pool[i] == g_kernel_shell_pcb) continue;
-        if (pcb_pool[i].state == PROC_STATE_BLOCKED) {
+        if (pcb_pool[i].state == PROC_STATE_BLOCKED &&
+            pcb_pool[i].block_kind == BLOCK_KIND_NONE) {
             pcb_pool[i].state = PROC_STATE_READY;
             scheduler_ready_queue_add(&pcb_pool[i]);
         }
     }
+}
+
+/*
+ * Wake the parent of `child` if it is blocked in waitpid on this
+ * child, or on any child (wait_pid == (uint64_t)-1).
+ *
+ * Called from process_exit after the child has been marked ZOMBIE
+ * and removed from the ready queue, and before the scheduler picks
+ * the next process.  The parent must already be in
+ * PROC_STATE_BLOCKED with block_kind == BLOCK_KIND_WAITPID.
+ *
+ * Returns the parent PCB if it was woken (and re-added to the ready
+ * queue), or NULL if the parent was not blocked on this child.
+ */
+pcb_t* process_wake_parent_if_waiting(pcb_t* child) {
+    if (!child || child->parent_pid == 0) return NULL;
+
+    pcb_t* parent = process_find_by_pid(child->parent_pid);
+    if (!parent) return NULL;
+    if (parent->state != PROC_STATE_BLOCKED) return NULL;
+    if (parent->block_kind != BLOCK_KIND_WAITPID) return NULL;
+
+    /* Match: parent->wait_pid == child->pid, or == (uint64_t)-1
+       (wait for any child). */
+    if (parent->wait_pid != (uint64_t)-1 &&
+        parent->wait_pid != child->pid) {
+        return NULL;
+    }
+
+    parent->state = PROC_STATE_READY;
+    parent->block_kind = BLOCK_KIND_NONE;
+    parent->wait_pid = 0;
+    scheduler_ready_queue_add(parent);
+    return parent;
 }
 
 void process_dump_all(void) {
@@ -320,6 +361,7 @@ void process_dump_all(void) {
                 case PROC_STATE_READY: state_str = "READY"; break;
                 case PROC_STATE_RUNNING: state_str = "RUNNING"; break;
                 case PROC_STATE_BLOCKED: state_str = "BLOCKED"; break;
+                case PROC_STATE_ZOMBIE: state_str = "ZOMBIE"; break;
                 case PROC_STATE_TERMINATED: state_str = "TERMINATED"; break;
                 default: state_str = "UNKNOWN"; break;
             }
