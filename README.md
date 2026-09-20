@@ -18,7 +18,7 @@ Related documents:
 - **03_boot_64bit** — PAE paging, PML4/PDPT/PD/PT, IA32_EFER.LME, long‑mode entry  
 
 ### Kernel Development
-- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, kernel shell, heap allocator, system calls, ELF loader, process system, preemptive scheduler, blocking I/O, ATA PIO driver, FatFs integration, GDT/TSS diagnostics
+- **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, kernel shell, heap allocator with validator and stress test, system calls, ELF loader, process system, preemptive scheduler, blocking I/O, ATA PIO driver, FatFs integration, GDT/TSS diagnostics
 - **04_kernel_64bit/userland/newlib** — Userland C library (newlib 4.x), syscall shims, `crt0`, reentrancy support, and the user shell application
 - **04_kernel_64bit/fatfs** — Vendored FatFs R0.15 plus the `diskio.c` shim that maps FatFs onto the ATA PIO driver
 - **04_kernel_64bit/include/fat_config.h** — The single compile-time switch that selects dual-drive vs single-drive storage
@@ -538,6 +538,12 @@ This project is designed to be:
   - **Staging ceiling raised** from 176 KB to 448 KB by adding PASS 4–7 in `stage2.asm`.
   - **Reboot flushes file handles.**  The user shell's reboot path flushes open file handles before the hardware reset; option 9 added.
   - **MAINTENANCE.md updated throughout.**  No open findings remain.  Sections 5b (boot-time self-test mode) and 5c (make test) deferred with the conditions that would make them worth revisiting.
+  - `v0.5.2` ⭐ NEW — **Heap rewrite and validator; LLD 22.1.8 workaround.**
+  - **heap.c rewritten.** `heap_extend` now returns the start of the newly mapped region and the caller places a single free block covering the entire region. The previous version placed the new block at `heap_brk - requested_size`, which lost up to `PAGE_SIZE - 1` bytes per extension and put blocks at the wrong end of the mapped range. Blocks are maintained in address order and coalesced on free.
+  - **`heap_header_t` padded to 48 bytes.** Payloads are now 16-aligned when the allocation size is a multiple of `HEAP_ALIGNMENT`. newlib's `malloc` is documented to return 16-aligned pointers on x86-64; a 40-byte header made payload addresses alternate between 8- and 16-aligned.
+  - **`heap_validate()` and `heap_stress()`.** `heap_validate` walks the block list and checks every invariant, including that the last block's end equals `heap_brk`. `heap_stress` runs 4096 operations across 512 slots with per-block patterns; the run grows the heap from 1 MB to ~4.15 MB (multiple extensions) and validates intact with zero leak.
+  - **`heapcheck` and `heapstress` shell commands.** Both also added to `selftest`. Test count 17/17.
+  - **LLD 22.1.8 workaround.** At `-O2`, linking `kernel.elf` produces truncated instructions in `check_fs` and `move_window`; the standalone object is correct. `fatfs/ff.o` is compiled at `-O1`. Bug filed upstream; see `LLD_BUG_REPORT.md`.
   
   ---
 
@@ -701,6 +707,7 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - **Page tables are not freed on process exit.** `process_exit` reclaims the process's PCB slot and its ELF/user-stack pages, but the process's page tables (cr3) leak. This is a few pages per process. The teardown is deferred; it requires walking the page tables and freeing the user-space portion without touching shared kernel mappings.
 - **The keyboard buffer is shared.** Multiple shells reading from fd 0 will compete for bytes. Each keystroke goes to whichever blocked process the scheduler picks first. A per-process tty or a console-focus mechanism would be required to make multiple shells usable side by side.
 - **`sys_brk`'s `heap_base` is a single constant.** Each process's heap starts at the same *virtual* address (`0x8000200000`) and grows in its own address space (different `cr3`), so there is no address conflict. The shared constant is a code-cleanliness issue, not a functional one.
+- **`fatfs/ff.o` is compiled at `-O1`.** At `-O2`, linking `kernel.elf` with `ld.lld` 22.1.8 produces truncated instructions in `check_fs` and `move_window`; the standalone object file is correct, so this is a link-time issue, not a code-generation one. The `-O1` override in `04_kernel_64bit/Makefile` avoids it. Filed upstream; see `LLD_BUG_REPORT.md`. Remove the override when LLD is fixed.
 - **`vmm_map_page_in_cr3` does not flush the TLB.** Callers must `invlpg` after mapping if the address may have a stale translation. `sys_brk` does this; new callers should too.
 - **User programs are still embedded in the kernel ELF.** They are not loaded from the FAT volume. Loading programs from disk is the next storage milestone, and requires a `sys_exec`-style syscall.
 - **Single-drive vs dual-drive is a build-time choice.** One kernel binary cannot serve both layouts. The `FAT_CONFIG` variable selects which layout the kernel expects; running the wrong image under the wrong kernel will fail to mount FatFs.

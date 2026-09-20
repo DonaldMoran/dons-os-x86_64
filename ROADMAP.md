@@ -539,6 +539,30 @@ Boot chain is complete and stable.
 - Loading user programs from disk (`sys_exec`)
 - Boot-time self-test mode and `make test` (deferred; see `MAINTENANCE.md` §5b–5c)
 
+## ⭐ v0.5.2 — Heap Rewrite and Validator (September 2026) ⭐ NEW
+
+**What was accomplished:**
+- `heap_extend` rewritten to place new blocks at the start of the newly mapped region. The previous version placed them at `heap_brk - requested_size`, which lost up to `PAGE_SIZE - 1` bytes per extension and put blocks at the wrong end of the mapped range. See the new `heap.c`.
+- `heap_header_t` padded from 40 to 48 bytes so payloads are 16-aligned when the allocation size is a multiple of `HEAP_ALIGNMENT`.
+- `heap_validate()` walks the block list and checks every invariant, including that the last block's end equals `heap_brk`. The old implementation violated that invariant on every extension.
+- `heap_stress()` runs 4096 operations across 512 slots with per-block patterns, then validates. The run grows the heap from 1 MB to ~4.15 MB and reports zero leak with the heap intact.
+- `heapcheck` and `heapstress` kernel shell commands; both also run from `selftest`.
+- **LLD 22.1.8 workaround.** At `-O2`, linking `kernel.elf` with `ld.lld` 22.1.8 produces truncated instructions in `check_fs` and `move_window`. The standalone object file is correct, so the truncation happens at link time. `fatfs/ff.o` is compiled at `-O1` to avoid it. Bug filed upstream; see `LLD_BUG_REPORT.md` in the repo root.
+
+**Key learnings:**
+- A heap allocator without a validator is a heap allocator you cannot trust. The `heap_validate` invariant that the last block's end must equal `heap_brk` is what would have caught the old extension bug immediately, and it is what proves the new code is correct.
+- The `heap_stress` test must be sized to actually exceed the initial heap. The first version allocated only ~256 KB and never forced an extension; the size constants were wrong. The version in the tree allocates several megabytes and forces multiple extensions.
+- A link-time truncation bug is much harder to diagnose than a compiler bug. The two look identical in a disassembly of the linked binary; they are distinguished by compiling the same source standalone and comparing. `LLD_BUG_REPORT.md` documents the reproducer.
+- A Makefile without header dependency tracking turns every header change into a two-step rebuild. `make clean` is required after `heap.h` changes. Adding `-MMD -MP` would fix it; not done yet.
+
+**Not yet implemented:**
+- Header dependency tracking in `04_kernel_64bit/Makefile` (`-MMD -MP`).
+- Long filename support (`FF_USE_LFN`).
+- `SYS_UNLINK`.
+- Loading user programs from disk (`sys_exec`).
+
+---
+
 ---
 
 ## 4. User‑Facing Features
@@ -679,6 +703,8 @@ Done in v0.5.1.  The kernel shell is now a real process (`kshell`) created by `k
 | **Print Atomicity (shared serial/VGA lock)** | **✔ Complete ⭐ v0.5.1** |
 | **#DF through IST1** | **✔ Complete ⭐ v0.5.1** |
 | **Kernel Shell on a Pool-Allocated Stack** | **✔ Complete ⭐ v0.5.1** |
+| **Heap Rewrite and Validator** | **✔ Complete ⭐ v0.5.2** |
+| **LLD 22.1.8 Workaround** | **✔ Complete ⭐ v0.5.2** |
 | **Staging Ceiling Raised to 448 KB** | **✔ Complete ⭐ v0.5.1** |
 | `SYS_UNLINK` | ☐ Planned |
 | User Programs from Disk (`sys_exec`) | ☐ Planned (next feature) |

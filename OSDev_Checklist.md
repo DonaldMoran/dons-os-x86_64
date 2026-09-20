@@ -38,7 +38,7 @@ For known debt and cleanup work, see [`MAINTENANCE.md`](MAINTENANCE.md).
 | 13 | **Physical Memory Manager** | ✅ Complete | Bitmap allocator, page alloc/free, reserved region marking |
 | 14 | **Virtual Memory Manager** | ✅ Complete | Recursive paging at PML4[510]. HHDM mapping at PML4[256]. Dynamic page table allocation. User-space page mapping with PT_USER. **NX bit support via PT_NX, with EFER.NXE enabled so the CPU enforces it (v0.5.1).** **Dynamic HHDM mapping via `ensure_hhdm_mapped()`.** **Page table cloning via `vmm_clone_page_table()`.** |
 | 15 | **Serial Debug Output** | ✅ Complete | COM1 serial output for kernel debugging alongside VGA |
-| 16 | **Kernel Heap Allocator** | ✅ Complete | `kmalloc()`/`kfree()` with free list, `heapstat`/`heaptest`. 64MB initial heap with automatic expansion. |
+| 16 | **Kernel Heap Allocator** | ✅ Complete | `kmalloc()`/`kfree()` with free list, `heapstat`/`heaptest`. 1 MB initial heap with automatic expansion up to 24 MB. Rewritten in v0.5.2: `heap_extend` places new blocks at the start of the newly mapped region (the old version lost up to 4 KB per extension). Header padded to 48 bytes so payloads are 16-aligned. `heap_validate()` checks every block-list invariant; `heap_stress()` exercises the extension path (grows the heap to ~4.15 MB, zero leak). `heapcheck` and `heapstress` shell commands. |
 | 17 | **User Mode (Ring 3)** | ✅ Complete | GDT with user segments (0x33 code, 0x2B data). TSS configured for stack switching. `iretq` transition. CPL=3 with page protection. |
 | 18 | **NX (No Execute) Bit Support** | ✅ Complete | PT_NX flag in `vmm.h` (bit 63). NX handling in `vmm_map_page()`. `nxtest` and `vmmtest` verify. |
 | 19 | **System Calls** | ✅ Complete | SYSCALL/SYSRET via MSRs. SYS_WRITE (#1), SYS_EXIT (#2), SYS_READ (#3), SYS_OPEN (#4), SYS_CLOSE (#6), SYS_BRK (#10), SYS_GETPID (#20), SYS_REBOOT (#25). `syscall` test command. **Safe user-space access via `safe_copy_from_user()`/`safe_copy_to_user()`.** |
@@ -69,6 +69,7 @@ For known debt and cleanup work, see [`MAINTENANCE.md`](MAINTENANCE.md).
 | 44 | **Print Atomicity (Shared Serial/VGA Lock)** | ✅ Complete ⭐ v0.5.1 | Serial and VGA drivers share a single print lock (cli/sti critical section with nesting counter and RFLAGS save/restore). Multi-part boot messages wrap in `serial_lock`/`serial_unlock`. The DonsDOS banner truncation and interleaved boot trace are gone. |
 | 45 | **`#DF` through IST1** | ✅ Complete ⭐ v0.5.1 | A dedicated 4 KB stack and an IST entry on the `#DF` gate turn a double fault into a printed diagnostic instead of a silent triple-fault reset. |
 | 46 | **Kernel Shell on a Pool-Allocated Stack** | ✅ Complete ⭐ v0.5.1 | The kernel shell is now a real process (`kshell`) with a stack from the kernel stack pool, not a hardcoded address. `0xFFFFFFFF8008FF00` is gone. |
+| 47 | **Heap Rewrite and Validator** | ✅ Complete ⭐ v0.5.2 | `heap_extend` places new blocks at the start of the new region. Header padded to 48 bytes. `heap_validate()` checks every invariant. `heap_stress()` grows the heap from 1 MB to ~4.15 MB with zero leak. `heapcheck` and `heapstress` commands; both in selftest. |
 
 ---
 
@@ -126,11 +127,11 @@ For known debt and cleanup work, see [`MAINTENANCE.md`](MAINTENANCE.md).
 | Phase | Completed | Total | Progress |
 |-------|-----------|-------|----------|
 | Boot & System Init | 5 | 5 | **100%** ✅ |
-| Core Kernel | 38 | 38 | **100%** ✅ |
+| Core Kernel | 39 | 39 | **100%** ✅ |
 | Memory Management | 8 | 8 | **100%** ✅ |
 | Storage & File Systems | 5 | 7 | **71%** 🚧 |
 | User Space | 11 | 13 | **85%** 🚧 |
-| **Overall** | **67** | **71** | **94%** |
+| **Overall** | **68** | **72** | **94%** |
 
 The overall number is lower than the earlier 98% because the checklist now counts the storage milestones as separate items. This is more honest: storage was not present in the earlier counts even though the roadmap listed it as "Next." The project is materially closer to complete on the previously-tracked items, and the roadmap is more accurate about what remains.
 
@@ -139,6 +140,13 @@ The Core Kernel count rose from 31 to 38 with the addition of the v0.5.1 mainten
 ---
 
 ## Recent Milestone Achievements (Chronological Order — Newest First)
+
+### v0.5.2 — Heap Rewrite and Validator; LLD 22.1.8 Workaround ⭐ NEW
+- **heap.c rewritten.** `heap_extend` now returns the start of the newly mapped region and the caller places a single free block covering the entire region. The old version placed the new block at `heap_brk - requested_size`, losing up to `PAGE_SIZE - 1` bytes per extension and putting blocks at the wrong end of the mapped range. Blocks are maintained in address order and coalesced on free.
+- **`heap_header_t` padded to 48 bytes.** Payloads are 16-aligned when the allocation size is a multiple of `HEAP_ALIGNMENT`. newlib's `malloc` is documented to return 16-aligned pointers on x86-64; the 40-byte header made payload addresses alternate between 8- and 16-aligned.
+- **`heap_validate()` and `heap_stress()`.** `heap_validate` walks the block list and checks every invariant, including that the last block's end equals `heap_brk`. `heap_stress` runs 4096 ops across 512 slots with per-block patterns, grows the heap from 1 MB to ~4.15 MB (multiple extensions), and validates intact with zero leak.
+- **`heapcheck` and `heapstress` shell commands.** Both added to `selftest`. Test count 17/17.
+- **LLD 22.1.8 workaround.** At `-O2`, linking `kernel.elf` produces truncated instructions in `check_fs` and `move_window`; the standalone object is correct. `fatfs/ff.o` is compiled at `-O1`. Bug filed upstream; see `LLD_BUG_REPORT.md`.
 
 ### v0.5.1 — Maintenance Batch: Self-Test, NX on Hardware, Kernel-Owned GDT ⭐ NEW
 - **Self-test infrastructure (`selftest` command).**  15 tests covering GDT descriptor contents, TSS fields, PMM allocation and freeing, VMM control registers, page mapping, recursive paging, heap integrity, the NX bit in the final PTE, syscall entry point, ATA reads, FatFs mount and directory listing, and the three exception handlers (#DE, #PF, #GP).  The exception tests use an expected-fault protocol: a small kernel-mode child takes the fault, the handler records the vector, terminates the child, and resumes the kernel shell.  First time the exception handlers have been exercised by anything.
@@ -284,4 +292,4 @@ The Core Kernel count rose from 31 to 38 with the addition of the v0.5.1 mainten
 
 ---
 
-*Last Updated: September 2026 (v0.5.1)*
+*Last Updated: September 2026 (v0.5.2)*

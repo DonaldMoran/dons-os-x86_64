@@ -382,6 +382,49 @@ requires `base >= 0xFFFFFFFF80000000ULL`.  Before the fix it was
 relaxed to "base must be non-zero" so the self-test could pass while
 the GDT lived in low memory.~~
 
+### 3i. LLD 22.1.8 mis-links `kernel.elf` at `-O2` for `ff.o`
+
+**Status:** worked around; underlying bug filed upstream
+**Effort:** none until LLD is fixed
+
+At `-O2`, linking `kernel.elf` with `ld.lld` 22.1.8 produces truncated
+instructions in `check_fs` and `move_window`. The standalone `.o` file
+is correct — the same source, same flags, compiled to an object file
+and disassembled, has complete instructions. The truncation appears
+only in the linked binary.
+
+Specifically:
+
+ffffffff8011002a: 83 f8 03 cmp $0x3,%eax
+ffffffff8011002d: 0f .byte 0xf
+ffffffff8011002e: 87 .byte 0x87
+ffffffff8011002f: 80 .byte 0x80
+
+
+The instruction at `0xFFFFFFFF8011002D` should be a 6-byte `ja rel32`.
+Only the first 3 bytes are present. A second truncated instruction
+appears in `move_window` at `0xFFFFFFFF8010E0FF`.
+
+Runtime effect: the CPU raises `#UD` (invalid opcode) when it reaches
+one of the truncated instructions. The kernel was observed to fault
+in `check_fs` after `move_window` returned.
+
+**Workaround:** compile `fatfs/ff.o` at `-O1`:
+
+fatfs/ff.o: fatfs/ff.c
+(CC)(CC)(CFLAGS) -O1 -c fatfs/ff.c -o fatfs/ff.o
+
+
+This changes instruction selection enough to avoid the bug for this
+file. It is a workaround, not a fix — the underlying LLD bug is still
+present and may affect other files at `-O2`.
+
+**When LLD is fixed:** remove the override, rebuild, confirm the
+`kernel.elf` disassembly of `check_fs` has no `.byte` sequences in
+its instruction stream.
+
+**Report:** see `LLD_BUG_REPORT.md` in the repo root.
+
 ---
 
 ## 4. Code hygiene
@@ -743,6 +786,7 @@ prerequisite for the headless part of 5c.
 | 3f | Self-test fault-trigger constraint | — | Documented (f132903) |
 | 3g | `EFER.NXE` not enabled | 15 min + 1 hr verify | ✅ Done (028da72) |
 | 3h | GDT lives in low memory | 2–3 hrs | ✅ Done (a3ee0d2) |
+| 3i | LLD 22.1.8 mis-links kernel.elf at -O2 | — | Worked around; filed upstream |
 | 4a | Dead declarations | 15 min | ✅ Done (20260919F) |
 | 4b | Double-build in `run` | 15 min | ✅ Done (20260919F) |
 | 4c | Stale comments | 30 min | ✅ Done (20260919F) |
@@ -756,6 +800,11 @@ prerequisite for the headless part of 5c.
 | 5a-iii | `elfload` in selftest | — | Declined (see §5a) |
 | 5b | Boot-time self-test mode | 1 hr | Next |
 | 5c | `make test` target | 1 hr | After 5b |
+
+The LLD workaround (item 3i) is temporary and depends on the upstream
+fix landing. It is not a finding in this project's code, but it should
+be revisited whenever the toolchain is updated. If a future LLD version
+still mis-links `kernel.elf` at `-O2`, the report has the reproducer.
 
 Everything on this list is either done, deferred, declined, or
 architectural.  **There are no open findings.**  Both findings from the
@@ -793,3 +842,5 @@ is to keep the list of "things we know we're wrong about" honest and short.
 
 Feature work goes in `ROADMAP.md`. Capability tracking goes in
 `OSDev_Checklist.md`. Debt and maintenance go here.
+
+*Last Updated: September 2026 (v0.5.2)*
