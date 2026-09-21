@@ -971,8 +971,8 @@ static void handle_command(const char *cmd) {
         serial_print("\n=== COM1 UART TEST PASSED ===\n");
         vga_print("Done.\n> ");
     } else if (strcmp(cmd, "heapstat") == 0) {
-        PRINT_BOTH("\n=== Heap Dashboard ===\n");
-        heap_stats();
+        vga_print("\nHeap stats streamed to serial.\n");
+        heap_stats();                 // serial only, includes its own banner
         vga_print("> ");
     } else if (strcmp(cmd, "maptest") == 0) {
         test_map();

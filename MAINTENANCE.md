@@ -619,12 +619,124 @@ destroyed the PCB pointer before the two `push [r12 + offset]` reads
 that followed. Fixed by reordering the loads so `r12` is clobbered
 only after the frame is complete.
 
+### 3k. `sys_exec` cannot write to another process's address space via the standard helpers
+
+**Status:** fixed in v0.5.4 (`safe_copy_to_user_cr3`). Kept for history.
+**Effort:** 45 minutes to diagnose, 20 minutes to fix.
+
+**Symptom:** with argv passing enabled, the child received the correct
+`argc` but every `argv[i]` was NULL or garbage. `cat HELLO-WORLD.TXT`
+printed `cat: 0:/(null): cannot open`; `echo one` printed a single
+garbage byte.
+
+**Root cause:** `safe_copy_to_user` and `safe_copy_from_user` resolve
+their user address against `process_get_current()->cr3`. That is
+correct for a normal syscall, where the caller and the target are the
+same process. `sys_exec` is unusual: it writes into a *child* process
+whose `cr3` is different from the caller's. My first attempt switched
+`cr3` to the child's around the write, but `safe_copy_to_user` still
+read `current->cr3` (the caller's) and therefore resolved the child's
+virtual addresses against the caller's page tables. Because both
+processes use the same user-stack virtual addresses
+(`0x80000F0000..0x8000100000`), the write succeeded — into the
+*caller's* stack, not the child's. The child then read its own
+(freshly zeroed) stack page and found the argv array full of zeros.
+
+**Fix:** add `safe_copy_to_user_cr3(uint64_t cr3, ...)`, which takes
+the target `cr3` explicitly and calls `vmm_get_phys_from_cr3(cr3, ...)`.
+No `cr3` switch is required: `vmm_get_phys_from_cr3` walks the target
+page tables via the HHDM, and `HHDM_START + phys` is mapped in every
+address space (it's in the shared kernel higher half).
+
+**Lesson:** when writing to a process other than the current one, use
+the `_cr3` variant. The default helpers silently assume "current
+process is the target."
+
+### 3l. The child's argv region shares the top of the user stack
+
+**Status:** works for present programs; a latent landmine
+**Effort:** 30 minutes if it ever bites; ~2 hours to do properly
+**Introduced by:** v0.5.4 Stage 4
+
+`sys_exec` reserves 4 KB at the top of the child's user stack for the
+argv region. Strings are placed at the **bottom** of that region
+(growing up), the pointer array sits just below the strings, and the
+top of the region is left free as a gap between argv and the child's
+own downward-growing stack frames.
+
+**The landmine:** the free gap is what protects argv from the child's
+stack. For the current programs the gap is ~3.5 KB (4 KB region minus
+array bytes minus string bytes), and `echo`/`cat`/`ls` use at most a
+few hundred bytes of stack. A program that recurses deeper than the
+gap will overwrite its own argv silently. Nothing detects this today.
+
+**When it will bite:** the first nontrivial recursive user program —
+a tree walker, a recursive descent parser, `find`. Or an argv with
+many long arguments (16 args × 256 bytes = 4 KB of strings alone,
+plus the 136-byte array, plus any slack the caller passes).
+
+**Options if it becomes a problem, in order of preference:**
+
+1. **Grow the reservation.** Reserve 8 KB or 16 KB instead of 4 KB.
+   The user stack region is 16 pages (64 KB) total; reserving 16 KB
+   for argv still leaves 48 KB for the child. This is the smallest
+   change and covers all realistic argv sizes.
+2. **Move argv to its own page.** Map a page at a fixed address above
+   the stack (e.g. `0x8000100000`) with `PT_USER | PT_WRITE`, put
+   argv there, and set `rdi`/`rsi` accordingly. The stack has no
+   interaction with argv at all. More invasive but the cleanest.
+3. **Copy argv into the child's BSS.** Requires cooperation from
+   `crt0.S` and a linker section; ugly.
+
+**Why it is fine for now:** every userland program in the tree today
+uses a shallower stack than the gap. The bug is real but cannot be
+triggered by anything currently on the FAT image.
+
+**Related:** the same 4 KB region is also where a *future* `sys_exec`
+caller might want to place `envp`. If `envp` is added before this
+item is fixed, the gap shrinks further. Fix this before adding
+`envp`.
+
+### 3m. The initial child `rsp` is not SysV-compliant
+
+**Status:** documented design choice; divergence from the ABI
+**Effort:** n/a now; significant if a prebuilt binary is ever linked
+**Introduced by:** v0.5.4 Stage 4
+
+In standard SysV, `_start` reads `argc`, `argv`, and `envp` off the
+initial stack. Our `crt0.S` reads them from `rdi` and `rsi` instead:
+
+- `sys_exec` writes `argc` to resume-frame slot 9 (rdi) and the
+  `argv` array pointer to slot 10 (rsi).
+- `crt0.S` stashes `rdi` and `rsi` in a `.data` slot at the very top
+  of `_start` — *before* the BSS-clear loop, which clobbers `rdi`
+  and `rsi` via `rep stosb` — and reads them back just before
+  `call main`.
+
+**Why this is fine:** every userland program in the tree links our
+own `crt0.S`. The convention is internal to dons-os.
+
+**When it will break:** the day someone tries to link a prebuilt
+static binary (a compiler's `crt1.o`, a precompiled test suite, a
+third-party program) that expects the stack-based convention. That
+program's `_start` will read garbage for `argc`/`argv` and will
+almost certainly crash or behave nonsensically.
+
+**If SysV compliance is ever needed:** write the argv array and
+strings onto the stack in the SysV layout (argc at `rsp`, then
+`argv[]`, then a NULL, then `envp[]`, then a NULL, then strings), and
+set the initial `rsp` to point at `argc` rather than at
+`user_stack_top`. That is a substantial change to `sys_exec` and a
+small change to `crt0.S`. Not planned; recorded here so the choice
+is deliberate.
+
 ---
 
 ## 4. Code hygiene
 
 **Status:** ✅ **DONE for 4a–4d.** Items 4e, 4f, 4g, 4h are architectural,
-documentation-only, or code-review discipline and deferred.
+documentation-only, or code-review discipline and deferred. Item 4i is
+new (v0.5.4) and open.
 
 ### 4a. ~~Dead declarations~~ ✅
 
@@ -829,13 +941,68 @@ that a future reader knows the class of bug is known and that reading
 comments near touched code is part of the review discipline, not an
 afterthought.
 
+### 4i. Kernel log and userland output share the same console and interleave
+
+**Status:** cosmetic; visible in every REPL session since v0.6.0
+**Effort:** ~1 hour (route kernel logs to serial only, or add a
+`klog_enable` syscall)
+**Introduced by:** v0.6.0 (the REPL began spawning many short-lived
+processes, each producing a kernel log line on `sys_exec`)
+
+Every `SYS_EXEC` call prints `sys_exec: spawned pid=N entry=0x... (NAME)`
+to the console via `serial_print`. `sys_open` prints a line for every
+`f_open` failure. Since v0.6.0, these kernel lines interleave with
+userland output:
+
+```
+] bigtest
+sys_exec: spawned pid=6 entry=0x0000008000000000 ([bigtest] 4096-byte round-trip through FatFs
+bigtest.ELF)
+  wrote 4096 / 4096 bytes
+```
+
+The kernel's `... (bigtest.ELF)\n` was emitted mid-line with the child's
+own `printf` output spliced in. Cosmetic only — nothing is corrupted,
+the program runs correctly — but it makes the shell output hard to
+read, and it will get worse as more processes run.
+
+`multitest` produces three `sys_open: f_open FAIL` lines for its own
+*expected* failures (the post-delete existence check). Those lines are
+correct in content but noise on the console.
+
+**Options, in order of preference:**
+
+1. **Route kernel logs to serial only.** `serial_print` writes to
+   COM1; `vga_putc` writes to the console userland also uses. Today
+   both `serial_print` and `vga_putc` write to the console (the
+   Makefile wires `-serial stdio`, and the shell reads/writes
+   fd 0/1 which the kernel routes to both). If `sys_exec`'s log and
+   `sys_open`'s failure log go to `serial_print` only (which under
+   `-serial stdio` is the same terminal as the console, but
+   *asynchronously* on the host's terminal side), the interleaving
+   may or may not persist depending on how QEMU multiplexes.
+   Honest answer: this needs testing.
+2. **Add a verbosity syscall.** `SYS_KLOG(0)` disables kernel logs to
+   the console; the shell calls it on startup. Kernel logs still go
+   to serial. Userland decides when to silence the kernel.
+3. **Gate the logs behind `#define`.** `#define EXEC_TRACE 0`,
+   `#define OPEN_TRACE 0` in `user_syscall.c`. Simplest; loses the
+   logs entirely, even for bring-up.
+
+**Recommendation:** option 2, once a real console/tty subsystem
+exists (item 4e). For now, option 3 if the noise becomes distracting
+during development.
+
+**Related:** item 4e is the underlying architectural fix; this entry
+is the specific symptom that made it visible.
+
 ---
 
 ## 5. Testing infrastructure
 
 **Status:** partial; fault-path and non-fault coverage exist, context-switch
 coverage does not
-**Effort:** ~2 hours remaining (5b, 5c)
+**Effort:** ~3 hours remaining (5b, 5c, 5e)
 
 ### 5a. Kernel-shell self-test
 
@@ -1017,6 +1184,45 @@ This is worth building. It closes the loop on the three fixes in §3j
 by making them regression-detectable. It is not blocking any feature
 work, but it should be done before the next feature lands.
 
+### 5e. argv / REPL regression tests (new, from v0.5.4)
+
+**Status:** not yet built
+**Effort:** ~1 hour
+**Priority:** alongside 5d
+
+`v0.5.4` added argv passing, the `echo` and `cat` programs, the
+`ls` directory-listing program, and the directory syscalls
+(`SYS_OPENDIR`/`SYS_READDIR`/`SYS_CLOSEDIR`). The four bugs found
+during that work (three in the earlier stages, one in argv) were all
+caught by manual inspection of a serial capture, not by an automated
+test.
+
+Natural regression checks, in order of value:
+
+1. **`fstest --verify` cross-boot persistence.** Run `fstest`,
+   reboot, then run `fstest --verify`. It should print `[fstest] PASS
+   (file survived reboot, byte-exact)`. This works today because
+   argv is now passed; before v0.5.4 the `--verify` argument could
+   not reach the child. There is no automated way to test the cross-
+   boot path — it needs two boots — but a scripted QEMU run in 5c
+   could do it.
+2. **argv round-trip.** `echo hello world` should print `hello world`;
+   `echo one two three` should print `one two three`; `cat
+   HELLO-WORLD.TXT` should print the file contents. These are the
+   tests that caught the argv-layout bug (§3l). A `make test` target
+   (5c) could spawn these from a scripted session and grep the
+   output.
+3. **`ls` output stability.** After a fresh boot, `ls` should list
+   exactly the files on the FAT image, with correct sizes. An
+   automated comparison against the `mdir` output from image-build
+   time is possible but fiddly.
+4. **Empty-argv path.** `echo` with no arguments should print a blank
+   line; `cat` with no arguments should print `usage: cat FILE`. These
+   exercise the `argc == 0` and `argc == 1` paths in `sys_exec`.
+
+None of these are hard, but they need a test harness that can feed
+input to a running QEMU and read its output. That is 5c.
+
 ### When to do the rest
 
 5b and 5c build on 5a-i and 5a-ii.  Neither is blocked by the remaining
@@ -1025,8 +1231,8 @@ valuable because it enables `make test` in a loop, but 5b is a
 prerequisite for the headless part of 5c.
 
 5d depends on 5a-i (the expected-fault protocol's infrastructure) but
-is otherwise independent. It is the highest-value test to add next,
-because it covers the newest and least-exercised feature.
+is otherwise independent. 5e depends on 5c. Together 5d and 5e cover
+the newest and least-exercised code paths in the tree.
 
 ---
 
@@ -1048,6 +1254,9 @@ because it covers the newest and least-exercised feature.
 | 3j-a | PMM allocator reentrancy | 30 min | ✅ Done (v0.5.3) |
 | 3j-b | `vmm_clone_page_table` shallow copy | 1 hr | ✅ Done (v0.5.3) |
 | 3j-c | `context_switch` resume-by-entry-point | 1 hr | ✅ Done (v0.5.3) |
+| 3k | `safe_copy_to_user_cr3` for cross-process writes | 20 min | ✅ Done (v0.5.4) |
+| 3l | argv region shares user stack top | 2 hrs if needed | Open; safe today |
+| 3m | initial child rsp not SysV-compliant | — | Documented design choice |
 | 4a | Dead declarations | 15 min | ✅ Done (20260919F) |
 | 4b | Double-build in `run` | 15 min | ✅ Done (20260919F) |
 | 4c | Stale comments | 30 min | ✅ Done (20260919F) |
@@ -1056,6 +1265,7 @@ because it covers the newest and least-exercised feature.
 | 4f | Print functions as leaf functions | — | Documented invariant |
 | 4g | Print-lock hold diagnostic | 30 min | Build when needed |
 | 4h | Comments that name functions by role | — | Ongoing discipline |
+| 4i | Kernel log and userland output interleave | 1 hr | Cosmetic; fix with tty |
 | 5a-i | Self-test: exception path | 2 hrs | ✅ Done (f132903) |
 | 5a-ii | Self-test: non-fault tests | 1.5 hrs | ✅ Done (182c1ef) |
 | 5a-iii | `elfload` in selftest | — | Declined (see §5a) |
@@ -1063,6 +1273,7 @@ because it covers the newest and least-exercised feature.
 | 5b | Boot-time self-test mode | 1 hr | Next |
 | 5c | `make test` target | 1 hr | After 5b |
 | 5d | Spawn regression test | 1 hr | Before next feature |
+| 5e | argv/REPL regression tests | 1 hr | After 5c |
 
 The Clang/LLD workaround (item 3i) is temporary and depends on the
 upstream fixes landing. It is not a finding in this project's code, but
@@ -1077,24 +1288,28 @@ architectural.  The natural next steps, in order of value:
    self-test work.  5b runs the same 17 tests at boot and halts; 5c
    wraps 5b in a headless QEMU invocation and greps the serial log
    for the summary line.  Do these before starting new features.
-2. **A spawn regression test (5d)** — `SYS_EXEC` and `SYS_WAITPID`
-   are the newest and most complex features in the tree. A
-   kernel-mode self-test child that opens `0:/HELLO.ELF`, spawns it,
+2. **A spawn regression test (5d) and argv tests (5e)** — `SYS_EXEC`,
+   `SYS_WAITPID`, and the argv-passing machinery are now the newest
+   and most complex features in the tree. They exercise three
+   subsystems (`pmm_alloc_page`, `vmm_clone_page_table`,
+   `context_switch`) that all had memory-safety bugs during bring-up.
+   A kernel-mode self-test child that opens `0:/HELLO.ELF`, spawns it,
    waits for it, and asserts exit status 0 would catch future
-   regressions in `vmm_clone_page_table`, `pmm_alloc_page`, or
-   `context_switch` before they reach the user shell.
+   regressions before they reach the user shell. The argv tests (5e)
+   would catch layout regressions like §3l.
 3. **The ring buffer (4e)** — the correct long-term design for the
-   print path.  Do this before the tty subsystem lands.
+   print path.  Do this before the tty subsystem lands. Item 4i is
+   the specific cosmetic symptom that will keep being visible until
+   then.
 4. **The ELF-loader `PT_NX` follow-up (§3g)** — mark non-executable
    segments (data, BSS, user stack) as `PT_NX`.  With `EFER.NXE` on
    since v0.5.1 and the deep `vmm_clone_page_table` in place since
    v0.5.3, this is now a small, safe change.
-5. **`sys_exec` composition into a real shell** — `SYS_EXEC` and
-   `SYS_WAITPID` give the kernel a working "run a program and wait
-   for it" primitive, but the user shell's menu is still a fixed
-   list.  A real shell would take a command name, `spawn` the
-   matching ELF, and `waitpid` on it.  This is the next feature
-   milestone, not maintenance, and belongs in `ROADMAP.md`.
+5. **Fixing the argv region landmine (§3l)** — only if a recursive
+   user program is added. Not urgent, but the first such program
+   will silently corrupt its own argv, which is a confusing failure.
+   Doing the fix before adding that program is cheaper than doing it
+   after.
 
 ---
 
@@ -1117,4 +1332,4 @@ is to keep the list of "things we know we're wrong about" honest and short.
 Feature work goes in `ROADMAP.md`. Capability tracking goes in
 `OSDev_Checklist.md`. Debt and maintenance go here.
 
-*Last Updated: September 2026 (v0.5.3)*
+*Last Updated: September 2026 (v0.5.4)*
