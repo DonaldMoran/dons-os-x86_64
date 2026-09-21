@@ -1,7 +1,7 @@
 # dons‑os  
 ### Educational x86_64 Boot Chain + 64‑bit Interrupt‑Driven Kernel (MIT Licensed)
 
-**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU's reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher‑half kernel** with working interrupts, timer, keyboard input, memory management, a preemptive round-robin scheduler, system calls, blocking I/O, a userland C library (newlib 4.x), a FAT16 filesystem with long filename support, and a Ring 3 user shell written in ordinary C.
+**dons‑os** is a fully custom x86_64 operating system built from scratch, starting at the CPU's reset vector in **16‑bit real mode**, progressing through **32‑bit protected mode**, entering **64‑bit long mode**, and finally executing a **C‑based 64‑bit higher‑half kernel** with working interrupts, timer, keyboard input, memory management, a preemptive round-robin scheduler, system calls, blocking I/O, a userland C library (newlib 4.x), a FAT16 filesystem with long filename support, and a Ring 3 user shell written in ordinary C that runs external programs by name.
 
 Related documents:
 - [`ROADMAP.md`](ROADMAP.md) — planned features and completed milestones
@@ -20,7 +20,7 @@ Related documents:
 
 ### Kernel Development
 - **04_kernel_64bit** — Standalone 64‑bit kernel (ELF → flat), IDT, ISR stubs, PIC remap, PIT timer, IRQ0 tick, IRQ1 keyboard, PMM, VMM, VGA, serial, kernel shell, heap allocator with validator and stress test, system calls, ELF loader, process system, preemptive scheduler, blocking I/O, ATA PIO driver, FatFs integration, GDT/TSS diagnostics
-- **04_kernel_64bit/userland/newlib** — Userland C library (newlib 4.x), syscall shims, `crt0`, reentrancy support, and the user shell application
+- **04_kernel_64bit/userland/newlib** — Userland C library (newlib 4.x), syscall shims, `crt0`, reentrancy support, the user shell application, and the standalone disk-loaded programs (`hello`, `memtest`, `fstest`, `multitest`, `bigtest`, `ls`, `cat`, `echo`)
 - **04_kernel_64bit/fatfs** — Vendored FatFs R0.16 plus the `diskio.c` shim that maps FatFs onto the ATA PIO driver. `ff.c` and `ffunicode.c` are compiled with the cross‑GCC (see Known Limitations).
 - **04_kernel_64bit/include/fat_config.h** — The single compile-time switch that selects dual-drive vs single-drive storage
 - **05_boot_kernel64** — Full boot chain: stage2 loads kernel via multi-pass segment incrementing, enters long mode, jumps to `_start`
@@ -182,44 +182,50 @@ This is a substantial capability: it means user programs can use the standard C 
 
 ### What is wired up
 
-- **`crt0.S` (arc2)** — userland startup. Sets up the stack, initializes newlib's reentrancy structure, calls `main`, and invokes `exit` on return.
-- **`syscalls.c` (arc2)** — the syscall shims that newlib's internals call (write, read, sbrk, _exit, fstat, isatty, open, close, unlink, lseek, getpid, kill). Each is a thin wrapper around the syscall instruction with the appropriate syscall number.
+- **`crt0.S` (arc2)** — userland startup. Reads the kernel-provided `argc`/`argv` from `rdi`/`rsi` (stashed in a `.data` slot before the BSS-clear loop), sets up the stack, initializes newlib's reentrancy structure, calls `main`, and invokes `exit` on return.
+- **`syscalls.c` (arc2)** — the syscall shims that newlib's internals call (write, read, sbrk, _exit, fstat, isatty, open, close, unlink, lseek, getpid, kill, and the dons-os extensions `spawn`, `waitpid`, `opendir`, `readdir`, `closedir`). Each is a thin wrapper around the syscall instruction with the appropriate syscall number.
 - **`reent.c` (arc2)** — newlib reentrancy support. Sets `_impure_ptr = &_impure_data` so that newlib's global state is valid at startup. (Without this, the first `printf` faults.)
 - **`include/`** — newlib's headers, vendored. `stdio.h`, `stdlib.h`, `string.h`, `unistd.h`, etc.
 - **`lib/libc.a`** and **`lib/libm.a`** — the compiled newlib libraries, statically linked into each user program.
 - **`user_newlib_linker.ld`** — the linker script that places the user program at `USER_CODE_BASE = 0x8000000000` and sets up the ELF layout newlib expects.
+- **`apps/include/donsdos.h`** — declarations of the dons-os extensions that are not POSIX: `spawn(path, argc, argv)`, `waitpid(pid, status, options)`, `opendir`, `readdir`, `closedir`, `sys_reboot`, plus `struct dons_dirent` and the `AM_*` attribute constants.
 
 ### What works end to end
 
 - ✅ printf — output reaches VGA and serial from Ring 3
-- ✅ malloc / free — backed by sbrk → sys_brk → page mapping (see the heap test in the user shell, menu option 3)
+- ✅ malloc / free — backed by sbrk → sys_brk → page mapping (see the heap test in `memtest.elf`)
 - ✅ memcpy, memset, strcmp, and the rest of the string functions
-- ✅ setvbuf — user shell sets stdout unbuffered so every printf immediately hits sys_write
+- ✅ setvbuf — user programs set stdout unbuffered so every printf immediately hits sys_write
 - ✅ errno — newlib's error reporting is functional
 - ✅ Reentrancy — newlib's per-thread state is initialized and used
 - ✅ open / close / read / write / unlink on FAT files from Ring 3, via syscalls 1, 3, 4, 6, 7
+- ✅ spawn / waitpid — load and run an ELF from disk, wait for it to exit, get its status
+- ✅ argv — arguments reach `main(argc, argv)` in the child
+- ✅ opendir / readdir / closedir — iterate a directory from Ring 3
 
 ### How to build a user program
 
 User programs live in `04_kernel_64bit/userland/newlib/apps/`. The build chain:
 
 1. `make -C 04_kernel_64bit/userland/newlib` compiles the app, links it against `libc.a`/`libm.a` with `user_newlib_linker.ld`, and produces an ELF.
-2. The ELF is converted to a C array via `xxd -i` and embedded in the kernel image as `user_shell_data.c`.
-3. The kernel loads the embedded ELF with `elf_load_into_process` and runs it as a Ring 3 process.
+2. Standalone programs (everything except the user shell) are stripped and left as ELFs on disk.
+3. The user shell is converted to a C array via `xxd -i` and embedded in the kernel image as `user_shell_data.c` (the shell is the only program still embedded; it must be present at boot to run anything else).
+4. `05_boot_kernel64/Makefile` copies the standalone ELFs onto the FAT partition at image-build time with `mcopy`.
+5. At runtime, the shell resolves a typed command name to `0:/NAME.ELF`, calls `spawn()`, and blocks in `waitpid()`.
 
-New apps can be added by dropping a `.c` file in `apps/`, adding it to the Makefile's source list, and giving the kernel a way to launch it (a new `kmain.c` command, or a menu option in the user shell).
+New programs can be added by dropping a `.c` file in `apps/`, adding a target to the userland Makefile, adding an `mcopy_one` line to `05_boot_kernel64/Makefile`, and typing its name at the shell prompt.
 
 ### What's not there (yet)
 
 - **No dynamic linking.** Programs are statically linked against `libc.a`. A shared library / dynamic loader would be a separate project.
-- ~~**No filesystem for program loading.** The kernel has FatFs, but user programs are still embedded in the kernel image at build time.~~ ✅ **Done in v0.5.3.** User programs are loaded from the FAT volume at runtime by `SYS_EXEC` (syscall #8). The user shell's option `A` loads `HELLO.ELF` from disk, runs it as an independent Ring 3 process, and blocks in `SYS_WAITPID` (syscall #9) until the child exits.
-- **A subset of newlib is exercised.** `stdio`, `stdlib` (`malloc`), `string`, `unistd`, and `fcntl` are the primary use; `math.h` (`libm.a`) is linked but not exercised by anything in the tree. `signal`, `pthread`, `dirent`, and other subsystems are compiled in but untested on this kernel.
+- **No filesystem-based dynamic loading beyond `sys_exec`.** Programs are loaded from `0:/NAME.ELF` on the FAT volume at runtime; there is no search path, no `PATH` variable, and no shebang support.
+- **A subset of newlib is exercised.** `stdio`, `stdlib` (`malloc`), `string`, `unistd`, and `fcntl` are the primary use; `math.h` (`libm.a`) is linked but not exercised by anything in the tree. `signal`, `pthread`, and other subsystems are compiled in but untested on this kernel. `dirent.h` is not used — directory iteration is via the dons-os-specific `opendir`/`readdir`/`closedir` in `donsdos.h` rather than the standard `<dirent.h>` interface.
 
 ---
 
 ### ELF Loader
 
-The ELF loader is fully functional and can execute user programs from memory:
+The ELF loader is fully functional and can execute user programs loaded from the FAT volume at runtime:
 
 - ✅ Parses ELF64 headers and program headers
 - ✅ Maps LOAD segments with correct permissions (Read, Write, Execute, User)
@@ -231,8 +237,13 @@ The ELF loader is fully functional and can execute user programs from memory:
 - ✅ **User programs loaded into dedicated user address space** (`USER_CODE_BASE = 0x0000008000000000`)
 - ✅ Tested with "Hello from Userland!" output via serial
 - ✅ **Works reliably on first boot** (bootloader identity‑mapping handled)
+- ✅ **`SYS_EXEC` (v0.5.3)** — loads an ELF from the FAT volume at runtime and returns the child's pid
+- ✅ **`SYS_WAITPID` (v0.5.3)** — blocks the parent until the child exits and returns its status
+- ✅ **argv passing (v0.5.4)** — `argc` and `argv` reach `main()` in the child, placed on the child's user stack by `sys_exec` and read by `crt0.S`
 
-**User programs** can be embedded in the kernel and loaded with the `elfload` command.
+**Where programs live:**
+- The **user shell** is the only program still embedded in the kernel image. It must be present at boot to run anything else.
+- Every other user program — `hello`, `memtest`, `fstest`, `multitest`, `bigtest`, `ls`, `cat`, `echo` — is a standalone ELF on the FAT partition, loaded by name at runtime.
 
 ---
 
@@ -244,7 +255,7 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 |---------|-------------|
 | `help` | Show available commands |
 | `clear` | Clear the screen |
-| `version` | Show version information (DonsDOS v0.5.2) |
+| `version` | Show version information (DonsDOS v0.5.4) |
 | `info` | Display system information (PML4, kernel addresses, E820 entries) |
 | `mem` | Display memory information (usable/reserved RAM) |
 | `reboot` | Reboot the system (Ring 0 supervisor sequence) |
@@ -279,7 +290,7 @@ Reached by pressing `k` at the boot prompt. It provides a diagnostic console wit
 Example session:
 
 ```text
-DonsDOS v0.5.3 
+DonsDOS v0.5.4 
 Type 'help'
 > help
 
@@ -325,27 +336,81 @@ Available commands:
 
 Launched either by the boot-time default (no `k` key) or by typing `usershell` in the kernel shell.
 
-It runs as an ordinary Ring 3 process using newlib. Its menu currently offers:
+It runs as an ordinary Ring 3 process using newlib. It is a **REPL** (read-eval-print loop), not a menu: it reads a whole line from stdin, tokenizes it on whitespace, resolves the first token to `0:/NAME.ELF`, spawns it with the remaining tokens as `argv`, waits for it to exit, and loops.
 
-| Option | Description |
-|--------|-------------|
-| 1 | Print a message via printf (exercises the syscall path and newlib stdout) |
-| 2 | Exit the user shell (halts the CPU; reboot to return) |
-| 3 | Test malloc/free via newlib (`malloc`, write pattern, read back, `free`, second allocation) |
-| 4 | Test FatFs: create, write, close, reopen, read back (round-trip byte-exact) |
-| 5 | Persistence check: verify USER.TXT written by a previous boot survived a reboot |
-| 6 | Multi-file test: create 3 files, verify contents, delete them, confirm they are gone |
-| 7 | Large write test: 4 KB round-trip through FatFs, catches multi-cluster bugs |
-| 8 | List known files: probe a fixed set of names and report which exist, with a short preview |
-| 9 | Reboot: call `SYS_REBOOT`, which flushes file handles and fires a hardware reset |
-| A | Spawn `0:/HELLO.ELF` from disk: call `spawn()`, block in `waitpid()`, then verify the child's exit status is 0 |
+**Built-ins** (handled in-process):
 
-- Option 3 exercises malloc → sbrk → sys_brk → page mapping → user write → user read, confirming that user pages are correctly mapped and writable.
-- Option 4 exercises open → write → close → open → read on the FAT volume from Ring 3. The round-trip is byte-exact.
-- Option 5 is the strongest single test in the tree. It writes on boot N, and on boot N+1 (same image) it verifies the file is present and byte-exact. This is what proves writes are durable, not just buffered. Combined with option 9, the persistence check is a three-step sequence — write, reboot, verify — that can be run entirely from the user shell.
-- Option 6 exercises create → write → close → open → read → close → `unlink` on three files, then confirms each file is gone by attempting to reopen it. This is the full file lifecycle from Ring 3, including `SYS_UNLINK` (syscall #7).
-- Option 8 is a poor-man's `ls`: since there is no directory-iteration syscall yet, it probes a fixed set of filenames and reports which ones open successfully. A real `ls` needs `SYS_OPENDIR` / `SYS_READDIR` / `SYS_CLOSEDIR`.
-- Option 9 calls `sys_reboot()`, which does `fflush(NULL)` from userland, then invokes `SYS_REBOOT`. The kernel closes every open file handle in the current process's file table (`f_close` triggers `f_sync` → `FLUSH CACHE`), then fires the hardware reset. Ring 3 reboot is a convenience for testing; a production OS would restrict it to a privileged process.
+| Built-in | Description |
+|----------|-------------|
+| `exit` | Return 0; crt0 calls `exit(0)`, which issues `SYS_EXIT` and halts the CPU |
+| `help` | Print the built-in list and an example |
+| `reboot` | Call `sys_reboot()`, which flushes file handles and fires a hardware reset |
+
+**Everything else is an external program on the FAT volume.** The shell appends `.ELF`, prefixes `0:/`, and calls `spawn()`. FatFs is case-insensitive, so the user can type lowercase.
+
+**External programs shipped with the image:**
+
+| Program | Description |
+|---------|-------------|
+| `hello` | Prints a banner. Ported from the old embedded `hello.c`. Ignores `argv`. |
+| `memtest` | Old shell option 3 as a standalone program: `malloc(4096)`, write pattern, read back, `free`, `malloc(8192)`, write, `free`. Exits 0 on pass, 1 on failure. |
+| `fstest` | Old shell option 4 as a standalone program: create `0:/USER2.TXT`, write a known string, close, reopen, read back, verify byte-exact. With `argv[1] == "--verify"`, does the old persistence check (old option 5) instead. |
+| `multitest` | Old shell option 6: create 3 files, write, verify contents, `unlink`, confirm all gone. Exits 0 on full pass. |
+| `bigtest` | Old shell option 7: 4 KB round-trip through FatFs. Catches multi-cluster bugs. |
+| `ls` | Opens `0:/` with `SYS_OPENDIR`, iterates with `SYS_READDIR`, and prints `<DIR>  name` or `FILE  name  (size bytes)` for each entry. First real directory-listing program. |
+| `cat` | Opens `0:/<argv[1]>`, reads and prints it to stdout. `usage: cat FILE` if no argument. |
+| `echo` | Prints `argv[1..argc-1]` separated by spaces, followed by a newline. |
+
+**Example session:**
+
+```text
+] help
+dons-os shell (v0.7.0)
+  Built-ins: exit, help, reboot
+  Anything else is resolved to 0:/NAME.ELF and run.
+  Examples: memtest, ls, cat HELLO-WORLD.TXT, echo hello
+] echo hello world
+hello world
+] ls
+FILE   HELLO-WORLD.TXT  (180 bytes)
+FILE   HELLO.ELF  (20984 bytes)
+FILE   MEMTEST.ELF  (67968 bytes)
+FILE   FSTEST.ELF  (72608 bytes)
+FILE   MULTITEST.ELF  (72416 bytes)
+FILE   BIGTEST.ELF  (72160 bytes)
+FILE   LS.ELF  (67712 bytes)
+FILE   CAT.ELF  (89120 bytes)
+FILE   ECHO.ELF  (20328 bytes)
+
+9 file(s), 0 directory(ies)
+] cat hello-world.txt
+Hello from the single-drive FAT partition.
+This file was copied in by mcopy at image-build time.
+If fatcat can read this, the partition offset and hidden_sectors
+are both correct.
+] memtest
+[memtest] newlib malloc/free via sbrk
+  malloc(4096) = 0x8000200008
+  wrote 4096 bytes
+  readback OK
+  free() returned
+  second malloc(8192) = 0x8000201010
+  wrote 8192 bytes to second buffer
+[memtest] PASS
+] exit
+process_exit: no runnable process, halting
+```
+
+**Why the built-ins are built-ins:** `exit` is a property of the terminal console, not a program — there's nothing for a standalone `exit.elf` to return to. `help` is a one-line printf of the built-in list; making it external would require the shell to spawn `HELP.ELF` just to print three lines. `reboot` is a privileged operation; keeping it in-process avoids giving every external program the ability to call `SYS_REBOOT`. Everything else is external because the shell has no reason to know about it.
+
+**What's not there:**
+- **No arguments to built-ins.** `help`, `exit`, and `reboot` ignore `argv`. Only external programs get full `argv` passing.
+- **No quoting or globbing.** The tokenizer splits on spaces and tabs only. `cat "file with spaces.txt"` will not work as written; it will try to pass `"file` and `with` and `spaces.txt"` as three separate arguments.
+- **No pipes or redirection.** `cat file | grep foo` is not a shell feature yet; it needs `SYS_DUP` and a kernel pipe mechanism.
+- **No `cd` or relative paths.** All paths are absolute `0:/...`. `cd` and a per-process cwd are on the roadmap.
+- **No command history.** The line editor handles backspace only. Up-arrow history is not implemented.
+- **No line editing beyond backspace.** No cursor movement, no mid-line insertion, no Ctrl-A/E/K.
+- **No signals or Ctrl-C.** A hung external program blocks the shell in `waitpid` forever; the only recovery is to reboot.
 
 ---
 
@@ -545,7 +610,7 @@ This project is designed to be:
   - **Staging ceiling raised** from 176 KB to 448 KB by adding PASS 4–7 in `stage2.asm`.
   - **Reboot flushes file handles.**  The user shell's reboot path flushes open file handles before the hardware reset; option 9 added.
   - **MAINTENANCE.md updated throughout.**  No open findings remain.  Sections 5b (boot-time self-test mode) and 5c (make test) deferred with the conditions that would make them worth revisiting.
-- `v0.5.2` ⭐ NEW — **Heap rewrite, long filename support, `SYS_UNLINK`, cross-GCC for FatFs, Makefile dependency tracking.**
+- `v0.5.2` — **Heap rewrite, long filename support, `SYS_UNLINK`, cross-GCC for FatFs, Makefile dependency tracking.**
   - **heap.c rewritten.** `heap_extend` now returns the start of the newly mapped region and the caller places a single free block covering the entire region. The previous version placed the new block at `heap_brk - requested_size`, which lost up to `PAGE_SIZE - 1` bytes per extension and put blocks at the wrong end of the mapped range. Blocks are maintained in address order and coalesced on free.
   - **`heap_header_t` padded to 48 bytes.** Payloads are now 16-aligned when the allocation size is a multiple of `HEAP_ALIGNMENT`. newlib's `malloc` is documented to return 16-aligned pointers on x86-64; a 40-byte header made payload addresses alternate between 8- and 16-aligned.
   - **`heap_validate()` and `heap_stress()`.** `heap_validate` walks the block list and checks every invariant, including that the last block's end equals `heap_brk`. `heap_stress` runs 4096 operations across 512 slots with per-block patterns; the run grows the heap from 1 MB to ~4.15 MB (multiple extensions) and validates intact with zero leak.
@@ -555,7 +620,7 @@ This project is designed to be:
   - **`sys_open` path truncation fix.** Was copying only 127 bytes of the path into a 300-byte buffer. Replaced with a `copy_user_string` helper that respects the buffer size. Paths up to `FF_MAX_LFN` (255) now fit. New `USER_PATH_MAX` constant (300).
   - **Cross-GCC for FatFs.** `fatfs/ff.o` and `fatfs/ffunicode.o` are compiled with `/opt/cross/bin/x86_64-elf-gcc` at `-O2`. Clang 22.1.8 miscompiles `ff.c` at every optimization level: `-O0` breaks the FILINFO read path (filenames decode as `@80(`, `f_opendir` returns `FR_INT_ERR`), `-O1` hangs in `f_unlink`, and `-O2` produces LLD-truncated instructions in the linked binary. GCC produces correct code and links cleanly with the Clang-built kernel objects. See `LLD_BUG_REPORT.md`.
   - **Makefile header dependency tracking.** `-MMD -MP` added to `CFLAGS`; `-include $(OBJS:.o=.d)` at the bottom. Header changes now trigger the right rebuilds automatically. This was the root cause of several stale-object debugging sessions earlier in the project.
-- `v0.5.3` ⭐ NEW — **`SYS_EXEC` complete: disk-loaded ELF user programs, plus three memory-safety fixes.**
+- `v0.5.3` — **`SYS_EXEC` complete: disk-loaded ELF user programs, plus three memory-safety fixes.**
   - **`SYS_EXEC` (syscall #8).** Opens an ELF file on the FAT volume, loads it into a new process, and returns its pid to the caller. `spawn("0:/HELLO.ELF")` from the user shell loads `HELLO.ELF` from disk at runtime; the child runs as an independent Ring 3 process and prints its banner. This is the feature that stops user programs from being embedded in the kernel image.
   - **`SYS_WAITPID` (syscall #9).** Blocks the calling process until a matching child exits, then reaps it and returns its exit status. `spawn` + `waitpid` together give the shell a working "run a program and wait for it" primitive.
   - **`spawn()` and `waitpid()` shims** in `arc2/syscalls.c`, and `apps/include/donsdos.h`. Declared for user programs. `WNOHANG` supported.
@@ -564,11 +629,25 @@ This project is designed to be:
     1. **PMM allocator reentrancy.** `pmm_alloc_page` did a non-atomic read-modify-write on the bitmap. A timer IRQ between `bitmap_test` and `bitmap_set` could hand the same page out twice. Fixed with `cli`/`sti` critical sections in `pmm_alloc_page`, `pmm_free_page`, `pmm_reserve_page`, and `pmm_unreserve_page`, using a `pushfq`-based save/restore that preserves the caller's IF.
     2. **Page-table aliasing in `vmm_clone_page_table`.** The clone was a shallow copy of the PML4: parent and child shared every PDPT, PD, and PT. Any `vmm_map_page_in_cr3` on the child therefore overwrote the *parent's* PTEs. Fixed with a deep copy of the low-half page-table hierarchy (PML4[0..255]); the high half (HHDM and kernel) remains shared by design.
     3. **`context_switch` resumed processes by `entry_point`.** The resume side chose user vs kernel by comparing `next->entry_point` against `KERNEL_BASE`. That is correct for the first dispatch of a fresh process but wrong for resuming a process that had been preempted or blocked in kernel mode — such a process has `entry_point = 0x8000000000` but a saved kernel frame with `CS = 0x18`. The old code took the user branch and rebuilt the frame from `entry_point` and `user_stack_top`, restarting the process from `_start`. This is what produced "shell restarts after `waitpid` returns." Fixed by making the resume side trust the saved frame verbatim and choose the validation rule from the frame's own CS.
-  - **`sys_exec` and `sys_waitpid` are now first-class user-visible features.** Documented in the user shell's option `A`.
+  - **`sys_exec` and `sys_waitpid` are now first-class user-visible features.** Documented in the user shell's option `A` (in the pre-v0.5.4 menu-based shell).
   - **`HELLO.ELF` built and copied into the FAT partition** at image-build time by `05_boot_kernel64/Makefile`. The `hello.c` user program is 20 KB, and the single-drive build's `mcopy` step places it as `HELLO.ELF`.
   - All prior features remain functional. `selftest` still passes 17/17; user shell options 1–9 still work.
-  
-  ---
+- `v0.5.4` ⭐ NEW — **The REPL shell: external programs by name, `argv`, `ls`, `cat`, `echo`.**
+  - **The user shell is now a REPL.** It reads a whole line, tokenizes on whitespace, resolves the first token to `0:/NAME.ELF`, spawns it via `SYS_EXEC`, waits for it via `SYS_WAITPID`, and loops. The old fixed-menu driver is gone; the shell contains no test code.
+  - **Built-ins:** `exit`, `help`, `reboot`. Everything else is an external program on the FAT volume.
+  - **Stage 1 — REPL, no arguments.** `user_shell.c` rewritten (~150 lines) with `readline()` (backspace, echo), a whitespace tokenizer producing a full `argv[]`, a path resolver (`memtest` → `0:/MEMTEST.ELF`), and a spawn+waitpid helper. First external program: `memtest.elf`.
+  - **Stage 2 — regression tests as external programs.** `fstest.elf` (with argv-gated `--verify` mode), `multitest.elf`, `bigtest.elf`. No test code remains in the shell.
+  - **Stage 3 — directory iteration.** Three new syscalls: `SYS_OPENDIR` (#12), `SYS_READDIR` (#13), `SYS_CLOSEDIR` (#14), wrapping FatFs `f_opendir`/`f_readdir`/`f_closedir`. The per-process `file_table[]` now holds tagged `file_slot_t*` entries (`FILE_KIND_FILE` or `FILE_KIND_DIR`) so files and directories share the handle space. `struct dons_dirent` in `user_syscall.c` and `apps/include/donsdos.h`. New userland program: `ls.elf`.
+  - **Stage 4 — `argv` passing.** `SYS_EXEC` extended from `(path)` to `(path, argc, argv)`. `sys_exec` copies the argv strings and pointer array onto the child's user stack via `safe_copy_to_user_cr3` — a new helper that resolves against the child's `cr3`, not the caller's. `crt0.S` stashes `rdi`/`rsi` in a `.data` slot at the very top of `_start` (before the BSS-clear loop, which clobbers them via `rep stosb`) and reads them back just before `call main`. `spawn()` signature changed to `spawn(path, argc, argv)`. New userland programs: `cat.elf`, `echo.elf`.
+  - **Two bugs found and fixed during bring-up (both documented in `MAINTENANCE.md`):**
+    - **§3k — `safe_copy_to_user` uses the caller's `cr3`.** `sys_exec` must write to a child process whose `cr3` differs from the caller's. Switching `cr3` around the write was insufficient because `safe_copy_to_user` still read `current->cr3`. Because parent and child use the same user-stack virtual addresses, the write *succeeded* — into the parent's stack. The child then read zeros for `argv`. Fixed with `safe_copy_to_user_cr3(uint64_t cr3, ...)`.
+    - **§3l — argv region collides with the child's own stack frames.** The first layout placed argv strings at the *top* of the reserved region, growing down. The child's own `crt0.S` prologue and every function call overwrote them before `main` ran. Fixed by placing strings at the *bottom* of the region, growing up, with a free gap above them and below the child's initial `rsp`.
+  - **End-to-end test on a fresh boot passes:** `help`, `echo hello world`, `echo one two three`, `echo` (blank line), `cat HELLO-WORLD.TXT` (byte-exact), `ls` (correct file list and sizes), `memtest`, `fstest`, `multitest`, `bigtest` — all PASS; `nope` — command not found; `exit` — clean halt.
+  - **Build system.** `apps/cat.elf` and `apps/echo.elf` targets added; `CAT.ELF` and `ECHO.ELF` copied onto the FAT image. The `mcopy` block was refactored into an `mcopy_one` shell function inside the recipe to keep it readable with eight ELFs.
+  - **Dispatcher bug fixed.** `SYS_ARCH_SET_FS` is defined as 11 in `syscall.h`, but the dispatcher had the handler under `case 5`. Nothing called it, so it was latent; corrected in this release.
+  - **Two documented divergences from standard practice (`MAINTENANCE.md` §3l, §3m):** the argv region shares the user stack with the child's own frames (fixed by the layout change, but the free gap is only ~3.5 KB and a deeply recursive program would collide with argv), and the initial child `rsp` is not SysV-compliant (`argc`/`argv` are in registers, not on the stack).
+
+---
 
 ## 📌 Project Status (as of September 2026)
 
@@ -607,12 +686,13 @@ This project is designed to be:
 - ✅ Single-drive layout: boot + kernel + FAT16 partition at LBA 2048 on master
 - ✅ Kernel-shell access: fatmount, fatls, fatcat
 - ✅ Userland access: open, close, read, write, unlink on FAT files, via syscalls 1, 3, 4, 6, 7
+- ✅ Directory iteration from Ring 3: `opendir` / `readdir` / `closedir` via syscalls 12, 13, 14
 - ✅ Persistence across reboot verified end-to-end
 - ✅ Config diagnostic at boot (VGA + serial)
 
 **Shells / Console**
 - ✅ Kernel shell (diagnostic, reached via k at boot) with commands including gdtdump, tssdump, atatest, fatmount, fatls, fatcat, heapcheck, heapstress, selftest
-- ✅ User shell (Ring 3, newlib) as the default interactive console
+- ✅ User shell (Ring 3, newlib) as the default interactive console — a **REPL** that runs external programs by name
 - ✅ Unknown command handling
 - ✅ Serial console output (COM1) for debugging alongside VGA
 - ✅ **`selftest` command** — runs 17 tests and prints a pass/fail summary (v0.5.2)
@@ -624,8 +704,10 @@ This project is designed to be:
 - ✅ `memcpy`, `memset`, `str*`, and the rest of the standard C string functions
 - ✅ newlib reentrancy initialized at startup (`_impure_ptr = &_impure_data`)
 - ✅ open / close / read / write / unlink on FAT files from Ring 3
+- ✅ spawn / waitpid — load and run a disk-loaded ELF from Ring 3, wait for it, get its status
+- ✅ argv — arguments reach `main(argc, argv)` in the child
 - ✅ Statically linked (`libc.a`, `libm.a`); no dynamic linking yet
-- ✅ User programs written in ordinary C, compiled with `x86_64-elf-gcc`, loaded from the kernel ELF image
+- ✅ User programs written in ordinary C, compiled with `x86_64-elf-gcc`
 
 ### Memory Management
 
@@ -634,6 +716,7 @@ This project is designed to be:
 - ✅ Bitmap-based page allocator
 - ✅ Tracks allocated and free pages
 - ✅ Supports up to 128 MiB (expandable)
+- ✅ Reentrancy-safe (cli/sti critical section, IF preserved)
 
 #### Virtual Memory Manager (VMM)
 - ✅ **Recursive paging** at PML4[510]
@@ -644,13 +727,16 @@ This project is designed to be:
 - ✅ Page table entries correctly zeroed on allocation
 - ✅ Proper present-bit checking in `vmm_is_mapped()`
 - ✅ **User address space isolated from kernel identity map**
+- ✅ **Deep page table cloning** (`vmm_clone_page_table`) so parent and child have independent low-half mappings (v0.5.3)
+- ✅ **Cross-process write helper** (`safe_copy_to_user_cr3`) for writing into a different process's address space (v0.5.4)
 
 #### Heap Allocator
 - ✅ `kmalloc()` and `kfree()` with free list
-- ✅ Block headers for memory tracking
-- ✅ Automatic heap expansion
+- ✅ Block headers for memory tracking, 48-byte header so payloads are 16-aligned
+- ✅ Automatic heap expansion, blocks placed at the start of the newly mapped region
 - ✅ `heapstat`, `heaptest`, `heapcheck`, `heapstress` debugging commands
-- ✅ **Userland heap via newlib `malloc`/`free` over `sys_brk`**, exercised by user shell menu option 3
+- ✅ `heap_validate()` walks every block and checks every invariant
+- ✅ **Userland heap via newlib `malloc`/`free` over `sys_brk`**, exercised by `memtest.elf`
 
 **System Calls**
 - ✅ **SYSCALL/SYSRET support** via MSR (IA32_STAR, IA32_LSTAR, IA32_FMASK)
@@ -660,11 +746,19 @@ This project is designed to be:
 - ✅ SYS_OPEN (syscall #4) — Opens a FAT file
 - ✅ SYS_CLOSE (syscall #6) — Closes a file descriptor
 - ✅ SYS_UNLINK (syscall #7) — Deletes a FAT file
+- ✅ SYS_EXEC (syscall #8) — Spawn a new process from an ELF on the FAT volume, returns its pid (v0.5.3)
+- ✅ SYS_WAITPID (syscall #9) — Wait for a child to exit and return its status (v0.5.3)
 - ✅ SYS_BRK (syscall #10) — Grow or shrink the process heap
+- ✅ SYS_ARCH_SET_FS (syscall #11) — Set the FS base (FSGSBASE)
+- ✅ SYS_OPENDIR (syscall #12) — Open a directory for iteration (v0.5.4)
+- ✅ SYS_READDIR (syscall #13) — Read the next directory entry (v0.5.4)
+- ✅ SYS_CLOSEDIR (syscall #14) — Close a directory handle (v0.5.4)
+- ✅ SYS_GETPID (syscall #20) — Return the current pid
 - ✅ SYS_REBOOT (syscall #25) — Ring 3 → Ring 0 hardware reset
 - ✅ **Syscall dispatcher** with argument handling (x86_64 syscall ABI)
 - ✅ **Proper register preservation** across syscalls
 - ✅ **Safe user‑space memory access** via `safe_copy_from_user()` / `safe_copy_to_user()` using HHDM
+- ✅ **Cross-process variant** `safe_copy_to_user_cr3()` for `sys_exec`'s writes into the child's address space
 
 ### Blocking I/O
 
@@ -699,6 +793,9 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - ✅ **Kernel stack slot allocator** decoupled from pid (`slot_owner[]` map)
 - ✅ **Process creation** with dedicated user and kernel stacks
 - ✅ **Static kernel stack pool** for process execution
+- ✅ **Parent/child tracking**: `parent_pid`, `exit_status`, `wait_pid`, `PROC_STATE_ZOMBIE` (v0.5.3)
+- ✅ **`process_wake_parent_if_waiting`** — wakes a parent blocked in `waitpid` when its child exits
+- ✅ **`sys_exec` / `sys_waitpid`** — spawn a process from an ELF on disk, wait for its exit status
 - ✅ **`process_exit`** with mode-dependent fallback (kernel shell or halt)
 - ✅ **`runproc` command** to create and execute test kernel processes
 - ✅ **Process listing** via `proclist`
@@ -710,6 +807,7 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - ✅ **`process_yield()`** for voluntary context switching
 - ✅ **`process_exit()`** for clean process termination
 - ✅ **Assembly‑level context switching** (`context_switch.asm`)
+- ✅ **Resume-by-frame** — the resume path trusts the saved frame verbatim; user vs kernel is chosen from the frame's CS, not from `entry_point` (v0.5.3)
 - ✅ **`testyield`** now alternates cleanly between both test processes
 - ✅ **`schstat`** for scheduler statistics
 - ✅ **Timer preempts kernel-mode processes** (except idle), so a process blocked in `sys_read` does not hold the CPU
@@ -728,14 +826,17 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 
 ## ⚠️ Known Limitations
 
-- **Page tables are not freed on process exit.** `process_exit` reclaims the process's PCB slot and its ELF/user-stack pages, but the process's page tables (cr3) leak. This is a few pages per process. The teardown is deferred; it requires walking the page tables and freeing the user-space portion without touching shared kernel mappings.
+- **Page tables are not freed on process exit.** `process_exit` reclaims the process's PCB slot and its ELF/user-stack pages, but the process's page tables (cr3) leak. Since the v0.5.3 deep clone, each process owns a full low-half hierarchy (PML4 + a few PDPT/PD/PTs), so the leak per process is slightly larger than it was before. Bounded by the 32-slot PCB pool. See [`MAINTENANCE.md`](MAINTENANCE.md) §3c.
+- **argv region shares the user stack with the child's own frames.** `sys_exec` reserves the top 4 KB of the child's user stack for argv. Strings are placed at the bottom of that region, growing up; the pointer array sits just below them; the top of the region is a free gap between argv and the child's own downward-growing frames. The gap is ~3.5 KB today. A user program that recurses deeper than that will silently overwrite its own argv. `echo`/`cat`/`ls` never come close. See [`MAINTENANCE.md`](MAINTENANCE.md) §3l.
+- **The initial child `rsp` is not SysV-compliant.** `argc` and `argv` are passed in `rdi`/`rsi`, not on the stack. This works because every userland program in the tree links our own `crt0.S`. It would break the day a prebuilt static binary is linked. See [`MAINTENANCE.md`](MAINTENANCE.md) §3m.
 - **The keyboard buffer is shared.** Multiple shells reading from fd 0 will compete for bytes. Each keystroke goes to whichever blocked process the scheduler picks first. A per-process tty or a console-focus mechanism would be required to make multiple shells usable side by side.
+- **Kernel log and userland output share the same console.** `sys_exec`'s spawn line and `sys_open`'s failure line interleave with user program output. Cosmetic, not a correctness bug. Fix as part of the ring-buffer console design or with a `SYS_KLOG(level)` syscall. See [`MAINTENANCE.md`](MAINTENANCE.md) §4i.
 - **`sys_brk`'s `heap_base` is a single constant.** Each process's heap starts at the same *virtual* address (`0x8000200000`) and grows in its own address space (different `cr3`), so there is no address conflict. The shared constant is a code-cleanliness issue, not a functional one.
 - **`fatfs/ff.o` and `fatfs/ffunicode.o` are compiled with `/opt/cross/bin/x86_64-elf-gcc`, not Clang.** Clang 22.1.8 (Fedora 22.1.8-4.fc44) miscompiles `ff.c` at every optimization level we tried: `-O0` breaks the FILINFO read path (`f_readdir` fills the struct incorrectly, filenames decode as garbage, `f_opendir` returns `FR_INT_ERR`); `-O1` hangs inside `f_unlink`; `-O2` produces truncated instructions in the linked binary (`check_fs`, `move_window`) via LLD 22.1.8. The cross-GCC produces correct code at `-O2` and uses the same x86-64 System V ABI as the Clang-built kernel objects, so the two toolchains link together cleanly. See `LLD_BUG_REPORT.md` for the full history. Remove the per-file GCC rule only when Clang and LLD both handle `ff.c` correctly.
 - **`vmm_map_page_in_cr3` does not flush the TLB.** Callers must `invlpg` after mapping if the address may have a stale translation. `sys_brk` does this; new callers should too.
-- **User programs are still embedded in the kernel ELF.** They are not loaded from the FAT volume. Loading programs from disk is the next storage milestone, and requires a `sys_exec`-style syscall.
 - **Single-drive vs dual-drive is a build-time choice.** One kernel binary cannot serve both layouts. The `FAT_CONFIG` variable selects which layout the kernel expects; running the wrong image under the wrong kernel will fail to mount FatFs.
-- **A subset of newlib is exercised.** `stdio`, `stdlib` (`malloc`), `string`, `unistd`, and `fcntl` are the primary use; `math.h` (`libm.a`) is linked but not exercised. `signal`, `pthread`, `dirent`, and other subsystems are compiled in but untested on this kernel.
+- **The shell does not implement quoting, globbing, pipes, redirection, `cd`, environment variables, command history, or signals.** The tokenizer splits on spaces and tabs only; `cat "file with spaces.txt"` does not work as written. `cat file | grep foo` needs `SYS_DUP` and a pipe mechanism. `cd` needs `SYS_CHDIR` and a per-process cwd. Environment variables need an `envp` extension to the argv mechanism. A hung external program blocks the shell in `waitpid` forever; the only recovery is a reboot (no signals).
+- **A subset of newlib is exercised.** `stdio`, `stdlib` (`malloc`), `string`, `unistd`, and `fcntl` are the primary use; `math.h` (`libm.a`) is linked but not exercised. `signal`, `pthread`, and other subsystems are compiled in but untested on this kernel. `dirent.h` is not used — directory iteration is via the dons-os-specific `opendir`/`readdir`/`closedir` in `donsdos.h` rather than the standard `<dirent.h>` interface.
 - **`elf_load_into_process` maps every segment executable.**  With `EFER.NXE` now on, non-executable segments (data, BSS, user stack) could be marked `PT_NX`.  Currently every segment is mapped with the same flags.  See `MAINTENANCE.md` §3g for the follow-up.
 
 ---
@@ -767,12 +868,19 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - ~~Makefile header dependency tracking (`-MMD -MP`)~~ ✅ v0.5.2
 - ~~**`SYS_EXEC` (syscall #8) and `SYS_WAITPID` (syscall #9)** — disk-loaded ELF user programs. `spawn()` and `waitpid()` shims, parent/child tracking in the PCB, `PROC_STATE_ZOMBIE`.~~ ✅ v0.5.3
 - ~~**Three memory-safety fixes** — PMM allocator reentrancy, `vmm_clone_page_table` deep copy, `context_switch` resume-by-entry-point.~~ ✅ v0.5.3
+- ~~**The REPL shell** — read a line, tokenize, resolve to `0:/NAME.ELF`, spawn with argv, wait, loop.~~ ✅ v0.5.4
+- ~~**Directory iteration** — `SYS_OPENDIR`/`SYS_READDIR`/`SYS_CLOSEDIR` + `ls.elf`.~~ ✅ v0.5.4
+- ~~**argv passing** through `SYS_EXEC` and `crt0.S`; `cat.elf` and `echo.elf`.~~ ✅ v0.5.4
 - **Boot-time self-test mode and `make test`** — deferred.  The interactive `selftest` command already runs the same 17 tests; `5b`/`5c` add headless/scripted execution, which is not the current workflow.  See [`MAINTENANCE.md`](MAINTENANCE.md) §5b–5c.
-- **Spawn regression test** — a kernel-mode self-test child that opens `0:/HELLO.ELF`, spawns it, waits for it, and asserts exit status 0. This makes the three v0.5.3 fixes regression-detectable. See [`MAINTENANCE.md`](MAINTENANCE.md) §5d.
+- **Spawn and argv regression tests** — a kernel-mode self-test child that opens `0:/HELLO.ELF`, spawns it, waits for it, and asserts exit status 0; plus scripted REPL tests for `echo hello world`, `cat HELLO-WORLD.TXT`, and `fstest --verify` after a reboot. Makes the v0.5.3 and v0.5.4 fixes regression-detectable. See [`MAINTENANCE.md`](MAINTENANCE.md) §5d–5e.
+- **`fstest --verify` cross-boot test** — now reachable with argv. Run `fstest`, reboot, `fstest --verify`. Should print `[fstest] PASS (file survived reboot, byte-exact)`. A good candidate for `make test`.
 
 ### Medium-term
-- **A real shell with external commands** — the user shell's menu is a fixed list; `SYS_EXEC` and `SYS_WAITPID` give it the primitives to run arbitrary programs by name. This is the natural next feature now that the loader works end to end.
+- **Pipes and redirection** — `cat file > out.txt`, `cat file | grep foo`. Needs `SYS_DUP` and a kernel pipe mechanism; the shell then gains fd inheritance.
+- **`cd` / relative paths** — `SYS_CHDIR` plus a per-process cwd. FatFs already supports `f_chdir`.
+- **Environment variables** — extend the argv mechanism with an `envp` array; `getenv`/`setenv` on the userland side. Fix the argv-region landmine (`MAINTENANCE.md` §3l) before adding `envp`, since it shrinks the free gap further.
 - **Serial console debug access** — kernel shell reachable over COM1, physically separate from the user's keyboard.  This is the right shape for runtime kernel-shell access; the magic-key-combo approach was tried and abandoned (it's a security backdoor and the kernel shell isn't a process the scheduler can suspend).
+- **Kernel log routing** — route `sys_exec`'s "spawned pid=N" line and `sys_open`'s failure line to serial only, or add a `SYS_KLOG(level)` syscall that lets userland silence kernel console logs. See [`MAINTENANCE.md`](MAINTENANCE.md) §4i.
 - **ELF loader `PT_NX` follow-up** — `elf_load_into_process` currently maps every segment executable.  With NXE now on, non-executable segments (data, BSS, user stack) can be marked `PT_NX`.  About an hour of work; closes the follow-up noted in `MAINTENANCE.md` §3g.
 - **Page-table teardown on process exit** — walk the process's page tables and free the user-space portion. The v0.5.3 deep clone makes each process own more page-table pages than before, so the leak is slightly larger and this is now more valuable. See [`MAINTENANCE.md`](MAINTENANCE.md) §3c.
 
@@ -780,6 +888,7 @@ This means a shell waiting for input does not monopolize the CPU. Other processe
 - **File System (VFS)** — a VFS layer above FatFs, with mount points and path resolution
 - **Framebuffer graphics** — move off VGA text mode
 - **Ring-buffer console** — replace the global print lock with a FIFO drained by a low-priority kernel task, so printing from a scheduled context does not stall the timer and so per-user ttys can have independent output paths. See [`MAINTENANCE.md`](MAINTENANCE.md) §4e.
+- **Per-process tty / console focus** — prerequisite for multiple concurrent shells
 - **Bootloader migration to Limine** — replaces the hand-written stage2, removes the 448 KB kernel ceiling, and turns the kernel into a file loaded by the bootloader rather than a fixed-LBA blob
 
 ---
